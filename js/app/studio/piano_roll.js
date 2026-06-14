@@ -69,7 +69,7 @@ let _trackSelectorGroup = null;
 let _trackVBox = null;
 
 function _layoutTrackSelector() {
-  _trackVBox.layout(FOCUS_MARGIN, PR_RULER_HEIGHT + FOCUS_MARGIN);
+  // WidgetGroup の auto-layout が同じ原点を使い続けるので、ここでは radio 幅のみ更新
   prTrackSelW = _trackRadios[0].w + 2 * FOCUS_MARGIN;
 }
 
@@ -82,7 +82,10 @@ function _initTrackSelector() {
     }, i === 0),
   );
   _trackVBox = VBox(_trackRadios);
-  _trackSelectorGroup = new WidgetGroup(_trackVBox.leaves());
+  _trackSelectorGroup = new WidgetGroup(_trackVBox, {
+    x: FOCUS_MARGIN,
+    y: PR_RULER_HEIGHT + FOCUS_MARGIN,
+  });
   _layoutTrackSelector();
 }
 

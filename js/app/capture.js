@@ -613,14 +613,14 @@ function _initWidgets() {
     UI.HBox([lblGifFps, ddGifFps]),
     UI.HBox([lblGif, btnGif, labelGifStatus]),
   ]);
-  captureRoot.layout(UI.FOCUS_MARGIN, UI.FOCUS_MARGIN);
 
   refreshOutputLabel();
 
   // フォーマットラベル初期化
   labelRecordStatus.text = recordFormatLabel();
 
-  screenshotWidgets = new UI.WidgetGroup(captureRoot.leaves());
+  // WidgetGroup(root) は初期 layout + draw/update/measure 前の auto-layout を実行
+  screenshotWidgets = new UI.WidgetGroup(captureRoot);
 }
 
 function onSshotDraw(contentRect) {

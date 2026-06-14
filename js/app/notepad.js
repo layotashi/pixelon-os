@@ -130,8 +130,7 @@ function _initWidgets() {
     },
   );
   root = VBox([textAreaEditor]);
-  root.layout(FOCUS_MARGIN, FOCUS_MARGIN);
-  group = new WidgetGroup(root.leaves());
+  group = new WidgetGroup(root);
 }
 
 // ── タイトル更新 ──

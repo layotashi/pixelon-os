@@ -419,35 +419,28 @@ function _initWidgets() {
     imageFillRow,
   ]);
 
-  settingsRoot.layout(FOCUS_MARGIN, FOCUS_MARGIN);
-
   // ── ウィジェットグループ & セクション定義 ──
   customWidgets = [bgRow, fgRow];
   solidWidgets = [bayerRow, levelRow];
   imageWidgets = [imagePathRow, imageFileRow, imageFillRow];
 
-  appearWidgets = new WidgetGroup(settingsRoot.leaves());
+  // WidgetGroup(root) は初期 layout + auto-layout を実行
+  appearWidgets = new WidgetGroup(settingsRoot);
 }
 
 let appearWidgets;
 
-/**
- * カスタムパレット行の表示切替と再レイアウト。
- */
+/** カスタムパレット行の表示切替 (auto-layout が次フレームで反映)。 */
 function refreshCustomPalette() {
   const isCustom = Config.getPaletteName() === Config.CUSTOM_PALETTE_NAME;
   for (const row of customWidgets) row.visible = isCustom;
-  settingsRoot.layout(FOCUS_MARGIN, FOCUS_MARGIN);
 }
 
-/**
- * 背景モードに応じてサブパネルの表示切替と再レイアウト。
- */
+/** 背景モードに応じてサブパネルの表示切替 (auto-layout が次フレームで反映)。 */
 function refreshBackground() {
   const mode = Wallpaper.getBackgroundMode();
   for (const row of solidWidgets) row.visible = mode === "solid";
   for (const row of imageWidgets) row.visible = mode === "image";
-  settingsRoot.layout(FOCUS_MARGIN, FOCUS_MARGIN);
 }
 
 /** 背景関連ウィジェットを壁紙設定と同期する (initWallpaper 後に 1 回)。 */

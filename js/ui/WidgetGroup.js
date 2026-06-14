@@ -26,7 +26,7 @@
  */
 
 import * as Ports from "./ports.js";
-import { measureWidgets } from "./layout.js";
+import { Box, measureWidgets } from "./layout.js";
 import { FOCUS_MARGIN } from "./ui_constants.js";
 import * as Helpers from "./ui_helpers.js";
 
@@ -71,11 +71,66 @@ function _drawFocusBrackets(widget, contentRect) {
 
 export class WidgetGroup {
   /**
-   * @param {import("./Widget.js").Widget[]} [widgets] 管理するウィジェット配列
+   * Box ツリーまたはウィジェット配列を受け取る。
+   *
+   * Box を渡した場合は **レイアウトのライフサイクルが自動化** される:
+   *   - コンストラクタで初回 layout を実行 (wmOpen の onMeasure が正しい size を返すため)
+   *   - draw() / update() / measure() の各エントリ前に layout を再実行
+   *     (子ウィジェットの w/h が動的に変わっても兄弟位置・HSep stretch 幅が
+   *      stale にならない)
+   * これによりアプリ側は items / text / label の代入だけで OK になり、
+   * 「呼び忘れたら表示が崩れる」契約がコードから消える。
+   *
+   * 配列を渡した場合は従来通り (flat list で自前管理)。
+   *
+   * @param {import("./Widget.js").Widget[] | Box} [widgetsOrRoot]
+   *   ウィジェット配列 (従来 API) または layout 自動化対象の Box ツリー
+   * @param {object} [opts]
+   * @param {number} [opts.x=FOCUS_MARGIN] root Box の layout 原点 X
+   * @param {number} [opts.y=FOCUS_MARGIN] root Box の layout 原点 Y
    */
-  constructor(widgets = []) {
-    /** @type {import("./Widget.js").Widget[]} */
-    this.widgets = widgets;
+  constructor(widgetsOrRoot = [], opts = {}) {
+    if (widgetsOrRoot instanceof Box) {
+      /** @private @type {Box | null} 自動レイアウト対象の root */
+      this._layoutRoot = widgetsOrRoot;
+      /** @private */
+      this._layoutX = opts.x !== undefined ? opts.x : FOCUS_MARGIN;
+      /** @private */
+      this._layoutY = opts.y !== undefined ? opts.y : FOCUS_MARGIN;
+      /** @type {import("./Widget.js").Widget[]} */
+      this.widgets = widgetsOrRoot.leaves();
+      // 初回 layout (wmOpen の onMeasure が正しい size を返すため必要)
+      this._ensureLayout();
+    } else {
+      this._layoutRoot = null;
+      this._layoutX = FOCUS_MARGIN;
+      this._layoutY = FOCUS_MARGIN;
+      /** @type {import("./Widget.js").Widget[]} */
+      this.widgets = widgetsOrRoot;
+    }
+  }
+
+  /**
+   * @private root Box がある場合に layout を再実行する。
+   * 派生サイズ (widget.w/.h) が更新された後でも兄弟位置と stretch 幅が
+   * 現在のサブツリーを反映するよう、draw / update / measure の前に呼ぶ。
+   */
+  _ensureLayout() {
+    if (this._layoutRoot) {
+      this._layoutRoot.layout(this._layoutX, this._layoutY);
+    }
+  }
+
+  /**
+   * root Box の layout 原点を更新する。コンテンツ領域のオフセット
+   * (preview area の下に widgets を並べる等) を動的に変えたい場合に使う。
+   * @param {number} x
+   * @param {number} y
+   */
+  setLayoutOrigin(x, y) {
+    this._layoutX = x;
+    this._layoutY = y;
+    this._ensureLayout();
   }
 
   /**
@@ -98,6 +153,7 @@ export class WidgetGroup {
    * @param {{ x:number, y:number }} contentRect コンテンツ領域のオフセット
    */
   draw(contentRect) {
+    this._ensureLayout();
     // パス 1: 全ウィジェットの通常描画
     for (const w of this.widgets) {
       if (w.visible !== false) w.draw(contentRect);
@@ -130,6 +186,7 @@ export class WidgetGroup {
    * @param {{ localX:number, localY:number, type:string }} ev 入力イベント
    */
   update(ev) {
+    this._ensureLayout();
     const widgets = this.widgets;
 
     // ── 展開中のドロップダウンが入力を独占 ──
@@ -253,6 +310,7 @@ export class WidgetGroup {
    * @returns {{ w: number, h: number }}
    */
   measure(pad = 0) {
+    this._ensureLayout();
     return measureWidgets(this.widgets, pad);
   }
 

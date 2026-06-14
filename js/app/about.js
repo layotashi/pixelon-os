@@ -41,8 +41,7 @@ function _initWidgets() {
   _ready = true;
   label = new Label(0, 0, aboutText);
   root = VBox([label]);
-  root.layout(ABOUT_PADDING, ABOUT_PADDING);
-  group = new WidgetGroup(root.leaves());
+  group = new WidgetGroup(root, { x: ABOUT_PADDING, y: ABOUT_PADDING });
 }
 
 // ── 描画 ──

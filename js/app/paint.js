@@ -744,10 +744,9 @@ function _initWidgets() {
     separatorSize,
     toggleFill,
   ]);
-  sidebarRoot.layout(UI.FOCUS_MARGIN, UI.FOCUS_MARGIN);
 
-  // ── 全ウィジェット配列 ──
-  sidebarWidgets = new UI.WidgetGroup(sidebarRoot.leaves());
+  // WidgetGroup(root) は初期 layout + auto-layout を実行
+  sidebarWidgets = new UI.WidgetGroup(sidebarRoot);
 
   // サイドバー幅を算出
   const sidebarSize = sidebarWidgets.measure();
@@ -1197,7 +1196,7 @@ WM.wmRegister(
       onBeforeClose,
       onRelayout: () => {
         sidebarWidgets.remeasureAll();
-        sidebarRoot.layout(UI.FOCUS_MARGIN, UI.FOCUS_MARGIN);
+        // measure() が _ensureLayout() を内部で呼ぶため明示 layout 不要
         const sbSize = sidebarWidgets.measure();
         sidebarWidth = sbSize.w;
       },

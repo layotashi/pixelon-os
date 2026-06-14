@@ -361,9 +361,7 @@ function openWindow() {
       nbRows,
     ]),
   ]);
-  root.layout(UI.FOCUS_MARGIN, UI.FOCUS_MARGIN);
-
-  widgets = new UI.WidgetGroup(root.leaves());
+  widgets = new UI.WidgetGroup(root);
 
   // ── 初回変換 ──
   refreshAsciiArt();

@@ -2708,9 +2708,7 @@ function buildToolbar() {
   const row2 = UI.HBox([lblSeed, nbSeed, btnDice, btnGen, tglInvert, tglAuto]);
   const row3 = UI.HBox([ddSize, nbArtW, nbArtH, ddScale, btnSave, btnFile]);
   toolbarRoot = UI.VBox([row1, row2, row3]);
-  toolbarRoot.layout(UI.FOCUS_MARGIN, UI.FOCUS_MARGIN);
-
-  toolbar = new UI.WidgetGroup(toolbarRoot.leaves());
+  toolbar = new UI.WidgetGroup(toolbarRoot);
   toolbarH = toolbarRoot.y + toolbarRoot.h;
 }
 

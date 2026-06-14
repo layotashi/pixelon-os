@@ -209,10 +209,9 @@ function _initWidgets() {
   // ── Box レイアウト ──
   const toolbarRow = UI.HBox([btnNewFile, btnNewFolder, btnRename, btnDelete]);
   root = UI.VBox([toolbarRow, browser]);
-  root.layout(UI.FOCUS_MARGIN, UI.FOCUS_MARGIN);
 
-  // ── ウィジェット配列 ──
-  mainGroup = new UI.WidgetGroup(root.leaves());
+  // WidgetGroup(root) は初期 layout + auto-layout を実行
+  mainGroup = new UI.WidgetGroup(root);
 }
 
 // ── 描画 ──

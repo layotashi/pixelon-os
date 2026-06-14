@@ -252,9 +252,11 @@ function _initWidgets() {
     UI.HBox([labelPhase, sliderPhase, labelPhaseValue]),
   ]);
 
-  synthRoot.layout(UI.FOCUS_MARGIN, UI.FOCUS_MARGIN + PREVIEW_HEIGHT + UI.GAP);
-
-  allWidgets = new UI.WidgetGroup(synthRoot.leaves());
+  // PREVIEW_HEIGHT 分のオフセットを y に指定。auto-layout がこの原点を使い続ける
+  allWidgets = new UI.WidgetGroup(synthRoot, {
+    x: UI.FOCUS_MARGIN,
+    y: UI.FOCUS_MARGIN + PREVIEW_HEIGHT + UI.GAP,
+  });
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

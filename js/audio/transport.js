@@ -284,12 +284,11 @@ function _initWidgets() {
     ],
     GAP,
   );
-  transportRoot.layout(M, M);
+  // WidgetGroup(root, opts) は初期 layout (M, M) + auto-layout を実行
+  transportGroup = new UI.WidgetGroup(transportRoot, { x: M, y: M });
 
-  // bpmIconX = スペーサーの位置 (手動描画用)
+  // bpmIconX = スペーサーの位置 (手動描画用)。初回 layout 後の bpmSpacer.x を取得。
   bpmIconX = bpmSpacer.x;
-
-  transportGroup = new UI.WidgetGroup(transportRoot.leaves());
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -203,21 +203,18 @@ function _initWidgets() {
     diagThicknessRow,
   ]);
 
-  tuningRoot.layout(FOCUS_MARGIN, FOCUS_MARGIN);
-  tuningWidgets = new WidgetGroup(tuningRoot.leaves());
+  tuningWidgets = new WidgetGroup(tuningRoot);
 
   refreshVisibility();
 }
 
-/** トグル OFF 時にパラメータ行を非表示にする */
+/** トグル OFF 時にパラメータ行を非表示にする (auto-layout が次フレームで反映) */
 function refreshVisibility() {
   const vigOn = tglVignette.value;
   for (const row of vigRows) row.visible = vigOn;
 
   const diagOn = tglDiagonal.value;
   for (const row of diagRows) row.visible = diagOn;
-
-  tuningRoot.layout(FOCUS_MARGIN, FOCUS_MARGIN);
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

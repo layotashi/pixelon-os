@@ -283,9 +283,7 @@ function openWindow() {
 
   // VBox: ListBox + REPLAY ボタン (縦並び)
   easingRoot = VBox([listBoxEasings, buttonReplay]);
-  easingRoot.layout(PADDING, PADDING);
-
-  widgets = new WidgetGroup(easingRoot.leaves());
+  widgets = new WidgetGroup(easingRoot, { x: PADDING, y: PADDING });
 
   animStart = performance.now();
 
