@@ -57,6 +57,8 @@ function setLabel(lbl, str) {
 //  ウィジェット生成
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+let lblPixelGrid, tglPixelGrid;
+
 let lblVignette, tglVignette;
 let lblVigStrength, sldVigStrength, valVigStrength;
 let lblVigRadius, sldVigRadius, valVigRadius;
@@ -73,8 +75,10 @@ let lblGlowIntensity, sldGlowIntensity, valGlowIntensity;
 let lblNoise, tglNoise;
 let lblNoiseStrength, sldNoiseStrength, valNoiseStrength;
 
-let sep1, sep2, sep3;
+let sep0, sep1, sep2, sep3;
+let vigToggleRow, diagToggleRow, glowToggleRow, noiseToggleRow;
 let vigRows, diagRows, glowRows, noiseRows;
+let allEffectToggleRows, allEffectSeparators;
 let tuningRoot;
 let tuningWidgets;
 
@@ -87,6 +91,22 @@ function _initWidgets() {
   _ready = true;
 
   const ep = Config.getEffectParams();
+
+  // ── Pixel Grid (master toggle) ──
+  // OFF にすると LCD ドット/ギャップ構造が中和され、ブロック状の 3x 拡大になる。
+  // Glow / Diagonal は gap/diag 位置に依存するため意味を失うため、
+  // refreshVisibility で 4 エフェクト全体を非表示にする。
+  lblPixelGrid = new Label(0, 0, "Pixel grid:");
+  tglPixelGrid = new ToggleButton(
+    0,
+    0,
+    "ON",
+    (v) => {
+      Config.setEffectParam("pixelGridEnabled", v);
+      refreshVisibility();
+    },
+    ep.pixelGridEnabled,
+  );
 
   // ── Vignette ──
   lblVignette = new Label(0, 0, "Vignette:");
@@ -224,12 +244,14 @@ function _initWidgets() {
   });
 
   // ── セパレータ ──
+  sep0 = new HSep(0, 0, 0); // Pixel Grid と 4 エフェクト群の境界
   sep1 = new HSep(0, 0, 0);
   sep2 = new HSep(0, 0, 0);
   sep3 = new HSep(0, 0, 0);
 
   // ── ラベル幅統一 ──
   allLabels = [
+    lblPixelGrid,
     lblVignette,
     lblVigStrength,
     lblVigRadius,
@@ -271,21 +293,32 @@ function _initWidgets() {
   const noiseStrengthRow = HBox([lblNoiseStrength, sldNoiseStrength, valNoiseStrength]);
   noiseRows = [noiseStrengthRow];
 
+  vigToggleRow = HBox([lblVignette, tglVignette]);
+  diagToggleRow = HBox([lblDiagonal, tglDiagonal]);
+  glowToggleRow = HBox([lblGlow, tglGlow]);
+  noiseToggleRow = HBox([lblNoise, tglNoise]);
+
+  // Pixel Grid OFF 時に一括で隠す対象。
+  allEffectToggleRows = [vigToggleRow, diagToggleRow, glowToggleRow, noiseToggleRow];
+  allEffectSeparators = [sep1, sep2, sep3];
+
   tuningRoot = VBox([
-    HBox([lblVignette, tglVignette]),
+    HBox([lblPixelGrid, tglPixelGrid]),
+    sep0,
+    vigToggleRow,
     vigStrengthRow,
     vigRadiusRow,
     sep1,
-    HBox([lblDiagonal, tglDiagonal]),
+    diagToggleRow,
     diagDarknessRow,
     diagSpeedRow,
     diagSpacingRow,
     diagThicknessRow,
     sep2,
-    HBox([lblGlow, tglGlow]),
+    glowToggleRow,
     glowIntensityRow,
     sep3,
-    HBox([lblNoise, tglNoise]),
+    noiseToggleRow,
     noiseStrengthRow,
   ]);
 
@@ -295,18 +328,39 @@ function _initWidgets() {
   refreshVisibility();
 }
 
-/** トグル OFF 時にパラメータ行を非表示にする */
+/**
+ * トグル状態に応じて行の表示/非表示を更新する。
+ *
+ * 階層構造:
+ *   Pixel Grid OFF → 4 エフェクト全体 (トグル行・パラメータ行・セパレータ) を非表示。
+ *                    Glow / Diagonal は gap/diag 位置依存で意味を失い、
+ *                    Vignette / Noise も「ピクセルグリッド OFF にしたい人は
+ *                    徹底的にミニマルにしたい人」とみなして一括で隠す。
+ *   Pixel Grid ON  → 各エフェクトのトグル行は常に表示、
+ *                    パラメータ行は各エフェクトの個別トグル ON のときのみ表示。
+ */
 function refreshVisibility() {
-  const vigOn = tglVignette.value;
+  const pgOn = tglPixelGrid.value;
+
+  // sep0 (Pixel Grid と効果群の境界) は Pixel Grid OFF 時のみ
+  // 「効果群を隠したことを示す区切り」を残す意味で表示してもよいが、
+  // 隠した方が空間として綺麗 (区切る対象が無くなるため) なので一緒に隠す。
+  sep0.visible = pgOn;
+
+  for (const row of allEffectToggleRows) row.visible = pgOn;
+  for (const sep of allEffectSeparators) sep.visible = pgOn;
+
+  // パラメータ行: Pixel Grid ON かつ各エフェクト ON のときだけ表示
+  const vigOn = pgOn && tglVignette.value;
   for (const row of vigRows) row.visible = vigOn;
 
-  const diagOn = tglDiagonal.value;
+  const diagOn = pgOn && tglDiagonal.value;
   for (const row of diagRows) row.visible = diagOn;
 
-  const glowOn = tglGlow.value;
+  const glowOn = pgOn && tglGlow.value;
   for (const row of glowRows) row.visible = glowOn;
 
-  const noiseOn = tglNoise.value;
+  const noiseOn = pgOn && tglNoise.value;
   for (const row of noiseRows) row.visible = noiseOn;
 
   tuningRoot.layout(FOCUS_MARGIN, FOCUS_MARGIN);
@@ -321,6 +375,7 @@ wmRegister(APP_NAME, () => {
 
   // ウィジェットの値を最新の Config から同期
   const ep = Config.getEffectParams();
+  tglPixelGrid.value = ep.pixelGridEnabled;
   tglVignette.value = ep.vignetteEnabled;
   sldVigStrength.value = ep.vignetteStrength;
   setLabel(valVigStrength, formatPercent(ep.vignetteStrength));

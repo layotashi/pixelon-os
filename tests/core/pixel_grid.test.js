@@ -1,7 +1,7 @@
 /**
  * core/pixel_grid.js — ピクセルグリッド変換テスト
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   CELL,
   rebuildLut,
@@ -9,12 +9,20 @@ import {
   applyPixelGridIndexed,
   getPixelGridPalette,
   applyVignette,
+  setPixelGridEnabled,
+  isPixelGridEnabled,
 } from "@/core/pixel_grid.js";
 
 const FG = [0x33, 0xff, 0x00]; // P1 Green
 const BG = [0x00, 0x12, 0x00];
 
 beforeEach(() => {
+  rebuildLut(FG, BG);
+});
+
+// 各 describe ブロック後に Pixel Grid を ON に戻す (テスト間の状態汚染を防ぐ)
+afterEach(() => {
+  setPixelGridEnabled(true);
   rebuildLut(FG, BG);
 });
 
@@ -258,5 +266,165 @@ describe("rebuildLut", () => {
       if (out1[i] !== out2[i]) diffs++;
     }
     expect(diffs).toBeGreaterThan(0);
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  Pixel Grid マスタートグル
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe("setPixelGridEnabled", () => {
+  it("デフォルトでは ON", () => {
+    expect(isPixelGridEnabled()).toBe(true);
+  });
+
+  it("setter で切り替わる", () => {
+    setPixelGridEnabled(false);
+    expect(isPixelGridEnabled()).toBe(false);
+    setPixelGridEnabled(true);
+    expect(isPixelGridEnabled()).toBe(true);
+  });
+
+  it("OFF にすると全 LUT エントリが bg/fg ドット色のみになる", () => {
+    setPixelGridEnabled(false);
+    rebuildLut(FG, BG);
+
+    const w = 2, h = 1;
+    const vram = new Uint8Array([0, 1]);
+    const out = new Uint32Array(w * CELL * h * CELL);
+    applyPixelGrid(out, vram, w, h, 0);
+
+    const bgPacked = BG[0] | (BG[1] << 8) | (BG[2] << 16) | 0xff000000;
+    const fgPacked = FG[0] | (FG[1] << 8) | (FG[2] << 16) | 0xff000000;
+
+    // 出力中に bg 色と fg 色「だけ」が存在するはず
+    for (let i = 0; i < out.length; i++) {
+      const v = out[i] >>> 0;
+      expect(v === (bgPacked >>> 0) || v === (fgPacked >>> 0)).toBe(true);
+    }
+  });
+
+  it("OFF 時は各 3x3 セルがソースピクセル色で均一に塗られる (ブロック状)", () => {
+    setPixelGridEnabled(false);
+    rebuildLut(FG, BG);
+
+    // bg-fg 隣接構成: pixel(0,0)=0, pixel(1,0)=1
+    const w = 2, h = 1;
+    const vram = new Uint8Array([0, 1]);
+    const out = new Uint32Array(w * CELL * h * CELL);
+    applyPixelGrid(out, vram, w, h, 0);
+
+    const bgPacked = (BG[0] | (BG[1] << 8) | (BG[2] << 16) | 0xff000000) >>> 0;
+    const fgPacked = (FG[0] | (FG[1] << 8) | (FG[2] << 16) | 0xff000000) >>> 0;
+    const outW = w * CELL;
+
+    // 左セル (pixel 0,0 = bg): 全 9 セルが bg 色
+    for (let ly = 0; ly < CELL; ly++) {
+      for (let lx = 0; lx < CELL; lx++) {
+        expect(out[ly * outW + lx] >>> 0).toBe(bgPacked);
+      }
+    }
+    // 右セル (pixel 1,0 = fg): 全 9 セルが fg 色
+    for (let ly = 0; ly < CELL; ly++) {
+      for (let lx = 0; lx < CELL; lx++) {
+        expect(out[ly * outW + CELL + lx] >>> 0).toBe(fgPacked);
+      }
+    }
+  });
+
+  it("OFF 時は隣接 fg ピクセルから bg ピクセルへの「にじみ」が発生しない", () => {
+    setPixelGridEnabled(false);
+    rebuildLut(FG, BG);
+
+    // bg(左) - fg(右) 隣接。bg セルの右側ギャップ位置に fg 色が漏れないこと。
+    const w = 2, h = 1;
+    const vram = new Uint8Array([0, 1]);
+    const out = new Uint32Array(w * CELL * h * CELL);
+    applyPixelGrid(out, vram, w, h, 0);
+
+    const bgPacked = (BG[0] | (BG[1] << 8) | (BG[2] << 16) | 0xff000000) >>> 0;
+    const outW = w * CELL;
+
+    // bg セル (左) の右端ギャップ位置 (lx=2, ly=0..2) は bg 色のはず
+    for (let ly = 0; ly < CELL; ly++) {
+      expect(out[ly * outW + 2] >>> 0).toBe(bgPacked);
+    }
+  });
+
+  it("OFF 時は斜線オフセット変更で出力が変わらない (Diagonal 無効化)", () => {
+    setPixelGridEnabled(false);
+    rebuildLut(FG, BG);
+
+    const w = 4, h = 4;
+    const vram = new Uint8Array(w * h).fill(1);
+    const out1 = new Uint32Array(w * CELL * h * CELL);
+    const out2 = new Uint32Array(w * CELL * h * CELL);
+    applyPixelGrid(out1, vram, w, h, 0);
+    applyPixelGrid(out2, vram, w, h, 3);
+
+    // OFF 時は diag が中和されているので出力が完全一致するはず
+    for (let i = 0; i < out1.length; i++) {
+      expect(out1[i]).toBe(out2[i]);
+    }
+  });
+
+  it("ON に戻すとギャップ・斜線が復活する (状態が永続化されない)", () => {
+    setPixelGridEnabled(false);
+    rebuildLut(FG, BG);
+    const w = 4, h = 4;
+    const vram = new Uint8Array(w * h).fill(1);
+    const outOff = new Uint32Array(w * CELL * h * CELL);
+    applyPixelGrid(outOff, vram, w, h, 5);
+
+    setPixelGridEnabled(true);
+    rebuildLut(FG, BG);
+    const outOn = new Uint32Array(w * CELL * h * CELL);
+    applyPixelGrid(outOn, vram, w, h, 5);
+
+    // ON では diag があるので OFF と異なる出力になる
+    let diffs = 0;
+    for (let i = 0; i < outOff.length; i++) {
+      if (outOff[i] !== outOn[i]) diffs++;
+    }
+    expect(diffs).toBeGreaterThan(0);
+  });
+
+  it("OFF 時の getPixelGridPalette は bg/fg のみを返す", () => {
+    setPixelGridEnabled(false);
+    const pal = getPixelGridPalette(FG, BG);
+    // index 0,2,4,6 → bg, index 1,3,5,7 → fg
+    expect(pal[2]).toEqual(pal[0]);
+    expect(pal[3]).toEqual(pal[1]);
+    expect(pal[4]).toEqual(pal[0]);
+    expect(pal[5]).toEqual(pal[1]);
+    expect(pal[6]).toEqual(pal[0]);
+    expect(pal[7]).toEqual(pal[1]);
+  });
+
+  it("OFF 時の applyPixelGridIndexed もブロック状の出力になる", () => {
+    setPixelGridEnabled(false);
+    rebuildLut(FG, BG);
+
+    const w = 2, h = 1;
+    const vram = new Uint8Array([0, 1]);
+    const result = applyPixelGridIndexed(vram, w, h, 0);
+    const outW = w * CELL;
+
+    // インデックスは 0/1/2/3 のいずれか (4-7 は使われない)。
+    // ただしパレット側で 0=2, 1=3 が同色なので、視覚的には bg/fg のみ。
+    // 検証: 左セルの全 9 位置の対応 RGB が bg、右セルが fg であること。
+    const pal = getPixelGridPalette(FG, BG);
+    for (let ly = 0; ly < CELL; ly++) {
+      for (let lx = 0; lx < CELL; lx++) {
+        const idx = result.data[ly * outW + lx];
+        expect(pal[idx]).toEqual(BG);
+      }
+    }
+    for (let ly = 0; ly < CELL; ly++) {
+      for (let lx = 0; lx < CELL; lx++) {
+        const idx = result.data[ly * outW + CELL + lx];
+        expect(pal[idx]).toEqual(FG);
+      }
+    }
   });
 });

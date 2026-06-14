@@ -20,6 +20,14 @@
  *   5: fg + 斜線暗化 (fg * 0.80)
  *   6: bg グロー + 斜線暗化
  *   7: fg グロー + 斜線暗化
+ *
+ * ピクセルグリッド OFF:
+ *   _pixelGridEnabled = false で LUT エントリ 2-7 が 0/1 と等価になり、
+ *   ホットループは gap インデックスを v+2 に強制する。
+ *   結果として 9 セル全体がソースドット色で塗りつぶされ、
+ *   ギャップ・斜線・隣接ピクセルからのにじみがすべて消える
+ *   (純粋なブロック状の 3x 拡大)。
+ *   Vignette と Noise は本モジュールの後段で適用されるため独立して機能する。
  */
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -31,6 +39,16 @@ export const CELL = 3;
 
 /** ドットサイズ (2x2 ピクセル) */
 const DOT = 2;
+
+/**
+ * ピクセルグリッド (LCD ドット/ギャップ構造) 有効フラグ。
+ * OFF にすると LUT エントリ 2-7 が dot エントリと同色に潰され、
+ * ホットループは gap インデックスを v+2 に強制する (隣接ピクセル参照なし)。
+ * 結果として CELL=3 出力のまま、ギャップ・斜線・隣接ピクセルからの
+ * にじみがすべて消え、純粋なブロック状の 3x 拡大になる。
+ * Glow / Diagonal は gap/diag 位置に依存するため自動的に no-op になる。
+ */
+let _pixelGridEnabled = true;
 
 /** グロー強度 */
 let _glowIntensity = 0.30;
@@ -179,6 +197,18 @@ export function rebuildLut(fg, bg) {
   _lut[6] = pack(clamp(bgr * dm), clamp(bgg * dm), clamp(bgb * dm));
   // 7: fg glow + diag darkening
   _lut[7] = pack(clamp(fgr * dm), clamp(fgg * dm), clamp(fgb * dm));
+
+  // ピクセルグリッド OFF: gap/diag エントリを dot エントリに統一する。
+  // ホットループ側で gap インデックスを v+2 に強制することと合わせて、
+  // 9 セル全体がソースドット色で塗りつぶされる (純粋な 3x ブロック拡大)。
+  if (!_pixelGridEnabled) {
+    _lut[2] = _lut[0]; // bg glow → bg
+    _lut[3] = _lut[1]; // fg glow → fg
+    _lut[4] = _lut[0]; // bg + diag → bg
+    _lut[5] = _lut[1]; // fg + diag → fg
+    _lut[6] = _lut[0]; // bg glow + diag → bg
+    _lut[7] = _lut[1]; // fg glow + diag → fg
+  }
 }
 
 /**
@@ -216,6 +246,7 @@ export function applyPixelGrid(out32, vram, w, h, diagOff) {
   const lut = _lut;
   const S = _diagSpacing;
   const dh = _diagHit;
+  const pgOn = _pixelGridEnabled;
 
   for (let sy = 0; sy < h; sy++) {
     const srcRow = sy * w;
@@ -227,15 +258,19 @@ export function applyPixelGrid(out32, vram, w, h, diagOff) {
       const v = vram[srcRow + sx]; // 0 or 1
       const ox = sx * CELL;
 
-      // 隣接ピクセル (双方向グロー判定用)
-      // fg(1) 隣接 → index 3 (fg glow), bg(0) のみ → index 2 (bg glow)
-      const rightLit = (sx + 1 < w) ? vram[srcRow + sx + 1] : 0;
-      const belowLit = (sy + 1 < h) ? vram[srcRow + w + sx] : 0;
-      const diagLit = (sx + 1 < w && sy + 1 < h) ? vram[srcRow + w + sx + 1] : 0;
-
-      const gapR = (v | rightLit) ? 3 : 2;
-      const gapB = (v | belowLit) ? 3 : 2;
-      const gapC = (v | rightLit | belowLit | diagLit) ? 3 : 2;
+      // 隣接ピクセル参照は pgOn のときだけ。OFF 時は gap = v+2 で
+      // ソースピクセル色を gap LUT 経由で参照する (LUT[2]=LUT[0], LUT[3]=LUT[1])。
+      let gapR, gapB, gapC;
+      if (pgOn) {
+        const rightLit = (sx + 1 < w) ? vram[srcRow + sx + 1] : 0;
+        const belowLit = (sy + 1 < h) ? vram[srcRow + w + sx] : 0;
+        const diagLit = (sx + 1 < w && sy + 1 < h) ? vram[srcRow + w + sx + 1] : 0;
+        gapR = (v | rightLit) ? 3 : 2;
+        gapB = (v | belowLit) ? 3 : 2;
+        gapC = (v | rightLit | belowLit | diagLit) ? 3 : 2;
+      } else {
+        gapR = gapB = gapC = v + 2;
+      }
 
       // 斜線: セル基準の base を1回だけ計算 (最適化3)
       const base = ((ox + sy * CELL - doff) % S + S) % S;
@@ -292,6 +327,7 @@ export function applyPixelGridIndexed(vram, w, h, diagOff) {
   const doff = Math.floor(diagOff);
   const S = _diagSpacing;
   const dh = _diagHit;
+  const pgOn = _pixelGridEnabled;
 
   for (let sy = 0; sy < h; sy++) {
     const srcRow = sy * w;
@@ -303,13 +339,18 @@ export function applyPixelGridIndexed(vram, w, h, diagOff) {
       const v = vram[srcRow + sx];
       const ox = sx * CELL;
 
-      const rightLit = (sx + 1 < w) ? vram[srcRow + sx + 1] : 0;
-      const belowLit = (sy + 1 < h) ? vram[srcRow + w + sx] : 0;
-      const diagLit = (sx + 1 < w && sy + 1 < h) ? vram[srcRow + w + sx + 1] : 0;
-
-      const gapR = (v | rightLit) ? 3 : 2;
-      const gapB = (v | belowLit) ? 3 : 2;
-      const gapC = (v | rightLit | belowLit | diagLit) ? 3 : 2;
+      // 隣接ピクセル参照は pgOn のときだけ (詳細は applyPixelGrid 参照)。
+      let gapR, gapB, gapC;
+      if (pgOn) {
+        const rightLit = (sx + 1 < w) ? vram[srcRow + sx + 1] : 0;
+        const belowLit = (sy + 1 < h) ? vram[srcRow + w + sx] : 0;
+        const diagLit = (sx + 1 < w && sy + 1 < h) ? vram[srcRow + w + sx + 1] : 0;
+        gapR = (v | rightLit) ? 3 : 2;
+        gapB = (v | belowLit) ? 3 : 2;
+        gapC = (v | rightLit | belowLit | diagLit) ? 3 : 2;
+      } else {
+        gapR = gapB = gapC = v + 2;
+      }
 
       const base = ((ox + sy * CELL - doff) % S + S) % S;
 
@@ -492,7 +533,7 @@ export function getPixelGridPalette(fg, bg) {
   const fgg = clamp(fg[1] * gi);
   const fgb = clamp(fg[2] * gi);
 
-  return [
+  const palette = [
     [bg[0], bg[1], bg[2]],                                         // 0: bg dot
     [fg[0], fg[1], fg[2]],                                         // 1: fg dot
     [bgr, bgg, bgb],                                                // 2: bg glow
@@ -502,11 +543,27 @@ export function getPixelGridPalette(fg, bg) {
     [clamp(bgr * dm), clamp(bgg * dm), clamp(bgb * dm)],            // 6: bg glow+diag
     [clamp(fgr * dm), clamp(fgg * dm), clamp(fgb * dm)],            // 7: fg glow+diag
   ];
+
+  // ピクセルグリッド OFF: gap/diag エントリを dot エントリに統一する。
+  // rebuildLut と同じ処理。GIF エンコード経路もブロック状 3x 拡大を出力する。
+  if (!_pixelGridEnabled) {
+    palette[2] = palette[0];
+    palette[3] = palette[1];
+    palette[4] = palette[0];
+    palette[5] = palette[1];
+    palette[6] = palette[0];
+    palette[7] = palette[1];
+  }
+
+  return palette;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  動的パラメータ setter / getter
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+export function isPixelGridEnabled() { return _pixelGridEnabled; }
+export function setPixelGridEnabled(v) { _pixelGridEnabled = !!v; _forceRebuildLut(); }
 
 export function isVignetteEnabled() { return _vignetteEnabled; }
 export function setVignetteEnabled(v) { _vignetteEnabled = !!v; }

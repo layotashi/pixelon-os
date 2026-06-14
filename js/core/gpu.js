@@ -40,6 +40,7 @@ import {
   setDiagThickness,
   setGlowEnabled,
   setGlowIntensity,
+  setPixelGridEnabled,
 } from "./pixel_grid.js";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -128,6 +129,7 @@ export function initGpu() {
   // エフェクトパラメータ変更コールバック
   Config.onEffectChange((key, value) => {
     switch (key) {
+      case "pixelGridEnabled": setPixelGridEnabled(value); break;
       case "vignetteEnabled": setVignetteEnabled(value); break;
       case "vignetteStrength":
         setVignetteStrength(value / 100);
