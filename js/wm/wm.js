@@ -37,6 +37,14 @@
  *   wmSetContentSize(id, virtualH) で仮想高さを設定し、
  *   WM が自動でスクロールバー描画・入力処理・座標オフセットを行う。
  *   scrollbar.js プリミティブを共通部品として使用。
+ *
+ *   scrollable ウィンドウは「コンテンツの自然サイズ」と「ウィンドウの最小サイズ」を
+ *   分離して扱う:
+ *     - 初期高さは自然サイズではなく work area 高さに自動クランプ (画面外はみ出し防止)
+ *     - リサイズ下限は MIN_HEIGHT まで緩和 (縦スクロールで吸収できるため)
+ *     - フォント/パディング変更時に自然サイズへ自動復元しない (ユーザーが選んだ h を維持)
+ *   この分離により、コンテンツが画面より縦に大きい設定パネル等でも
+ *   通常状態のままスクロールでアクセス可能になる。
  */
 
 import * as Config from "../config.js";
@@ -147,8 +155,18 @@ function recalcAllWindows() {
       const size = win.onMeasure();
       if (size) {
         const fit = calcWindowSize(size.w, size.h, win.footer, win._scrollable);
-        win.w = fit.w;
-        win.h = fit.h;
+        // scrollable ウィンドウはユーザーが選んだサイズを維持する。
+        // 自然サイズに勝手に戻すと、フォント切替・パディング変更のたびに
+        // 窓が拡大してしまい UX として違和感が大きい。
+        // 縦方向はスクロールで吸収できるため h を保持。
+        // 幅は水平スクロール非対応なので、コンテンツ幅が縮んでも維持し、
+        // 広がった場合のみ追従する。
+        if (win._scrollable) {
+          win.w = Math.max(win.w, fit.w);
+        } else {
+          win.w = fit.w;
+          win.h = fit.h;
+        }
       }
     }
     recalcLayout(win);
@@ -284,7 +302,10 @@ function nextCascadePos(winW, winH) {
  * @param {boolean} [opts.modal=false] モーダルウィンドウフラグ (他ウィンドウの入力をブロック)
  * @param {boolean} [opts.noResize=false] リサイズ無効
  * @param {boolean} [opts.noMaximize=false] 最大化無効
- * @param {boolean} [opts.scrollable=false] ウィンドウスクロール有効 (wmSetContentSize で仮想サイズを設定)
+ * @param {boolean} [opts.scrollable=false] ウィンドウスクロール有効 (wmSetContentSize で仮想サイズを設定)。
+ *   有効時は (a) 初期高さが自然サイズではなく work area 高さに自動クランプされ、
+ *   (b) リサイズ下限が MIN_HEIGHT まで緩和され、
+ *   (c) フォント/パディング変更時に自然サイズへ自動復元しなくなる。
  * @param {function|null} [opts.onBeforeClose=null] 閉じる前コールバック (() => boolean, false で閉じをキャンセル)
  * @returns {object} ウィンドウオブジェクト
  */
@@ -1538,6 +1559,17 @@ export function wmOpen(
     const fit = calcWindowSize(size.w, size.h, footer, scrollable);
     if (w === 0) w = fit.w;
     if (h === 0) h = fit.h;
+    // scrollable ウィンドウは自然サイズが work area を超える場合に
+    // 初期高さを work area へクランプする。クランプしないと
+    // 画面外に窓がはみ出し、かつ contentRect.h == virtualH となって
+    // スクロールバーが出ない (= 最大化するまで下部に到達不可) という
+    // 矛盾が発生する。
+    if (scrollable) {
+      const waTopAuto = wmGetWorkAreaTop();
+      const maxH = Config.VRAM_HEIGHT - waTopAuto;
+      if (h > maxH) h = maxH;
+      if (w > Config.VRAM_WIDTH) w = Config.VRAM_WIDTH;
+    }
   }
 
   // 自動カスケード配置 (x < 0 で opt-in)
@@ -2103,6 +2135,13 @@ function handleDrag(mx, my) {
       const fit = calcWindowSize(size.w, size.h, win.footer, win._scrollable);
       minW = fit.w;
       minH = fit.h;
+    }
+    // scrollable ウィンドウは縦方向の最小高さを onMeasure で縛らない。
+    // 縦スクロールでコンテンツより小さくしても破綻しないため、
+    // 枠 + ヘッダー + ボディ最小 4px (MIN_HEIGHT) まで縮められる。
+    // 幅は水平スクロール非対応のため引き続き onMeasure 由来の値で縛る。
+    if (win._scrollable) {
+      minH = MIN_HEIGHT;
     }
 
     if (resizeEdges & EDGE_RIGHT) win.w = Math.max(minW, resizeStartW + dx);
