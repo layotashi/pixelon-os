@@ -98,8 +98,10 @@ let mediaDest = null;
 /** ノイズ用バッファ (全チャンネル共有) */
 let noiseBuffer = null;
 
-/** 1 周期バッファのサンプル数 (大きいほど高音域のエイリアシングが低減される) */
-const CYCLE_LENGTH = 2048;
+/** PeriodicWave に渡す Fourier 係数の倍音上限。
+ *  最低音 A0 (27.5Hz) でも Nyquist (24kHz @ 48kHz sr) まで ~872 倍音必要なので
+ *  1024 を確保。OscillatorNode が発音周波数ごとに Nyquist 以上を自動カット。 */
+const PERIODIC_WAVE_HARMONICS = 1024;
 
 /** anti-click フェード用タイムコンスタント (2ms) */
 const FADE_TIME_CONSTANT = 0.002;
@@ -147,6 +149,62 @@ export function sampleWaveformFn(wf, t) {
       return Math.random() * 2 - 1;
     default:
       return 0;
+  }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  Fourier 係数 (帯域制限合成用)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * 波形 `wf` の n 番目倍音の Fourier 係数 (a_n, b_n) を返す。
+ * 規約: f(t) = real[0] + Σ_{n=1}^∞ [a_n cos(2πnt) + b_n sin(2πnt)]
+ *
+ * sampleWaveformFn と同じ波形になるよう解析的に算出している
+ * (= 鋸/三角/矩形/正弦/任意 duty パルスの古典的閉形式)。
+ *
+ * SynthChannel の PeriodicWave 生成と playback_engine.renderToBuffer の
+ * 帯域制限オフラインレンダリングの両方がこの関数を使う。
+ * @param {string} wf
+ * @param {number} n  倍音番号 (1 以上)
+ * @returns {{ a: number, b: number }}
+ */
+export function fourierCoeff(wf, n) {
+  switch (wf) {
+    case "saw":
+      // f(t) = 1 - 2t → b_n = 2/(πn), a_n = 0
+      return { a: 0, b: 2 / (Math.PI * n) };
+    case "tri": {
+      // 偶数倍音 0、奇数倍音 (8/π²n²)·(-1)^((n-1)/2)
+      if (n % 2 === 0) return { a: 0, b: 0 };
+      const sign = ((n - 1) / 2) % 2 === 0 ? 1 : -1;
+      return { a: 0, b: (8 * sign) / (Math.PI * Math.PI * n * n) };
+    }
+    case "sq50": {
+      // 偶数倍音 0、奇数倍音 4/(πn)
+      if (n % 2 === 0) return { a: 0, b: 0 };
+      return { a: 0, b: 4 / (Math.PI * n) };
+    }
+    case "sq25": {
+      // Duty 25%: a_n = 2sin(πn/2)/(πn), b_n = 2(1-cos(πn/2))/(πn)
+      const k = (Math.PI * n) / 2;
+      return {
+        a: (2 * Math.sin(k)) / (Math.PI * n),
+        b: (2 * (1 - Math.cos(k))) / (Math.PI * n),
+      };
+    }
+    case "sq12": {
+      // Duty 12.5%
+      const k = (Math.PI * n) / 4;
+      return {
+        a: (2 * Math.sin(k)) / (Math.PI * n),
+        b: (2 * (1 - Math.cos(k))) / (Math.PI * n),
+      };
+    }
+    case "sine":
+      return n === 1 ? { a: 0, b: 1 } : { a: 0, b: 0 };
+    default:
+      return { a: 0, b: 0 };
   }
 }
 
@@ -239,17 +297,17 @@ export class SynthChannel {
     /** @type {number} チャンネル音量 (0.0〜1.0) */
     this._volume = 0.5;
 
-    /** @type {AudioBufferSourceNode|null} */
+    /** @type {AudioScheduledSourceNode|null} */
     this._currentSource = null;
     /** @type {GainNode|null} */
     this._currentEnvGain = null;
-    /** @type {AudioBufferSourceNode|null} */
+    /** @type {AudioScheduledSourceNode|null} */
     this._releasingSource = null;
     /** @type {GainNode|null} */
     this._releasingEnvGain = null;
-    /** @type {AudioBuffer|null} */
-    this._cycleBuffer = null;
-    /** @type {Set<{source:AudioBufferSourceNode, envGain:GainNode, endTime:number}>} */
+    /** @type {PeriodicWave|null} non-noise 波形の帯域制限合成用 (OscillatorNode に渡す) */
+    this._periodicWave = null;
+    /** @type {Set<{source:AudioScheduledSourceNode, envGain:GainNode, endTime:number}>} */
     this._scheduledVoices = new Set();
     /** @type {GainNode|null} */
     this._channelGain = null;
@@ -264,39 +322,76 @@ export class SynthChannel {
     }
   }
 
-  /** 現在の波形と startPhase から 1 周期のループバッファを生成する */
-  _buildCycleBuffer() {
-    if (!ctx) return;
-    this._cycleBuffer = ctx.createBuffer(1, CYCLE_LENGTH, ctx.sampleRate);
-    const data = this._cycleBuffer.getChannelData(0);
-    for (let i = 0; i < CYCLE_LENGTH; i++) {
-      const t = (i / CYCLE_LENGTH + this._startPhase) % 1;
-      data[i] = sampleWaveformFn(this._waveform, t);
+  /**
+   * 現在の波形と startPhase から PeriodicWave を生成する。
+   * 非 noise 波形に対してのみ呼ばれる。
+   *
+   * 帯域制限: 倍音は PERIODIC_WAVE_HARMONICS (= 1024) まで含めるが、
+   * OscillatorNode が発音周波数に応じて Nyquist 以上を自動的にカットするため、
+   * 高音でもエイリアシングのない出力になる。
+   *
+   * startPhase は Fourier 係数の phase rotation で表現する:
+   *   f(t + sp) を実現する係数 →
+   *     new_a_n = a_n cos(2πn·sp) + b_n sin(2πn·sp)
+   *     new_b_n = b_n cos(2πn·sp) − a_n sin(2πn·sp)
+   *
+   * real[0] (DC) は 0 のまま (sq25/sq12 等の DC オフセットは既存の
+   * dcBlocker フィルタが後段で除去するため、AudioBuffer 実装時と最終出力が一致)。
+   */
+  _buildPeriodicWave() {
+    if (!ctx || this._waveform === "noise") {
+      this._periodicWave = null;
+      return;
     }
+    const N = PERIODIC_WAVE_HARMONICS;
+    const real = new Float32Array(N + 1);
+    const imag = new Float32Array(N + 1);
+    const sp = this._startPhase;
+    const usePhase = sp !== 0;
+
+    for (let n = 1; n <= N; n++) {
+      const { a, b } = fourierCoeff(this._waveform, n);
+      if (!usePhase) {
+        real[n] = a;
+        imag[n] = b;
+      } else {
+        const phi = 2 * Math.PI * n * sp;
+        const cosPhi = Math.cos(phi);
+        const sinPhi = Math.sin(phi);
+        real[n] = a * cosPhi + b * sinPhi;
+        imag[n] = b * cosPhi - a * sinPhi;
+      }
+    }
+    // disableNormalization: true で解析的振幅を保つ
+    // (AudioBuffer 実装時と sq25/sq12 の音量感を揃えるため)
+    this._periodicWave = ctx.createPeriodicWave(real, imag, {
+      disableNormalization: true,
+    });
   }
 
   /**
-   * 現在の波形で AudioBufferSourceNode を生成する。
+   * 現在の波形で AudioScheduledSourceNode を生成する。
+   * - noise: AudioBufferSourceNode + ノイズバッファ (帯域制限不要)
+   * - その他: OscillatorNode + PeriodicWave (ブラウザネイティブの帯域制限合成)
    * @param {number} freq  周波数 (Hz)
    * @param {number} time  開始時刻
-   * @returns {AudioBufferSourceNode}
+   * @returns {AudioScheduledSourceNode}
    */
   _createSource(freq, time) {
-    const source = ctx.createBufferSource();
     if (this._waveform === "noise") {
+      const source = ctx.createBufferSource();
       source.buffer = noiseBuffer;
       source.loop = true;
       // ノイズ音程制御: A4 (440Hz) を基準に playbackRate でピッチを変化させる
       // 高音→ブライト (速い), 低音→ダーク (遅い)
       const rate = freq / 440;
       source.playbackRate.setValueAtTime(rate, time);
-    } else {
-      if (!this._cycleBuffer) this._buildCycleBuffer();
-      source.buffer = this._cycleBuffer;
-      source.loop = true;
-      const rate = (freq * CYCLE_LENGTH) / ctx.sampleRate;
-      source.playbackRate.setValueAtTime(rate, time);
+      return source;
     }
+    if (!this._periodicWave) this._buildPeriodicWave();
+    const source = ctx.createOscillator();
+    source.setPeriodicWave(this._periodicWave);
+    source.frequency.setValueAtTime(freq, time);
     return source;
   }
 
@@ -527,7 +622,7 @@ export class SynthChannel {
    */
   setWaveform(type) {
     this._waveform = type;
-    this._buildCycleBuffer();
+    this._buildPeriodicWave();
   }
 
   /** @returns {string} 現在の波形タイプ */
@@ -542,7 +637,7 @@ export class SynthChannel {
   cycleWaveform() {
     const idx = WAVEFORM_LIST.indexOf(this._waveform);
     this._waveform = WAVEFORM_LIST[(idx + 1) % WAVEFORM_LIST.length];
-    this._buildCycleBuffer();
+    this._buildPeriodicWave();
     return this._waveform;
   }
 
@@ -552,7 +647,7 @@ export class SynthChannel {
    */
   setStartPhase(phase) {
     this._startPhase = Math.max(0, Math.min(1, phase));
-    this._buildCycleBuffer();
+    this._buildPeriodicWave();
   }
 
   /** @returns {number} 現在の発音開始位相 (0.0〜1.0) */
@@ -645,7 +740,7 @@ export function resetDefaultChannel() {
   _defaultChannel._adsrS = 0.8;
   _defaultChannel._adsrR = 0.2;
   _defaultChannel._volume = 0.5;
-  _defaultChannel._cycleBuffer = null;
+  _defaultChannel._periodicWave = null;
   if (_defaultChannel._channelGain && ctx) {
     _defaultChannel._channelGain.gain.setValueAtTime(0.5, ctx.currentTime);
   }

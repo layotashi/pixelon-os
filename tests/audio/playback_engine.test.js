@@ -38,12 +38,47 @@ vi.mock("@/core/audio.js", () => {
     }
   }
 
+  /** Fourier 係数 (実装と同一: band-limited 合成用) */
+  function fourierCoeff(wf, n) {
+    switch (wf) {
+      case "saw":
+        return { a: 0, b: 2 / (Math.PI * n) };
+      case "tri": {
+        if (n % 2 === 0) return { a: 0, b: 0 };
+        const sign = ((n - 1) / 2) % 2 === 0 ? 1 : -1;
+        return { a: 0, b: (8 * sign) / (Math.PI * Math.PI * n * n) };
+      }
+      case "sq50":
+        if (n % 2 === 0) return { a: 0, b: 0 };
+        return { a: 0, b: 4 / (Math.PI * n) };
+      case "sq25": {
+        const k = (Math.PI * n) / 2;
+        return {
+          a: (2 * Math.sin(k)) / (Math.PI * n),
+          b: (2 * (1 - Math.cos(k))) / (Math.PI * n),
+        };
+      }
+      case "sq12": {
+        const k = (Math.PI * n) / 4;
+        return {
+          a: (2 * Math.sin(k)) / (Math.PI * n),
+          b: (2 * (1 - Math.cos(k))) / (Math.PI * n),
+        };
+      }
+      case "sine":
+        return n === 1 ? { a: 0, b: 1 } : { a: 0, b: 0 };
+      default:
+        return { a: 0, b: 0 };
+    }
+  }
+
   return {
     initAudio: vi.fn(),
     getAudioContext: vi.fn(() => null),
     getMasterGain: vi.fn(() => null),
     midiToFreq,
     sampleWaveformFn,
+    fourierCoeff,
     SynthChannel: vi.fn(),
   };
 });

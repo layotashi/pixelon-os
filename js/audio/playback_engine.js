@@ -489,10 +489,59 @@ export function updatePlayhead() {
 //  オフラインレンダリング (WAV Export)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/** WAV エクスポート用 band-limited cycle wavetable のサンプル数 */
+const BL_CYCLE_SIZE = 4096;
+
+/**
+ * 1 周期分の band-limited 波形を Fourier 級数で事前合成する。
+ *
+ * 倍音は Nyquist (sr/2) 以下の n*freq だけを足し込むため、出力された
+ * cycle テーブルを freq Hz でループ再生してもエイリアシングが発生しない。
+ * SynthChannel の PeriodicWave + OscillatorNode と数学的に等価。
+ *
+ * @param {string} waveform
+ * @param {number} freq        基本周波数 (Hz)
+ * @param {number} startPhase  発音開始位相 (0〜1) — wavetable に焼き込む
+ * @param {number} sampleRate  出力 sample rate (Hz)
+ * @returns {Float32Array}     長さ BL_CYCLE_SIZE の 1 周期
+ */
+function _buildBandLimitedCycle(waveform, freq, startPhase, sampleRate) {
+  const nyquist = sampleRate / 2;
+  const maxN = Math.max(1, Math.floor(nyquist / freq));
+
+  // 非零の Fourier 係数だけを集めて per-sample ループを軽くする
+  const coeffs = [];
+  for (let n = 1; n <= maxN; n++) {
+    const { a, b } = Audio.fourierCoeff(waveform, n);
+    if (a !== 0 || b !== 0) coeffs.push(n, a, b);
+  }
+  const num = coeffs.length / 3;
+
+  const cycle = new Float32Array(BL_CYCLE_SIZE);
+  for (let i = 0; i < BL_CYCLE_SIZE; i++) {
+    const t = i / BL_CYCLE_SIZE + startPhase;
+    let s = 0;
+    for (let k = 0; k < num; k++) {
+      const n = coeffs[k * 3];
+      const a = coeffs[k * 3 + 1];
+      const b = coeffs[k * 3 + 2];
+      const phi = 2 * Math.PI * n * t;
+      if (a !== 0) s += a * Math.cos(phi);
+      if (b !== 0) s += b * Math.sin(phi);
+    }
+    cycle[i] = s;
+  }
+  return cycle;
+}
+
 /**
  * ピアノロールのノートデータをオフラインで PCM にレンダリングする。
- * Web Audio API を使わず、sampleWaveformFn + ADSR エンベロープを
+ * Web Audio API を使わず、band-limited cycle wavetable + ADSR エンベロープを
  * サンプル単位で算術的に合成する純粋関数。
+ *
+ * 帯域制限: ノート毎に Nyquist 以下の倍音だけを足し込んだ 1 周期 wavetable を
+ * 事前合成し、サンプルループでは linear 補間して参照する。SynthChannel の
+ * PeriodicWave + OscillatorNode と等価な音質 (高音域でもエイリアシングなし)。
  *
  * @param {object} [opts]
  * @param {number} [opts.sampleRate=44100]  サンプリングレート (Hz)
@@ -548,6 +597,13 @@ export function renderToBuffer(opts = {}) {
       // ノイズ波形用のシード (再現可能にするため note ごとに固定シード)
       let noiseSeed = (note.pitch * 7919 + note.start * 104729 + 1) >>> 0;
 
+      // 非ノイズ波形は事前に band-limited cycle wavetable を合成
+      // (startPhase はテーブルに焼き込み済み)
+      const blCycle =
+        waveform === "noise"
+          ? null
+          : _buildBandLimitedCycle(waveform, freq, startPhase, sr);
+
       for (let i = sampleStart; i < sampleEnd; i++) {
         const t = i / sr; // バッファ内時刻 (秒)
         const noteT = t - noteOnSec; // ノート開始からの経過秒
@@ -593,9 +649,14 @@ export function renderToBuffer(opts = {}) {
           noiseSeed ^= noiseSeed << 5;
           sample = ((noiseSeed >>> 0) / 0xffffffff) * 2 - 1;
         } else {
-          const phase = (startPhase + freq * noteT) % 1;
-          // 位相を正にする
-          sample = Audio.sampleWaveformFn(waveform, ((phase % 1) + 1) % 1);
+          // band-limited cycle wavetable から linear 補間で参照
+          // (startPhase はテーブルに焼き込み済みなので freq*noteT のみで OK)
+          const phase = ((freq * noteT) % 1 + 1) % 1;
+          const fIdx = phase * BL_CYCLE_SIZE;
+          const lo = fIdx | 0;
+          const hi = lo + 1 === BL_CYCLE_SIZE ? 0 : lo + 1;
+          const fr = fIdx - lo;
+          sample = blCycle[lo] * (1 - fr) + blCycle[hi] * fr;
         }
 
         mix[i] += sample * env * volume;

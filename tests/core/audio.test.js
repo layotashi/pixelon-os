@@ -12,6 +12,7 @@ import {
   midiToNoteName,
   WAVEFORM_LIST,
   sampleWaveformFn,
+  fourierCoeff,
   SynthChannel,
   createChannel,
   getDefaultChannel,
@@ -311,6 +312,129 @@ describe("sampleWaveformFn", () => {
         expect(v).toBeLessThanOrEqual(1);
       }
     }
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  fourierCoeff (帯域制限合成用)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe("fourierCoeff", () => {
+  /**
+   * 倍音 N まで足し込んで sampleWaveformFn と比較する。
+   * 不連続を含む波形 (saw/sq*) は Gibbs 現象で完全一致しないが、
+   * 連続点 (1/4 周期等) では十分一致する。
+   */
+  function partialSum(wf, t, N) {
+    let s = 0;
+    for (let n = 1; n <= N; n++) {
+      const { a, b } = fourierCoeff(wf, n);
+      const phi = 2 * Math.PI * n * t;
+      if (a !== 0) s += a * Math.cos(phi);
+      if (b !== 0) s += b * Math.sin(phi);
+    }
+    return s;
+  }
+
+  describe("saw", () => {
+    it("十分倍音を足し込めば連続点で sampleWaveformFn に収束する", () => {
+      // t=0.25 で saw(0.25) = 0.5
+      const reconstructed = partialSum("saw", 0.25, 200);
+      expect(reconstructed).toBeCloseTo(0.5, 1);
+    });
+
+    it("a_n (cosine) は常に 0", () => {
+      for (let n = 1; n <= 10; n++) {
+        expect(fourierCoeff("saw", n).a).toBe(0);
+      }
+    });
+
+    it("b_n (sine) = 2/(πn)", () => {
+      for (let n = 1; n <= 10; n++) {
+        expect(fourierCoeff("saw", n).b).toBeCloseTo(2 / (Math.PI * n), 10);
+      }
+    });
+  });
+
+  describe("tri", () => {
+    it("ピーク (t=0.25) で +1 に近づく", () => {
+      // tri Fourier 級数は 1/n² 収束で peak での誤差は π²/8 系列の tail
+      // N=200 倍音で約 0.005 まで縮まる
+      const reconstructed = partialSum("tri", 0.25, 200);
+      expect(reconstructed).toBeCloseTo(1, 2);
+    });
+
+    it("ゼロクロス (t=0, 0.5) で 0 に近づく", () => {
+      expect(partialSum("tri", 0, 50)).toBeCloseTo(0, 5);
+      expect(partialSum("tri", 0.5, 50)).toBeCloseTo(0, 2);
+    });
+
+    it("偶数倍音は 0", () => {
+      for (let n = 2; n <= 10; n += 2) {
+        expect(fourierCoeff("tri", n).a).toBe(0);
+        expect(fourierCoeff("tri", n).b).toBe(0);
+      }
+    });
+  });
+
+  describe("sq50", () => {
+    it("偶数倍音は 0", () => {
+      for (let n = 2; n <= 10; n += 2) {
+        expect(fourierCoeff("sq50", n).a).toBe(0);
+        expect(fourierCoeff("sq50", n).b).toBe(0);
+      }
+    });
+
+    it("奇数倍音 b_n = 4/(πn)", () => {
+      for (let n = 1; n <= 9; n += 2) {
+        expect(fourierCoeff("sq50", n).b).toBeCloseTo(4 / (Math.PI * n), 10);
+      }
+    });
+  });
+
+  describe("sq25 / sq12 (任意 duty)", () => {
+    it("sq25 は DC を除けば 25% high / 75% low に収束する", () => {
+      // 倍音を多く積めば、高領域 (t<0.25) は +1 近く、低領域は -1 近くになる
+      // (DC を sampleWaveformFn から引いて比較)
+      const N = 200;
+      const high = partialSum("sq25", 0.1, N);
+      const low = partialSum("sq25", 0.5, N);
+      // sq25 の DC は -0.5。AC のみ復元するので high ≈ +1.5、low ≈ -0.5
+      expect(high).toBeGreaterThan(1.0);
+      expect(low).toBeLessThan(0.0);
+    });
+
+    it("sq12 も同様に AC 部分が復元される", () => {
+      const N = 200;
+      const high = partialSum("sq12", 0.05, N);
+      const low = partialSum("sq12", 0.5, N);
+      expect(high).toBeGreaterThan(low);
+    });
+  });
+
+  describe("sine", () => {
+    it("n=1 だけ b=1、それ以外は全て 0", () => {
+      expect(fourierCoeff("sine", 1)).toEqual({ a: 0, b: 1 });
+      for (let n = 2; n <= 10; n++) {
+        expect(fourierCoeff("sine", n)).toEqual({ a: 0, b: 0 });
+      }
+    });
+
+    it("n=1 のみで完全に sampleWaveformFn と一致する", () => {
+      for (let i = 0; i <= 20; i++) {
+        const t = i / 20;
+        expect(partialSum("sine", t, 1)).toBeCloseTo(
+          sampleWaveformFn("sine", t),
+          10,
+        );
+      }
+    });
+  });
+
+  describe("unknown", () => {
+    it("a=0, b=0 を返す", () => {
+      expect(fourierCoeff("unknown", 1)).toEqual({ a: 0, b: 0 });
+    });
   });
 });
 
