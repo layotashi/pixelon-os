@@ -1,0 +1,51 @@
+{
+  "format": {
+    "width": 18,
+    "height": 18,
+    "encoding": "3level",
+    "description": "White (R>=192) = foreground, gray (64<=R<192) = outline, black (R<64) = transparent. Desktop application icons."
+  },
+  "icons": {
+    "default": {
+      "file": "default.png",
+      "description": "Default fallback icon for apps without a dedicated icon"
+    },
+    "dolphin": {
+      "file": "dolphin.png",
+      "description": "Pixel-art dolphin (easter egg: 'Totally not a virus')"
+    },
+    "notepad": {
+      "file": "notepad.png",
+      "description": "Notepad text editor icon"
+    },
+    "settings": {
+      "file": "settings.png",
+      "description": "Settings gear icon"
+    },
+    "explorer": {
+      "file": "explorer.png",
+      "description": "File explorer icon"
+    },
+    "life_game": {
+      "file": "life_game.png",
+      "description": "Conway's Game of Life icon"
+    },
+    "paint": {
+      "file": "paint.png",
+      "description": "Paint application icon"
+    },
+    "studio": {
+      "file": "studio.png",
+      "description": "DAW / music studio icon"
+    },
+    "capture": {
+      "file": "capture.png",
+      "description": "Screenshot / recording capture icon"
+    },
+    "genart": {
+      "file": "genart.png",
+      "description": "Generative art icon"
+    }
+  }
+}
+

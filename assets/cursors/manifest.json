@@ -1,0 +1,64 @@
+{
+  "format": {
+    "width": 15,
+    "height": 15,
+    "encoding": "3level",
+    "description": "White (R>=192) = foreground, gray (64<=R<192) = outline/background, black = transparent"
+  },
+  "cursors": {
+    "default": {
+      "file": "default.png",
+      "hotX": 7,
+      "hotY": 7,
+      "description": "Arrow cursor with centered hotspot (default / crosshair)"
+    },
+    "move": {
+      "file": "move.png",
+      "hotX": 7,
+      "hotY": 7,
+      "description": "Four-directional arrow (move / drag)"
+    },
+    "resize-ew": {
+      "file": "resize-ew.png",
+      "hotX": 7,
+      "hotY": 7,
+      "description": "Horizontal double-headed arrow (east-west resize)"
+    },
+    "resize-ns": {
+      "file": "resize-ns.png",
+      "hotX": 7,
+      "hotY": 7,
+      "description": "Vertical double-headed arrow (north-south resize)"
+    },
+    "resize-nwse": {
+      "file": "resize-nwse.png",
+      "hotX": 7,
+      "hotY": 7,
+      "description": "Diagonal NW-SE double-headed arrow (resize)"
+    },
+    "resize-nesw": {
+      "file": "resize-nesw.png",
+      "hotX": 7,
+      "hotY": 7,
+      "description": "Diagonal NE-SW double-headed arrow (resize)"
+    },
+    "pointer": {
+      "file": "pointer.png",
+      "hotX": 5,
+      "hotY": 1,
+      "description": "Arrow pointing upper-left (link / clickable pointer)"
+    },
+    "drag-h": {
+      "file": "drag-h.png",
+      "hotX": 7,
+      "hotY": 7,
+      "description": "Horizontal drag handle"
+    },
+    "drag-v": {
+      "file": "drag-v.png",
+      "hotX": 7,
+      "hotY": 7,
+      "description": "Vertical drag handle"
+    }
+  }
+}

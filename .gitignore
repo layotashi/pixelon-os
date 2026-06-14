@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Python venv (used by the simple HTTP server workflow)
+.venv/
+
+# Claude Code local config (per-machine settings)
+.claude/
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# Logs
+*.log
+npm-debug.log*
+
+# Build / cache (none currently, but reserved)
+dist/
+.cache/

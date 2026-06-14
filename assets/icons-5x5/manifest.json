@@ -1,0 +1,122 @@
+{
+  "format": {
+    "width": 5,
+    "height": 5,
+    "encoding": "1bit-white-fg",
+    "description": "White pixel (R>=128) = foreground, black = transparent"
+  },
+  "icons": {
+    "close": {
+      "file": "close.png",
+      "description": "X-shaped cross mark (window close button)"
+    },
+    "maximize": {
+      "file": "maximize.png",
+      "description": "Square outline (window maximize button)"
+    },
+    "restore": {
+      "file": "restore.png",
+      "description": "Overlapping squares (window restore button)"
+    },
+    "minimize": {
+      "file": "minimize.png",
+      "description": "Horizontal line (window minimize button)"
+    },
+    "arrow-down": {
+      "file": "arrow-down.png",
+      "description": "Downward-pointing arrow / chevron"
+    },
+    "arrow-up": {
+      "file": "arrow-up.png",
+      "description": "Upward-pointing arrow / chevron"
+    },
+    "arrow-right": {
+      "file": "arrow-right.png",
+      "description": "Right-pointing arrow / chevron"
+    },
+    "arrow-left": {
+      "file": "arrow-left.png",
+      "description": "Left-pointing arrow / chevron"
+    },
+    "arrows-v": {
+      "file": "arrows-v.png",
+      "description": "Vertical double-headed arrow"
+    },
+    "arrows-h": {
+      "file": "arrows-h.png",
+      "description": "Horizontal double-headed arrow"
+    },
+    "note-quarter": {
+      "file": "note-quarter.png",
+      "description": "Quarter note (music notation)"
+    },
+    "note-eighth": {
+      "file": "note-eighth.png",
+      "description": "Eighth note (music notation)"
+    },
+    "note-16th": {
+      "file": "note-16th.png",
+      "description": "16th note (music notation)"
+    },
+    "play": {
+      "file": "play.png",
+      "description": "Right-pointing triangle (playback play)"
+    },
+    "pause": {
+      "file": "pause.png",
+      "description": "Two vertical bars (playback pause)"
+    },
+    "stop": {
+      "file": "stop.png",
+      "description": "Filled square (playback stop)"
+    },
+    "loop": {
+      "file": "loop.png",
+      "description": "Circular arrows (loop / repeat)"
+    },
+    "metro-l": {
+      "file": "metro-l.png",
+      "description": "Metronome pendulum left position"
+    },
+    "metro-r": {
+      "file": "metro-r.png",
+      "description": "Metronome pendulum right position"
+    },
+    "check": {
+      "file": "check.png",
+      "description": "Checkmark / tick"
+    },
+    "rec": {
+      "file": "rec.png",
+      "description": "Filled circle (record indicator)"
+    },
+    "dice": {
+      "file": "dice.png",
+      "description": "Six-sided die face"
+    },
+    "trash": {
+      "file": "trash.png",
+      "description": "Trash can / waste bin"
+    },
+    "folder": {
+      "file": "folder.png",
+      "description": "Generic folder icon"
+    },
+    "file": {
+      "file": "file.png",
+      "description": "Generic file icon"
+    },
+    "add-folder": {
+      "file": "add-folder.png",
+      "description": "Folder icon with + mark (new folder)"
+    },
+    "add-file": {
+      "file": "add-file.png",
+      "description": "File icon with + mark (new file)"
+    },
+    "rename": {
+      "file": "rename.png",
+      "description": "Pen drawing a line (rename)"
+    }
+  }
+}
