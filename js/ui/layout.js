@@ -142,10 +142,19 @@ export class Box {
     this.x = x;
     this.y = y;
 
-    // ── 非表示 Box 子の全リーフを隠す ──
+    // ── Box 子のリーフ可視性を「今の Box 可視性」と同期する ──
+    // 表示 Box  → リーフを表示状態へ復元 (前回 hidden で隠れていた場合に復活させる)
+    // 非表示 Box → リーフを非表示 (WidgetGroup.draw からも確実に隠す)
+    //
+    // この処理を maxW / maxH の計算より前に行うことが重要。
+    // 前回 hidden だった Box が今回 visible になる場合、リーフが
+    // visible=false のまま残っているとその Box の HBox.w / VBox.h が 0 に
+    // 縮退し、後段の maxW が過小評価される。
+    // (例: DISPLAY_TUNING で Pixel Grid を OFF→ON すると、
+    //      復活した HBox の幅が 0 として計算され、HSep が縮んでいた。)
     for (const c of this.children) {
-      if (c.visible === false && c instanceof Box) {
-        c._setLeavesVisible(false);
+      if (c instanceof Box) {
+        c._setLeavesVisible(c.visible !== false);
       }
     }
 
@@ -164,7 +173,6 @@ export class Box {
       for (const c of vis) {
         if (c instanceof Box) {
           const cy = y + ((maxH - c.h) >> 1);
-          c._setLeavesVisible(true);
           c.layout(cx, cy);
         } else {
           c._preStretchH = c.h;
@@ -186,7 +194,6 @@ export class Box {
       let cy = y;
       for (const c of vis) {
         if (c instanceof Box) {
-          c._setLeavesVisible(true);
           c.layout(x, cy);
         } else {
           c._preStretchW = c.w;
@@ -204,12 +211,17 @@ export class Box {
    * 全子孫リーフウィジェットの visible を一括設定する (内部ヘルパー)。
    * layout() から呼ばれ、非表示コンテナ内のウィジェットを
    * WidgetGroup.draw() / update() からも確実に隠す。
+   *
+   * v = true で呼ばれた場合でも、ネストした非表示 Box の配下リーフは
+   * 引き続き非表示のままにする (可視性カスケードの整合性)。
    * @param {boolean} v
    */
   _setLeavesVisible(v) {
     for (const c of this.children) {
       if (c instanceof Box) {
-        c._setLeavesVisible(v);
+        // ネスト Box の可視性 AND 引数 v を伝播。
+        // 非表示 Box の中身が一瞬でも可視化される副作用を防ぐ。
+        c._setLeavesVisible(v && c.visible !== false);
       } else {
         c.visible = v;
       }
