@@ -1,6 +1,6 @@
 /**
- * @module core/pixel_grid
- * pixel_grid.js — 表示エフェクト (Vignette + Diagonal scanline)
+ * @module core/display_fx
+ * display_fx.js — 表示エフェクト (Vignette + Diagonal scanline)
  *
  * 1-bit VRAM を 1:1 で RGBA に展開し、Diagonal scanline と Vignette を
  * 適用する純粋関数群。DOM/Canvas に依存しない。
@@ -20,9 +20,6 @@
  *   - CELL=3 のジオメトリ拡大 (Pixel Grid)
  *   - Glow (gap 位置の隣接ピクセル色着色)
  *   - Noise (RGB ランダム揺らぎ)
- *
- * 注: ファイル名は移行期のため pixel_grid.js のまま。
- *     追って refactor コミットで display_fx.js に改名する。
  */
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -32,7 +32,7 @@ import {
   setDiagSpeed,
   setDiagSpacing,
   setDiagThickness,
-} from "./pixel_grid.js";
+} from "./display_fx.js";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  内部状態
@@ -838,7 +838,7 @@ export function endCaptureIndexed() {
 }
 
 /** vram の内容を Canvas に描画する。毎フレーム draw() の末尾で呼ぶ。
- *  pixel_grid モジュールで VRAM → RGBA 1:1 + Vignette を適用して putImageData。 */
+ *  display_fx モジュールで VRAM → RGBA 1:1 + Vignette を適用して putImageData。 */
 export function flush() {
   const fg = Config.palette.fg;
   const bg = Config.palette.bg;

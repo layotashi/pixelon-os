@@ -61,7 +61,7 @@
 | 例 | 用途 |
 | -- | ---- |
 | `(wm)` `(ui)` `(audio)` `(kernel)` `(config)` `(wallpaper)` `(splash)` | レイヤー / 単一ファイル |
-| `(core/gpu)` `(core/pixel_grid)` `(core/vfs)` `(core/audio)` | `core/` 内の特定モジュール |
+| `(core/gpu)` `(core/display_fx)` `(core/vfs)` `(core/audio)` | `core/` 内の特定モジュール |
 | `(settings)` `(studio)` `(paint)` `(notepad)` `(explorer)` `(capture)` `(genart)` 等 | 特定アプリ |
 | `(docs)` `(backlog)` `(brief)` `(humor)` | docs 配下の特定ドキュメント |
 | `(test)` | テスト全般 |
@@ -165,10 +165,10 @@ docs(backlog): Display Profile 導入を P1 で追加
 ### 7.5 構造変更 (refactor)
 
 ```
-refactor(core/pixel_grid): CELL を動的化
+refactor(core/display_fx): Vignette LUT を別モジュールに分離
 
-flush 経路から CELL=3 ハードコードを排除し、setPixelGridEnabled
-で動的切替できるようにする前準備。挙動は変えない。
+Vignette の LUT 構築・適用ロジックを vignette.js として display_fx.js
+から切り出す。挙動は変えない。
 ```
 
 ---

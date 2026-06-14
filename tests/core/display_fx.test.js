@@ -1,8 +1,7 @@
 /**
- * core/pixel_grid.js — 表示エフェクト (Vignette + Diagonal scanline) のテスト。
+ * core/display_fx.js — 表示エフェクト (Vignette + Diagonal scanline) のテスト。
  *
  * 注: 旧 Pixel Grid (CELL=3) / Glow / Noise は撤廃済み (BACKLOG 参照)。
- * ファイル名は移行期のため pixel_grid.test.js のまま。
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import {
@@ -12,7 +11,7 @@ import {
   getDisplayPalette,
   applyVignette,
   setDiagEnabled,
-} from "@/core/pixel_grid.js";
+} from "@/core/display_fx.js";
 
 const FG = [0x33, 0xff, 0x00]; // P1 Green
 const BG = [0x00, 0x12, 0x00];

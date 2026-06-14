@@ -86,7 +86,7 @@ async function boot() {
     // ── 保存されたエフェクトパラメータを復元 ──
     // initGpu() の後 (onEffectChange コールバック登録済み) に実行。
     // _restoreEffectParams で内部状態を復元した後、_fireEffectCallbacks で
-    // pixel_grid の setter を一括発火する。
+    // display_fx の setter を一括発火する。
     {
       const savedEffect = Storage.load("effect", null);
       if (savedEffect) {

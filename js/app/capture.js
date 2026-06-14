@@ -28,7 +28,7 @@ import {
   ensureLut,
   applyVramIndexed,
   getDisplayPalette,
-} from "../core/pixel_grid.js";
+} from "../core/display_fx.js";
 
 const APP_NAME = "CAPTURE";
 

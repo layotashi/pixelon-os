@@ -685,7 +685,7 @@ export function _restoreEffectParams(saved) {
 
 /**
  * 全エフェクトパラメータについてコールバックを発火する。
- * boot() でのパラメータ復元後に pixel_grid へ反映するため使用。
+ * boot() でのパラメータ復元後に display_fx へ反映するため使用。
  * @internal
  */
 export function _fireEffectCallbacks() {
