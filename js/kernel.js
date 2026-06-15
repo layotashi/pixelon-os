@@ -245,6 +245,7 @@ async function boot() {
       wmGetRegistry: WM.wmGetRegistry,
       wmGetWindowList: WM.wmGetWindowList,
       wmGetWindowRect: WM.wmGetWindowRect,
+      wmGetContentRect: WM.wmGetContentRect,
       // capture.mjs が screenshot 撮影前に視覚効果 (Diagonal scanline /
       // Vignette) を切るために使う。production には影響しない。
       setEffect: Config.setEffectParam,

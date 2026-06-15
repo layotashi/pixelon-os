@@ -1,181 +1,248 @@
 /**
  * @module app/fontsmith
- * fontsmith.js — FONTSMITH (1-bit ビットマップフォントエディタ) のプロトタイプ
+ * fontsmith.js — FONTSMITH (1-bit ビットマップフォントエディタ)
  *
- * 5x7 グリッドで任意の文字をデザインし、自作の文字を画面内で確認できる。
- * 「ユーザーが作ったフォントが OS の chrome そのものになる」という究極形
- * (本格化時の方向性) への足掛かり。
+ * システムフォント (5x5) の全 ASCII グリフ (0x20–0x7E) を 1 文字ずつ
+ * デザインし、APPLY で OS 全体のフォントに即時適用する。
+ * 「ユーザーが作ったフォントが OS の chrome そのものになる」という
+ * SYNESTA の個人化体験の中核。
  *
- * プロトタイプ仕様:
- *   - 編集対象は A / B / C / D の 4 文字に限定 (UI のシンプルさ優先)
- *   - 5x7 セル × 1 文字 (拡大 8x) のエディタ
- *   - 上部: 文字セレクタ (4 文字をクリックして切替)
- *   - 下部: 「ABCD ABCD」のプレビュー (デザインした文字を自前描画)
- *   - クリア / 反転 ボタン
+ * 仕様:
+ *   - 起動時に現在のシステムフォントを取り込んで編集対象にする
+ *     (白紙からではなく、実フォントを微調整する形)
+ *   - 上部: キャラクタマップ (全 95 文字を現在の字形で一覧、クリックで選択)
+ *   - 中央: 選択中文字の拡大エディタ (クリック/ドラッグでピクセルを塗る)
+ *   - CLEAR / INVERT で編集補助
+ *   - 下部: パングラムプレビュー (編集中フォントで描画)
+ *   - APPLY: 編集したフォントを OS 全体に即時適用 (font.js setGlyphs)
+ *   - REVERT: 起動時のシステムフォントに戻す
  *
- * 未実装 (本格化時の検討事項):
- *   - ASCII 95 字全てに拡張
- *   - 名前付き保存 (VFS にフォントシート PNG + manifest 書き出し)
- *   - Config.FONTS への動的追加 → Settings から選択可能に
- *   - core/font.js の switchFont() でシステム全体に反映
- *   - 既存フォントのインポート (現在のデフォルト 5x7 を初期値に)
+ * 寸法はシステムフォントと同一 (5x5) を保つため、適用してもメトリクス・
+ * アイコン・レイアウトは一切変わらず、純粋に字形だけが置き換わる。
+ *
+ * 未実装 (今後の検討事項):
+ *   - 名前付き保存 → Config.FONTS 登録 → Settings ドロップダウンで切替
+ *   - VFS への永続化 (リロード後も自作フォントを保持)
  */
 
 import { pset, fillRect, drawRect, hline, vline } from "../core/gpu.js";
-import { drawText, GLYPH_W, GLYPH_H } from "../core/font.js";
+import {
+  drawText,
+  GLYPH_H,
+  getGlyph,
+  getFontMetrics,
+  setGlyphs,
+} from "../core/font.js";
 import { wmOpen, wmRegister } from "../wm/index.js";
 import * as UI from "../ui/index.js";
 
 const APP_NAME = "FONTSMITH";
 
-const WIN_W = 260;
-const WIN_H = 220;
+const WIN_W = 172;
+const WIN_H = 234;
 
-const GLYPH_GRID_W = 5;
-const GLYPH_GRID_H = 7;
-const EDITOR_CELL_PX = 12; // 拡大率
-const EDITOR_W = GLYPH_GRID_W * EDITOR_CELL_PX;
-const EDITOR_H = GLYPH_GRID_H * EDITOR_CELL_PX;
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  レイアウト定数 (content-relative)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-const EDITABLE_LETTERS = ["A", "B", "C", "D"];
-// セルサイズは「(SELECTOR_CELL_PX - GLYPH_W) が偶数」になるよう選ぶ。
-// GLYPH_W = 5 のとき、SELECTOR_CELL_PX = 15 なら (15-5)/2 = 5 で
-// 上下左右とも余白 4px で 1px 対称になる (PRODUCT_BRIEF §5.3)。
-// CELL_PX = 16 だと (16-5)/2 = 5.5 となり整数 padding 不可、グリフが
-// 右下に 1px 寄ってしまうため避ける。
-const SELECTOR_CELL_PX = 15;
+const PAD = 5;
+
+// キャラクタマップ: 全 ASCII を現フォントで一覧表示
+const CMAP_COLS = 16;
+const CMAP_CELL = 9; // (CMAP_CELL - glyphW=5) = 4 → 上下左右 2px で対称配置
+const CMAP_X = PAD;
+const CMAP_Y = 6;
+
+// エディタ: 選択中グリフの拡大編集グリッド
+const EDIT_SCALE = 13;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  状態
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/** @type {Record<string, Uint8Array>} 各文字の 5x7 ピクセルデータ */
-const glyphs = {};
-for (const ch of EDITABLE_LETTERS) {
-  glyphs[ch] = new Uint8Array(GLYPH_GRID_W * GLYPH_GRID_H);
+/** @type {{ glyphW:number, glyphH:number, firstChar:number, charCount:number }|null} */
+let metrics = null;
+/** @type {Uint8Array[]|null} 編集中の全グリフ (working copy) */
+let working = null;
+/** @type {Uint8Array[]|null} 起動時のスナップショット (REVERT 用) */
+let seed = null;
+/** 編集対象の文字インデックス (0..charCount-1) */
+let selIndex = 0;
+
+// 動的レイアウト (metrics 確定後に算出)
+let CMAP_ROWS = 6;
+let CMAP_H = CMAP_ROWS * CMAP_CELL;
+let EDIT_LABEL_Y = 0;
+let EDITOR_X = PAD;
+let EDITOR_Y = 0;
+let EDITOR_W = 0;
+let EDITOR_H = 0;
+let TOOLBAR_X = 0;
+let PREVIEW_Y = 0;
+let BTN_ROW_Y = 0;
+
+function _copyBuf(b) {
+  return Uint8Array.from(b);
 }
 
-let selectedLetter = "A";
-
-// 初期パターン (とりあえず 'A' は それっぽい形を入れて、概念を伝えやすくする)
-function _seedDefaultA() {
-  // A の標準的な 5x7 形:
-  //  .###.
-  //  #...#
-  //  #...#
-  //  #####
-  //  #...#
-  //  #...#
-  //  #...#
-  const seed = [
-    " ### ",
-    "#   #",
-    "#   #",
-    "#####",
-    "#   #",
-    "#   #",
-    "#   #",
-  ];
-  for (let y = 0; y < GLYPH_GRID_H; y++) {
-    for (let x = 0; x < GLYPH_GRID_W; x++) {
-      glyphs["A"][y * GLYPH_GRID_W + x] = seed[y][x] === "#" ? 1 : 0;
-    }
+/** 現在のシステムフォントを取り込んで編集対象にする (REVERT 用スナップも保存) */
+function _seedFromSystem() {
+  metrics = getFontMetrics();
+  const len = metrics.glyphW * metrics.glyphH;
+  working = new Array(metrics.charCount);
+  seed = new Array(metrics.charCount);
+  for (let i = 0; i < metrics.charCount; i++) {
+    const ch = String.fromCharCode(metrics.firstChar + i);
+    const g = getGlyph(ch);
+    const buf = g && g.length === len ? _copyBuf(g) : new Uint8Array(len);
+    working[i] = buf;
+    seed[i] = _copyBuf(buf);
   }
+  // 'A' を初期選択 (なければ先頭)
+  const aIdx = "A".charCodeAt(0) - metrics.firstChar;
+  selIndex = aIdx >= 0 && aIdx < metrics.charCount ? aIdx : 0;
+
+  _computeLayout();
 }
-_seedDefaultA();
+
+/** metrics 確定後にレイアウト座標を算出する */
+function _computeLayout() {
+  const gw = metrics.glyphW;
+  const gh = metrics.glyphH;
+  CMAP_ROWS = Math.ceil(metrics.charCount / CMAP_COLS);
+  CMAP_H = CMAP_ROWS * CMAP_CELL;
+  EDIT_LABEL_Y = CMAP_Y + CMAP_H + 5;
+  EDITOR_X = PAD;
+  EDITOR_Y = EDIT_LABEL_Y + 9;
+  EDITOR_W = gw * EDIT_SCALE;
+  EDITOR_H = gh * EDIT_SCALE;
+  TOOLBAR_X = EDITOR_X + EDITOR_W + 12;
+  PREVIEW_Y = EDITOR_Y + EDITOR_H + 8;
+  // プレビュー: hline + "PREVIEW:" + パングラム 2 行
+  const LH = gh + 2;
+  BTN_ROW_Y = PREVIEW_Y + GLYPH_H + 4 + LH * 2 + 6;
+}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  座標計算
+//  グリフ操作
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-const SELECTOR_X = 4;
-const SELECTOR_Y = 4;
-const EDITOR_X = 4;
-const EDITOR_Y = SELECTOR_Y + SELECTOR_CELL_PX + 8;
-const TOOLBAR_X = EDITOR_X + EDITOR_W + 12;
-const TOOLBAR_Y = EDITOR_Y;
-const PREVIEW_Y = EDITOR_Y + EDITOR_H + 12;
+function _clearGlyph() {
+  if (working) working[selIndex].fill(0);
+}
+
+function _invertGlyph() {
+  if (!working) return;
+  const g = working[selIndex];
+  for (let i = 0; i < g.length; i++) g[i] = g[i] ? 0 : 1;
+}
+
+/** 編集したフォントを OS 全体に即時適用する */
+function _applyToSystem() {
+  if (!working) return;
+  setGlyphs(working.map(_copyBuf));
+}
+
+/** 起動時のシステムフォントに戻す (エディタもスナップショットへ復帰) */
+function _revert() {
+  if (!seed) return;
+  setGlyphs(seed.map(_copyBuf));
+  working = seed.map(_copyBuf);
+}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  ウィジェット
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-let btnClear, btnInvert;
+let btnClear, btnInvert, btnApply, btnRevert;
 let widgetGroup;
 
 function _initWidgets() {
   if (widgetGroup) return;
-  btnClear = new UI.PushButton(TOOLBAR_X, TOOLBAR_Y, "CLEAR", () => {
-    glyphs[selectedLetter].fill(0);
-  });
-  btnInvert = new UI.PushButton(TOOLBAR_X, TOOLBAR_Y + 20, "INVERT", () => {
-    const g = glyphs[selectedLetter];
-    for (let i = 0; i < g.length; i++) g[i] = g[i] ? 0 : 1;
-  });
-  widgetGroup = new UI.WidgetGroup([btnClear, btnInvert]);
+  // レイアウトは _seedFromSystem 内で確定済み (factory で seed → init の順)
+  btnClear = new UI.PushButton(TOOLBAR_X, EDITOR_Y, "CLEAR", _clearGlyph);
+  btnInvert = new UI.PushButton(
+    TOOLBAR_X,
+    EDITOR_Y + 18,
+    "INVERT",
+    _invertGlyph,
+  );
+  btnApply = new UI.PushButton(PAD, BTN_ROW_Y, "APPLY", _applyToSystem);
+  btnRevert = new UI.PushButton(
+    PAD + btnApply.w + 6,
+    BTN_ROW_Y,
+    "REVERT",
+    _revert,
+  );
+  widgetGroup = new UI.WidgetGroup([btnClear, btnInvert, btnApply, btnRevert]);
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  描画
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/** 5x7 ピクセル glyph を任意位置に任意倍率で描く */
-function drawGlyph(cx, cy, ch, scale) {
-  const g = glyphs[ch];
-  if (!g) return;
-  for (let y = 0; y < GLYPH_GRID_H; y++) {
-    for (let x = 0; x < GLYPH_GRID_W; x++) {
-      if (g[y * GLYPH_GRID_W + x]) {
-        if (scale === 1) {
-          pset(cx + x, cy + y, 1);
-        } else {
-          fillRect(cx + x * scale, cy + y * scale, scale, scale, 1);
-        }
+/** グリフバッファを任意位置・倍率・色で描く */
+function drawGlyphBuf(buf, gw, gh, cx, cy, scale, color) {
+  for (let y = 0; y < gh; y++) {
+    for (let x = 0; x < gw; x++) {
+      if (buf[y * gw + x]) {
+        if (scale === 1) pset(cx + x, cy + y, color);
+        else fillRect(cx + x * scale, cy + y * scale, scale, scale, color);
       }
     }
   }
 }
 
-function drawSelector(cr) {
-  const baseX = cr.x + SELECTOR_X;
-  const baseY = cr.y + SELECTOR_Y;
-  drawText(baseX, baseY, "LETTER:", 1);
-  const startX = baseX + 50;
-  // セル中央配置のオフセット (drawText は整数座標を要求するので Math.floor)
-  const textOffsetX = Math.floor((SELECTOR_CELL_PX - GLYPH_W) / 2);
-  const textOffsetY = Math.floor((SELECTOR_CELL_PX - GLYPH_H) / 2) - 2;
-  for (let i = 0; i < EDITABLE_LETTERS.length; i++) {
-    const ch = EDITABLE_LETTERS[i];
-    const x = startX + i * SELECTOR_CELL_PX;
-    drawRect(x, baseY - 2, SELECTOR_CELL_PX, SELECTOR_CELL_PX, 1);
-    drawText(x + textOffsetX, baseY + textOffsetY, ch, 1);
-    if (ch === selectedLetter) {
-      // 選択中マーカー (下線、セル直下に)
-      hline(x + 1, x + SELECTOR_CELL_PX - 2, baseY + SELECTOR_CELL_PX - 1, 1);
+function drawCharMap(cr) {
+  const gw = metrics.glyphW;
+  const gh = metrics.glyphH;
+  const baseX = cr.x + CMAP_X;
+  const baseY = cr.y + CMAP_Y;
+  const gx = Math.floor((CMAP_CELL - gw) / 2);
+  const gy = Math.floor((CMAP_CELL - gh) / 2);
+  // 外枠 (グループ化: 近接の原則)
+  drawRect(baseX - 1, baseY - 1, CMAP_COLS * CMAP_CELL + 2, CMAP_H + 2, 1);
+  for (let i = 0; i < metrics.charCount; i++) {
+    const col = i % CMAP_COLS;
+    const row = (i / CMAP_COLS) | 0;
+    const cx = baseX + col * CMAP_CELL;
+    const cy = baseY + row * CMAP_CELL;
+    if (i === selIndex) {
+      // 選択セルは反転 (塗りつぶし背景 + 前景 0 でグリフを彫る)
+      fillRect(cx, cy, CMAP_CELL, CMAP_CELL, 1);
+      drawGlyphBuf(working[i], gw, gh, cx + gx, cy + gy, 1, 0);
+    } else {
+      drawGlyphBuf(working[i], gw, gh, cx + gx, cy + gy, 1, 1);
     }
   }
 }
 
 function drawEditor(cr) {
+  const gw = metrics.glyphW;
+  const gh = metrics.glyphH;
+  // EDIT ラベル
+  const label = `EDIT '${String.fromCharCode(metrics.firstChar + selIndex)}'`;
+  drawText(cr.x + PAD, cr.y + EDIT_LABEL_Y, label, 1);
+
   const baseX = cr.x + EDITOR_X;
   const baseY = cr.y + EDITOR_Y;
-  // セルグリッド (薄い線)
-  for (let y = 0; y <= GLYPH_GRID_H; y++) {
-    hline(baseX, baseX + EDITOR_W, baseY + y * EDITOR_CELL_PX, 1);
+  // グリッド線
+  for (let y = 0; y <= gh; y++) {
+    hline(baseX, baseX + EDITOR_W, baseY + y * EDIT_SCALE, 1);
   }
-  for (let x = 0; x <= GLYPH_GRID_W; x++) {
-    vline(baseX + x * EDITOR_CELL_PX, baseY, baseY + EDITOR_H, 1);
+  for (let x = 0; x <= gw; x++) {
+    vline(baseX + x * EDIT_SCALE, baseY, baseY + EDITOR_H, 1);
   }
-  // ON セル (中央を塗る)
-  const g = glyphs[selectedLetter];
-  for (let y = 0; y < GLYPH_GRID_H; y++) {
-    for (let x = 0; x < GLYPH_GRID_W; x++) {
-      if (g[y * GLYPH_GRID_W + x]) {
+  // ON セル (グリッド線の内側を 1px 対称マージンで塗る)
+  const g = working[selIndex];
+  for (let y = 0; y < gh; y++) {
+    for (let x = 0; x < gw; x++) {
+      if (g[y * gw + x]) {
         fillRect(
-          baseX + x * EDITOR_CELL_PX + 2,
-          baseY + y * EDITOR_CELL_PX + 2,
-          EDITOR_CELL_PX - 3,
-          EDITOR_CELL_PX - 3,
+          baseX + x * EDIT_SCALE + 1,
+          baseY + y * EDIT_SCALE + 1,
+          EDIT_SCALE - 1,
+          EDIT_SCALE - 1,
           1,
         );
       }
@@ -184,59 +251,36 @@ function drawEditor(cr) {
 }
 
 // パングラム (全アルファベットを含む英文): フォントプレビューの定番。
-// 編集対象の A/B/C/D を自然に含む単語が全部入っているのも好都合
-// (A=LAZY, B=BROWN, C=QUICK, D=DOG)。
-const PANGRAM_LINES = [
-  "THE QUICK BROWN FOX",
-  "JUMPS OVER THE LAZY DOG",
-];
-
-/** glyph に ON ピクセルが 1 つもなければ true */
-function _glyphIsEmpty(g) {
-  for (let i = 0; i < g.length; i++) if (g[i]) return false;
-  return true;
-}
+const PANGRAM_LINES = ["THE QUICK BROWN FOX", "JUMPS OVER THE LAZY DOG"];
 
 function drawPreview(cr) {
-  const baseX = cr.x + 4;
+  const gw = metrics.glyphW;
+  const gh = metrics.glyphH;
+  const baseX = cr.x + PAD;
   const baseY = cr.y + PREVIEW_Y;
   hline(cr.x, cr.x + cr.w - 1, baseY - 4, 1);
   drawText(baseX, baseY, "PREVIEW:", 1);
 
-  // Pangram を 2 行で表示。編集済み文字 (A/B/C/D) は自作デザイン、その他は
-  // システムフォントで描画 → 「自分のフォントが実文の中でどう見えるか」が
-  // ひと目で分かる。全文字を同じ幅 (STEP) で進めることで桁が揃う。
-  const LINE_H = GLYPH_GRID_H + 2; // 5x7 グリッドの行間
-  const STEP = GLYPH_GRID_W + 1; // システムフォントの advance とも一致 (5+1)
-  let lineY = baseY + GLYPH_H + 4;
+  const STEP = gw + 1;
+  const LH = gh + 2;
+  let ly = baseY + GLYPH_H + 4;
   for (const line of PANGRAM_LINES) {
     let cx = baseX;
     for (const ch of line) {
-      const userGlyph = glyphs[ch];
-      // 編集済みの A/B/C/D で 1 px でも置かれていれば自作デザインを使う。
-      // 空の場合はシステムフォントにフォールバック (パングラムが読める状態を維持)。
-      if (userGlyph && !_glyphIsEmpty(userGlyph)) {
-        drawGlyph(cx, lineY, ch, 1);
-      } else if (ch !== " ") {
-        drawText(cx, lineY, ch, 1);
+      const idx = ch.charCodeAt(0) - metrics.firstChar;
+      if (ch !== " " && idx >= 0 && idx < metrics.charCount) {
+        drawGlyphBuf(working[idx], gw, gh, cx, ly, 1, 1);
       }
       cx += STEP;
     }
-    lineY += LINE_H;
-  }
-
-  // 選択中の文字を 2x で showcase (デザインの拡大確認)
-  const showcaseY = lineY + 4;
-  drawText(baseX, showcaseY, "SELECTED:", 1);
-  if (glyphs[selectedLetter]) {
-    // "SELECTED:" = 9 chars × 6 px ≈ 54 px → 64 px から 2x glyph 開始
-    drawGlyph(baseX + 64, showcaseY, selectedLetter, 2);
+    ly += LH;
   }
 }
 
 function onDraw(cr) {
+  if (!working) _seedFromSystem();
   _initWidgets();
-  drawSelector(cr);
+  drawCharMap(cr);
   drawEditor(cr);
   drawPreview(cr);
   widgetGroup.draw(cr);
@@ -246,61 +290,57 @@ function onDraw(cr) {
 //  入力
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-function _selectorHit(localX, localY) {
-  const startX = SELECTOR_X + 50;
-  const baseY = SELECTOR_Y - 2;
-  if (localY < baseY || localY >= baseY + SELECTOR_CELL_PX) return null;
-  const dx = localX - startX;
-  if (dx < 0) return null;
-  const idx = (dx / SELECTOR_CELL_PX) | 0;
-  if (idx >= EDITABLE_LETTERS.length) return null;
-  return EDITABLE_LETTERS[idx];
+/** キャラクタマップのヒットテスト → 文字インデックス or null */
+function _charMapHit(localX, localY) {
+  const dx = localX - CMAP_X;
+  const dy = localY - CMAP_Y;
+  if (dx < 0 || dy < 0) return null;
+  const col = (dx / CMAP_CELL) | 0;
+  const row = (dy / CMAP_CELL) | 0;
+  if (col >= CMAP_COLS || row >= CMAP_ROWS) return null;
+  const idx = row * CMAP_COLS + col;
+  if (idx < 0 || idx >= metrics.charCount) return null;
+  return idx;
 }
 
+/** エディタグリッドのヒットテスト → {x,y} or null */
 function _editorHit(localX, localY) {
   const dx = localX - EDITOR_X;
   const dy = localY - EDITOR_Y;
   if (dx < 0 || dy < 0 || dx >= EDITOR_W || dy >= EDITOR_H) return null;
-  return {
-    x: (dx / EDITOR_CELL_PX) | 0,
-    y: (dy / EDITOR_CELL_PX) | 0,
-  };
+  return { x: (dx / EDIT_SCALE) | 0, y: (dy / EDIT_SCALE) | 0 };
 }
 
-let _lastPaintedCell = null;
+let _lastPaintValue = null;
 
 function onInput(ev) {
+  if (!working) _seedFromSystem();
   _initWidgets();
   widgetGroup.update(ev);
 
   if (ev.type === "down") {
-    // セレクタクリック
-    const newLetter = _selectorHit(ev.localX, ev.localY);
-    if (newLetter) {
-      selectedLetter = newLetter;
+    const ci = _charMapHit(ev.localX, ev.localY);
+    if (ci !== null) {
+      selIndex = ci;
       return;
     }
-    // エディタクリックでトグル
     const cell = _editorHit(ev.localX, ev.localY);
     if (cell) {
-      const g = glyphs[selectedLetter];
-      const idx = cell.y * GLYPH_GRID_W + cell.x;
+      const g = working[selIndex];
+      const idx = cell.y * metrics.glyphW + cell.x;
       g[idx] = g[idx] ? 0 : 1;
-      _lastPaintedCell = `${cell.x},${cell.y},${g[idx]}`;
+      _lastPaintValue = g[idx];
     }
   }
-  if (ev.type === "held") {
-    // ドラッグでペイント (押下時の状態と同じ値で塗り続け)
+  if (ev.type === "held" && _lastPaintValue !== null) {
     const cell = _editorHit(ev.localX, ev.localY);
-    if (cell && _lastPaintedCell) {
-      const [, , v] = _lastPaintedCell.split(",").map(Number);
-      const g = glyphs[selectedLetter];
-      const idx = cell.y * GLYPH_GRID_W + cell.x;
-      g[idx] = v;
+    if (cell) {
+      const g = working[selIndex];
+      g[cell.y * metrics.glyphW + cell.x] = _lastPaintValue;
     }
   }
   if (ev.type === "up") {
-    _lastPaintedCell = null;
+    _lastPaintValue = null;
   }
 }
 
@@ -311,6 +351,8 @@ function onInput(ev) {
 wmRegister(
   APP_NAME,
   () => {
+    _seedFromSystem();
+    _initWidgets();
     return wmOpen(-1, -1, WIN_W, WIN_H, APP_NAME, onDraw, onInput, null, {
       noResize: true,
       noMaximize: true,
