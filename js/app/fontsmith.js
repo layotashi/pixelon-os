@@ -403,6 +403,10 @@ wmRegister(
     _seedFromSystem();
     _initWidgets();
     return wmOpen(-1, -1, WIN_W, WIN_H, APP_NAME, onDraw, onInput, null, {
+      about:
+        "Edit the system font glyph by glyph. Pick a character from the " +
+        "map, draw it in the grid, then APPLY to use your font across the " +
+        "OS, or SAVE it with a name.",
       noResize: true,
       noMaximize: true,
     });

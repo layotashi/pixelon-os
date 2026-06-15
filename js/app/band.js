@@ -235,6 +235,9 @@ wmRegister(
   APP_NAME,
   () => {
     return wmOpen(-1, -1, WIN_W, WIN_H, APP_NAME, onDraw, onInput, null, {
+      about:
+        "Visualizes audio from STUDIO playback in 1-bit. Press the > " +
+        "button in the header to switch between bars, wave, and ripple modes.",
       noResize: true,
       noMaximize: true,
     });

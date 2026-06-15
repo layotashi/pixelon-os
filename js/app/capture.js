@@ -644,6 +644,9 @@ WM.wmRegister(APP_NAME, () => {
     (ev) => screenshotWidgets.update(ev),
     () => captureRoot.measure(),
     {
+      about:
+        "Captures the screen or a single window as a PNG, video, or " +
+        "looping GIF. Set a delay for a timed shot.",
       footer: true,
       onDrawFooter: (footerRect) => {
         refreshOutputLabel();

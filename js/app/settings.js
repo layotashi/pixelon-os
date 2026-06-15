@@ -540,6 +540,9 @@ wmRegister(
       (ev) => appearWidgets.update(ev),
       () => settingsRoot.measure(),
       {
+        about:
+          "System settings. Change the palette, wallpaper, resolution, " +
+          "fonts, header and content padding, and more.",
         scrollable: true,
         onRelayout: () => {
           appearWidgets.remeasureAll();

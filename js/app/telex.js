@@ -176,7 +176,13 @@ wmRegister(
       },
       null,
       null,
-      { noResize: false, noMaximize: true },
+      {
+        about:
+          "A teletype that prints short status messages at intervals. " +
+          "It runs on its own — no input needed.",
+        noResize: false,
+        noMaximize: true,
+      },
     );
   },
   { category: "EXPERIMENT" },

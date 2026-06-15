@@ -238,6 +238,9 @@ wmRegister(
   () => {
     _initFish();
     return wmOpen(-1, -1, WIN_W, WIN_H, APP_NAME, onDraw, onInput, null, {
+      about:
+        "A 1-bit aquarium. The fish school using simple flocking rules. " +
+        "Click in the tank to scatter them.",
       noResize: true,
       noMaximize: true,
     });

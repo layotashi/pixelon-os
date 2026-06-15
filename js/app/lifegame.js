@@ -453,6 +453,9 @@ wmRegister(
   () => {
     _initWidgets();
     return wmOpen(-1, -1, 0, 0, APP_NAME, onDraw, onInput, onMeasure, {
+      about:
+        "Conway's Game of Life. Click cells to toggle them alive, then run " +
+        "the simulation to watch the patterns evolve.",
       footer: true,
       onDrawFooter,
       onBeforeClose,

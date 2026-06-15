@@ -2850,6 +2850,9 @@ wmRegister(
     buildToolbar();
     seed = nbSeed.value;
     const id = wmOpen(-1, -1, 0, 0, APP_NAME, onDraw, onInput, onMeasure, {
+      about:
+        "Generative art. Choose an algorithm and preset, set a seed, and " +
+        "generate — the same rules yield endless variations.",
       footer: true,
       onDrawFooter,
       onBeforeClose,

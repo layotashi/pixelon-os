@@ -255,6 +255,9 @@ wmRegister(APP_NAME, () => {
     (ev) => tuningWidgets.update(ev),
     () => tuningRoot.measure(),
     {
+      about:
+        "Adjusts display effects such as vignette and diagonal scanlines. " +
+        "Changes apply instantly and are saved.",
       scrollable: true,
       onRelayout: () => {
         tuningWidgets.remeasureAll();

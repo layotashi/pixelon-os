@@ -277,6 +277,9 @@ function onMeasure() {
 wmRegister(APP_NAME, () => {
   _initWidgets();
   return wmOpen(-1, -1, 0, 0, APP_NAME, onDraw, onInput, onMeasure, {
+    about:
+      "A file manager for the virtual filesystem. Browse the tree and " +
+      "create, rename, move, or delete files and folders.",
     footer: true,
     onDrawFooter,
     onRelayout: () => {

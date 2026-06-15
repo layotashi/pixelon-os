@@ -344,6 +344,9 @@ wmRegister(
       onStudioInput,
       measureStudio,
       {
+        about:
+          "A music workstation. Use the transport to play and record, and " +
+          "switch between the instrument and piano-roll tabs to build a track.",
         onBeforeClose: onStudioBeforeClose,
         onRelayout: () => {
           tabBar.remeasure();
