@@ -18,13 +18,15 @@
 import { blit } from "./gpu.js";
 import { getTextTransform } from "../config.js";
 
-// ── フォントパラメータ (switchFont で動的更新) ──
+// ── フォントパラメータ ──
+// SYNESTA のシステムフォントは 5x5 単一寸法。initFont で実フォントから確定する。
+// (初期値もその寸法に合わせておき、ブート前の派生定数計算がブレないようにする)
 
 /** グリフ幅 (px) */
 export let GLYPH_W = 5;
 
 /** グリフ高さ (px) */
-export let GLYPH_H = 7;
+export let GLYPH_H = 5;
 
 /** 最初の文字コード */
 const FIRST_CHAR = 0x20;
@@ -55,12 +57,12 @@ let ready = false;
  *
  * @param {string} url      フォントシートの URL
  * @param {number} [gw=5]   グリフ幅
- * @param {number} [gh=7]   グリフ高さ
+ * @param {number} [gh=5]   グリフ高さ
  * @param {number} [cols=10] シートの列数
  * @param {number} [offset=1] シート先頭オフセット (px)
  * @returns {Promise<void>}
  */
-export function initFont(url, gw = 5, gh = 7, cols = 10, offset = 1) {
+export function initFont(url, gw = 5, gh = 5, cols = 10, offset = 1) {
   return switchFont(url, gw, gh, cols, offset);
 }
 
@@ -147,6 +149,43 @@ export function getGlyph(ch) {
   const code = ch.charCodeAt(0);
   if (code < FIRST_CHAR || code > LAST_CHAR) return null;
   return glyphs[code - FIRST_CHAR] || null;
+}
+
+/**
+ * 現在のグリフ寸法と文字範囲を返す。
+ * FONTSMITH が現在のシステムフォントを取り込んで編集する際に使う。
+ * @returns {{ glyphW:number, glyphH:number, firstChar:number, charCount:number }}
+ */
+export function getFontMetrics() {
+  return {
+    glyphW: GLYPH_W,
+    glyphH: GLYPH_H,
+    firstChar: FIRST_CHAR,
+    charCount: CHAR_COUNT,
+  };
+}
+
+/**
+ * グリフテーブルを実行時に差し替える (PNG を介さない in-memory フォント適用)。
+ * FONTSMITH が編集したグリフをシステム全体へ即時反映するために使う。
+ *
+ * GLYPH_W / GLYPH_H は変更しない。グリフの「中身」だけを差し替えるため、
+ * ラベル幅・ウィンドウ chrome・アイコンといった寸法依存のメトリクスは
+ * 一切影響を受けず、次フレームの描画から新しい字形が反映される。
+ * 呼び出し側は現在の GLYPH_W × GLYPH_H と同じ寸法のバッファを渡すこと
+ * (寸法不一致のバッファは無視する)。
+ *
+ * @param {Uint8Array[]} buffers  CHAR_COUNT 個の GLYPH_W*GLYPH_H バッファ
+ *                                (ASCII 0x20..0x7E 順)。要素が null の位置は据え置く。
+ */
+export function setGlyphs(buffers) {
+  if (!ready || !buffers) return;
+  const expectLen = GLYPH_W * GLYPH_H;
+  const n = Math.min(buffers.length, CHAR_COUNT);
+  for (let i = 0; i < n; i++) {
+    const b = buffers[i];
+    if (b && b.length === expectLen) glyphs[i] = b;
+  }
 }
 
 /**

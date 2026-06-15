@@ -117,30 +117,30 @@ describe("getRampString", () => {
 describe("calcAsciiSize", () => {
   it("正方形画像 → 文字セルのアスペクト比を考慮", () => {
     // 100×100 の画像、最大 40×40
-    // cellAspect = 6/8 = 0.75
-    // adjustedAspect = (100/100) / 0.75 = 1.333...
-    // rows が制約 → rows=40, cols=round(40*1.333)=53 → clamp to 40
-    // cols が制約 → cols=40, rows=round(40/1.333)=30
+    // cellAspect = 6/6 = 1.0 (5x5 フォント → 正方形セル)
+    // adjustedAspect = (100/100) / 1.0 = 1.0
+    // adjustedAspect * maxRows = 40 <= maxCols(40) → rows が制約
+    // rows=40, cols=round(40*1.0)=40
     const { cols, rows } = calcAsciiSize(100, 100, 40, 40);
     expect(cols).toBe(40);
-    expect(rows).toBe(30);
+    expect(rows).toBe(40);
   });
 
   it("横長画像 → cols が制約になる", () => {
     const { cols, rows } = calcAsciiSize(200, 100, 40, 30);
-    // adjustedAspect = (200/100) / 0.75 = 2.667
-    // adjustedAspect * maxRows = 2.667 * 30 = 80 > 40 → cols が制約
-    // cols=40, rows=round(40/2.667)=15
+    // adjustedAspect = (200/100) / 1.0 = 2.0
+    // adjustedAspect * maxRows = 2.0 * 30 = 60 > 40 → cols が制約
+    // cols=40, rows=round(40/2.0)=20
     expect(cols).toBe(40);
-    expect(rows).toBe(15);
+    expect(rows).toBe(20);
   });
 
   it("縦長画像 → rows が制約になる", () => {
     const { cols, rows } = calcAsciiSize(100, 200, 40, 30);
-    // adjustedAspect = (100/200) / 0.75 = 0.667
-    // adjustedAspect * maxRows = 0.667 * 30 = 20 <= 40 → rows が制約
-    // rows=30, cols=round(30*0.667)=20
-    expect(cols).toBe(20);
+    // adjustedAspect = (100/200) / 1.0 = 0.5
+    // adjustedAspect * maxRows = 0.5 * 30 = 15 <= 40 → rows が制約
+    // rows=30, cols=round(30*0.5)=15
+    expect(cols).toBe(15);
     expect(rows).toBe(30);
   });
 
@@ -265,7 +265,7 @@ describe("constants", () => {
     expect(CELL_W).toBe(6);
   });
 
-  it("CELL_H = GLYPH_H + 1 = 8", () => {
-    expect(CELL_H).toBe(8);
+  it("CELL_H = GLYPH_H + 1 = 6", () => {
+    expect(CELL_H).toBe(6);
   });
 });

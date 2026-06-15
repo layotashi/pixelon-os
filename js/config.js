@@ -272,7 +272,12 @@ export function setTextTransform(mode) {
 
 /**
  * システムフォントプリセット定義。
- * 各フォントはフォントシート PNG のパスとグリフ寸法を保持する。
+ *
+ * SYNESTA のシステムフォントは 5x5 の単一寸法に統一されている。
+ * 複数の寸法 (旧 5x7) を持たないことで、フォント切替が「グリフ内容の
+ * 差し替えだけ」になり、寸法依存のメトリクス・アイコン・レイアウト再計算が
+ * 一切不要になる (シンプルさ = SYNESTA の美学)。
+ * FONTSMITH が作るユーザーフォントも同じ 5x5 でこの配列に登録される。
  *
  *   id     : 内部識別子 (localStorage 保存用)
  *   label  : Settings DropDown の表示名
@@ -282,16 +287,6 @@ export function setTextTransform(mode) {
  *   cols   : フォントシートの列数
  */
 export const FONTS = [
-  {
-    id: "default_5x7",
-    label: "Default 5x7",
-    file: "default_5x7.png",
-    glyphW: 5,
-    glyphH: 7,
-    cols: 10,
-    iconDir: "icons-7x7",
-    textIconDir: "icons-text-5x7",
-  },
   {
     id: "default_5x5",
     label: "Default 5x5",

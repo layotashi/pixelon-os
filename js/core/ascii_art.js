@@ -143,8 +143,9 @@ export function getRampString(ramp) {
  * ソース画像のアスペクト比を維持しつつ、
  * maxCols × maxRows に収まる最大の cols × rows を算出する。
  *
- * 文字セルは正方形ではない (GLYPH_W × GLYPH_H = 5×7) ため、
- * 画面上のアスペクト比を維持するにはセルの縦横比を考慮する必要がある。
+ * 文字セルの縦横比 (CELL_W : CELL_H) に応じて、画面上のアスペクト比を
+ * 維持するよう cols/rows を補正する。5x5 フォントではセルは正方形 (6×6)
+ * になるが、将来寸法が変わっても CELL_W/CELL_H から動的に算出する。
  *
  * @param {number} srcW  ソース画像の幅
  * @param {number} srcH  ソース画像の高さ
@@ -153,7 +154,7 @@ export function getRampString(ramp) {
  * @returns {{ cols: number, rows: number }}
  */
 export function calcAsciiSize(srcW, srcH, maxCols, maxRows) {
-  const cellAspect = CELL_W / CELL_H; // 6/8 = 0.75
+  const cellAspect = CELL_W / CELL_H; // 5x5 フォントでは 6/6 = 1.0 (正方形セル)
   const srcAspect = srcW / srcH;
 
   // adjustedAspect = 画面上の正しいアスペクト比を得るための cols/rows 比

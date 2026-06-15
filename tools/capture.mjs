@@ -143,7 +143,7 @@ async function main() {
     });
 
     // 環境変数 SYNESTA_FONT で起動時のシステムフォントを切替えられる
-    // (デバッグ用。例: SYNESTA_FONT=default_5x7 npm run capture SETTINGS)
+    // (デバッグ用。例: SYNESTA_FONT=default_5x5 npm run capture SETTINGS)
     const fontOverride = process.env.SYNESTA_FONT;
     if (fontOverride) {
       console.log(`[capture] switching font to: ${fontOverride}`);
