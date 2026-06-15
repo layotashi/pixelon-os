@@ -21,8 +21,8 @@
  *   - 既存フォントのインポート (現在のデフォルト 5x7 を初期値に)
  */
 
-import { pset, fillRect, drawRect, hline, vline, drawText } from "../core/gpu.js";
-import { GLYPH_W, GLYPH_H } from "../core/font.js";
+import { pset, fillRect, drawRect, hline, vline } from "../core/gpu.js";
+import { drawText, GLYPH_W, GLYPH_H } from "../core/font.js";
 import { wmOpen, wmRegister } from "../wm/index.js";
 import * as UI from "../ui/index.js";
 

@@ -23,8 +23,8 @@
  *   - HUMOR_PRINCIPLES §1 全 8 原則の意識的適用
  */
 
-import { fillRect, hline, drawText } from "../core/gpu.js";
-import { GLYPH_W, GLYPH_H } from "../core/font.js";
+import { fillRect, hline } from "../core/gpu.js";
+import { drawText, GLYPH_W, GLYPH_H } from "../core/font.js";
 import { keyDown, getCharQueue } from "../core/input.js";
 import { wmOpen, wmRegister } from "../wm/index.js";
 

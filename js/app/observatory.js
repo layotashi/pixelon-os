@@ -19,8 +19,8 @@
  *   - 流れ星のランダム演出
  */
 
-import { pset, fillRect, hline, vline, drawText } from "../core/gpu.js";
-import { GLYPH_W, GLYPH_H } from "../core/font.js";
+import { pset, fillRect, hline, vline } from "../core/gpu.js";
+import { drawText, GLYPH_W, GLYPH_H } from "../core/font.js";
 import { wmOpen, wmRegister } from "../wm/index.js";
 
 const APP_NAME = "OBSERVATORY";

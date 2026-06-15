@@ -21,8 +21,8 @@
  *   - VRAM dither グラデーション活用
  */
 
-import { pset, fillRect, hline, vline, drawRect, drawText } from "../core/gpu.js";
-import { GLYPH_W, GLYPH_H } from "../core/font.js";
+import { pset, fillRect, hline, vline, drawRect } from "../core/gpu.js";
+import { drawText, GLYPH_W, GLYPH_H } from "../core/font.js";
 import { getAudioContext, getMasterGain, initAudio } from "../core/audio.js";
 import { wmOpen, wmRegister } from "../wm/index.js";
 
