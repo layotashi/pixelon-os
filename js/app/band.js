@@ -170,16 +170,28 @@ function drawRipple(cr) {
 // 最新の contentRect 幅を onInput hit-test と共有する
 let _crW = 0;
 
+// ボタンのジオメトリ。
+// グリフを 1px 単位で対称に配置するため、サイズと padding は明示計算する。
+// (BTN_W - GLYPH_W) / 2 が整数になる組み合わせを選ぶ:
+//   GLYPH_W = 5 → BTN_W = 11 で padX = 3
+//   GLYPH_H = 5 → BTN_H = 11 で padY = 3
+const BTN_W = 11;
+const BTN_H = 11;
+
 function drawHeader(cr) {
   _crW = cr.w;
   // モード名表示
   const label = `MODE: ${MODES[modeIdx]}`;
   drawText(cr.x + 4, cr.y + 4, label, 1);
-  // 「>」ボタン (右側)
-  const btnW = 14;
-  const btnX = cr.x + cr.w - btnW - 2;
-  drawRect(btnX, cr.y + 2, btnW, HEADER_H - 4, 1);
-  drawText(btnX + 4, cr.y + 4, ">", 1);
+  // 「>」ボタン (右側、左右上下とも完全対称な padding)
+  const btnX = cr.x + cr.w - BTN_W - 2;
+  // ヘッダー領域内で button を上下中央に配置 (HEADER_H = 14)
+  const btnY = cr.y + Math.floor((HEADER_H - BTN_H) / 2);
+  drawRect(btnX, btnY, BTN_W, BTN_H, 1);
+  // グリフを button 内で 1px 単位で対称配置
+  const padX = Math.floor((BTN_W - GLYPH_W) / 2);
+  const padY = Math.floor((BTN_H - GLYPH_H) / 2);
+  drawText(btnX + padX, btnY + padY, ">", 1);
   // セパレータ
   hline(cr.x, cr.x + cr.w - 1, cr.y + HEADER_H - 1, 1);
 }
@@ -189,12 +201,11 @@ function isHeaderClick(ev) {
 }
 
 function isModeButtonClick(ev) {
-  const btnW = 14;
   return (
-    ev.localX >= _crW - btnW - 2 &&
+    ev.localX >= _crW - BTN_W - 2 &&
     ev.localX < _crW - 2 &&
-    ev.localY >= 2 &&
-    ev.localY < HEADER_H - 2
+    ev.localY >= 0 &&
+    ev.localY < HEADER_H
   );
 }
 
