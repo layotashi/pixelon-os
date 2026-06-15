@@ -336,6 +336,11 @@ function createWindow(id, x, y, w, h, title, onDraw, onInput, onMeasure, opts) {
     noResize: o.noResize || false,
     noMaximize: o.noMaximize || false,
     onBeforeClose: o.onBeforeClose || null,
+    // ── ABOUT パネル (opt-in) ──
+    // about 文字列を持つウィンドウはヘッダ右クリックメニューに ABOUT が出て、
+    // ボディが説明パネルに切り替わる。説明は「何か + 主要操作」を簡潔に。
+    about: o.about || null,
+    _aboutMode: false,
     // ── フォント変更時の再レイアウト (opt-in) ──
     onRelayout: o.onRelayout || null,
     // ── スクロール (opt-in) ──
@@ -362,6 +367,9 @@ function safeOnDraw(win, contentRect) {
 
 /** onInput を try-catch で囲んで呼ぶ */
 function safeOnInput(win, ev) {
+  // ABOUT パネル表示中はアプリへ入力を渡さない (背後の誤操作防止)。
+  // メニュー操作は WM 側で処理されるため影響しない。
+  if (win._aboutMode) return;
   try {
     win.onInput(ev);
   } catch (e) {
@@ -1622,6 +1630,15 @@ function buildWindowContextMenu(win) {
       action: () => toggleMaximize(win),
     });
   }
+  if (win.about) {
+    items.push({
+      type: "action",
+      label: win._aboutMode ? "HIDE ABOUT" : "ABOUT",
+      action: () => {
+        win._aboutMode = !win._aboutMode;
+      },
+    });
+  }
   if (items.length > 0) items.push({ type: "sep" });
   items.push({
     type: "action",
@@ -2680,6 +2697,64 @@ export function wmDrawSingleWindow(id) {
  * 前提: win._layout が recalcLayout() で最新に更新済みであること。
  * レイアウトの再計算は w/h/x/y 変更時のみ行う。
  */
+/**
+ * テキストを最大文字数で折り返す。明示的な改行 (\n) は段落区切りとして尊重し、
+ * 各段落を単語境界で wrap する。maxChars を超える単語はハード分割する。
+ * @returns {string[]} 行の配列
+ */
+function _wrapText(text, maxChars) {
+  const out = [];
+  for (const para of String(text).split("\n")) {
+    if (para === "") {
+      out.push("");
+      continue;
+    }
+    let line = "";
+    for (const word of para.split(/\s+/)) {
+      if (line === "") {
+        line = word;
+      } else if ((line + " " + word).length <= maxChars) {
+        line += " " + word;
+      } else {
+        out.push(line);
+        line = word;
+      }
+      while (line.length > maxChars) {
+        out.push(line.slice(0, maxChars));
+        line = line.slice(maxChars);
+      }
+    }
+    if (line) out.push(line);
+  }
+  return out;
+}
+
+/**
+ * ABOUT パネルを描画する。ボディ背景は drawWindowFrame 冒頭で塗り済み。
+ * 「ABOUT」見出し + 区切り線 + 折り返した説明 + 下部に復帰ヒント。
+ */
+function drawAboutPanel(win, cr) {
+  const pad = 5;
+  const x = cr.x + pad;
+  const lineH = GLYPH_H + 3;
+  let y = cr.y + pad;
+
+  drawText(x, y, "ABOUT", 1);
+  y += GLYPH_H + 2;
+  GPU.hline(cr.x + 2, cr.x + cr.w - 3, y, 1);
+  y += 4;
+
+  const maxChars = Math.max(1, Math.floor((cr.w - pad * 2) / (GLYPH_W + 1)));
+  for (const line of _wrapText(win.about, maxChars)) {
+    drawText(x, y, line, 1);
+    y += lineH;
+  }
+
+  // 下部の復帰ヒント (右クリックメニューで HIDE ABOUT)
+  const hint = "RIGHT-CLICK TO RETURN";
+  drawText(x, cr.y + cr.h - GLYPH_H - 1, hint, 1);
+}
+
 function drawWindowFrame(win) {
   const L = win._layout;
 
@@ -2712,9 +2787,15 @@ function drawWindowFrame(win) {
     }
   }
 
-  // ── コンテンツ描画コールバック ──
-  if (win.onDraw) {
-    const cr = L.contentRect;
+  // ── コンテンツ描画: ABOUT パネル or アプリ ──
+  const cr = L.contentRect;
+  if (win._aboutMode && win.about) {
+    if (cr.w > 0 && cr.h > 0) {
+      GPU.setClip(cr.x, cr.y, cr.w, cr.h);
+      drawAboutPanel(win, cr);
+      GPU.resetClip();
+    }
+  } else if (win.onDraw) {
     if (cr.w > 0 && cr.h > 0) {
       // スクロール可能ウィンドウ: contentRect.y をスクロール分だけ上へずらす
       const scrollY = win._scrollable && win._vScroll ? win._vScroll.offset : 0;

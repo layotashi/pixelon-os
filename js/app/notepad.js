@@ -313,6 +313,9 @@ WM.wmRegister(APP_NAME, () => {
     footer: true,
     onDrawFooter,
     onBeforeClose,
+    about:
+      "A plain text editor. Type to write, and save notes to the " +
+      "filesystem. Use the toolbar to open, save, and clear.",
     onRelayout: () => {
       group.remeasureAll();
       root.layout(FOCUS_MARGIN, FOCUS_MARGIN);

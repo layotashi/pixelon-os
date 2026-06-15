@@ -173,6 +173,10 @@ wmRegister(
     return wmOpen(-1, -1, WIN_W, WIN_H, APP_NAME, onDraw, onInput, null, {
       noResize: true,
       noMaximize: true,
+      about:
+        "A generated 1-bit starfield that drifts slowly westward. Click " +
+        "near a star to give it a catalog name; the last name is logged " +
+        "at the bottom.",
     });
   },
   { category: "EXPERIMENT" },
