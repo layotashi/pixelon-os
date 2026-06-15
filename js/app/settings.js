@@ -42,7 +42,7 @@ const allPaletteLabels = [...paletteLabels, Config.CUSTOM_PALETTE_NAME];
 
 // ── Widget instance variables (deferred) ──
 let labelResolution, dropDownResolution;
-let lblFont, ddFont, lblFontPreview;
+let lblFont, ddFont, lblFontPreview, lblFontPreviewIndent, lblFontPreviewSpacer;
 let lblHeaderPad, numberBoxHeaderPad;
 let lblContentPad, nbContentPad;
 let lblInputOverlay, tglInputOverlay;
@@ -143,6 +143,10 @@ function _initWidgets() {
     0,
     "THE QUICK BROWN FOX\nJUMPS OVER THE LAZY DOG",
   );
+  // Indent: ラベル列に空 Label を置いてコンテンツ列に揃える (整列の原則)
+  lblFontPreviewIndent = new Label(0, 0, "");
+  // Spacer: パングラム下に余白を入れて FONT グループと HEADER PAD を分離 (近接の原則)
+  lblFontPreviewSpacer = new Label(0, 0, "");
 
   // ── Header Pad ──
   lblHeaderPad = new Label(0, 0, "Header pad:");
@@ -363,6 +367,7 @@ function _initWidgets() {
   allLabels = [
     labelResolution,
     lblFont,
+    lblFontPreviewIndent,
     lblHeaderPad,
     lblContentPad,
     lblInputOverlay,
@@ -406,7 +411,8 @@ function _initWidgets() {
     // ── DISPLAY ──
     HBox([labelResolution, dropDownResolution]),
     HBox([lblFont, ddFont]),
-    lblFontPreview,
+    HBox([lblFontPreviewIndent, lblFontPreview]),
+    lblFontPreviewSpacer,
     HBox([lblHeaderPad, numberBoxHeaderPad, new Label(0, 0, "DOT")]),
     HBox([lblContentPad, nbContentPad, new Label(0, 0, "DOT")]),
     sep1,
