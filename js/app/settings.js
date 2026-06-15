@@ -135,6 +135,17 @@ function _initWidgets() {
   ddFont = new DropDown(0, 0, fontLabels, Math.max(0, curFontIdx), (i) =>
     Config.setSystemFont(Config.FONTS[i].id),
   );
+  // フォント一覧 / 選択の変化に追従 (FONTSMITH での保存・適用を即時反映)
+  const _syncFontSel = () => {
+    if (!ddFont) return;
+    const idx = Config.FONTS.findIndex((f) => f.id === Config.getSystemFontId());
+    ddFont.selectedIndex = Math.max(0, idx);
+  };
+  Config.onFontListChange(() => {
+    if (ddFont) ddFont.items = Config.FONTS.map((f) => f.label); // setter が幅再計算
+    _syncFontSel();
+  });
+  Config.onFontChange(_syncFontSel);
   // フォントの見た目を即時プレビュー (pangram = 全アルファベット含む英文)。
   // システムフォントで描画されるため、ドロップダウンを切替えると onRelayout
   // → remeasureAll でこの Label が新しいフォントで再計測・再描画される。

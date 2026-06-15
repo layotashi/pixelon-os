@@ -166,6 +166,19 @@ export function getFontMetrics() {
 }
 
 /**
+ * 全グリフのコピーを ASCII 0x20..0x7E 順の配列で返す。
+ * FONTSMITH の保存や、フォント切替のためのスナップショットに使う。
+ * @returns {Uint8Array[]}  CHAR_COUNT 個の GLYPH_W*GLYPH_H バッファ (コピー)
+ */
+export function getAllGlyphs() {
+  const out = new Array(CHAR_COUNT);
+  for (let i = 0; i < CHAR_COUNT; i++) {
+    out[i] = glyphs[i] ? Uint8Array.from(glyphs[i]) : new Uint8Array(GLYPH_W * GLYPH_H);
+  }
+  return out;
+}
+
+/**
  * グリフテーブルを実行時に差し替える (PNG を介さない in-memory フォント適用)。
  * FONTSMITH が編集したグリフをシステム全体へ即時反映するために使う。
  *

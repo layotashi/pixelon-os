@@ -19,11 +19,13 @@
 
 import { initGpu, vram } from "./core/gpu.js";
 import { initInput, resetInput, updateInputLog } from "./core/input.js";
-import { initFont, switchFont } from "./core/font.js";
+import { initFont, getAllGlyphs, setGlyphs } from "./core/font.js";
 import { initCursor } from "./core/cursor.js";
 import { initIcon } from "./core/icon.js";
 import { initTextIcon } from "./core/text_icon.js";
 import { initAppIcon } from "./core/app_icon.js";
+import * as VFS from "./core/vfs.js";
+import { loadUserFonts } from "./core/user_fonts.js";
 
 // ── UI ポート注入用: コアモジュールの namespace インポート ──
 import * as gpuModule from "./core/gpu.js";
@@ -154,25 +156,10 @@ async function boot() {
     }
 
     // ── フォント切替コールバック (config → font.js の間接呼び出し) ──
+    // 全フォントが 5x5 同一寸法のため、切替はグリフ内容のスワップのみ。
+    // 寸法・アイコン・ports 再注入は不要 (content-swap)。
     Config.configSetFontSwitchCallback(async (fontDef) => {
-      await switchFont(
-        `./assets/font/${fontDef.file}`,
-        fontDef.glyphW,
-        fontDef.glyphH,
-        fontDef.cols,
-      );
-      // アイコン/テキストアイコンをフォントに合わせて再読み込み
-      await initIcon(`./assets/${fontDef.iconDir}/manifest.json`);
-      await initTextIcon(`./assets/${fontDef.textIconDir}/manifest.json`);
-      // ports.js のフォント・アイコンメトリクスを再注入 (ES Module live bindings)
-      initPorts({
-        gpu: gpuModule,
-        font: fontModule,
-        icon: iconModule,
-        input: inputModule,
-        textIcon: textIconModule,
-        dither: ditherModule,
-      });
+      if (fontDef._glyphs) setGlyphs(fontDef._glyphs);
     });
 
     // ── フォント PNG の読み込み (スプラッシュ描画に必須) ──
@@ -183,6 +170,18 @@ async function boot() {
       initialFont.glyphH,
       initialFont.cols,
     );
+    // 組込デフォルトのグリフをスナップショットしてレジストリに格納する。
+    // (ユーザーフォントから default へ戻す切替も content-swap で行えるように)
+    Config.setFontGlyphs("default_5x5", getAllGlyphs());
+
+    // ── ユーザーフォント (FONTSMITH 製) の登録と選択復元 ──
+    VFS.initVfs();
+    loadUserFonts();
+    const savedFontId = Config.getSystemFontId();
+    if (savedFontId !== "default_5x5") {
+      const g = Config.getFontGlyphs(savedFontId);
+      if (g) setGlyphs(g); // 保存されていたユーザーフォントを適用
+    }
 
     // ── スプラッシュ演出 + 残りアセットの並行読み込み ──
     // フォント読み込み完了後、スプラッシュ演出と残りアセットを並行実行する。

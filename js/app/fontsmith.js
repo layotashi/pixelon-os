@@ -34,6 +34,8 @@ import {
   setGlyphs,
 } from "../core/font.js";
 import { wmOpen, wmRegister } from "../wm/index.js";
+import { setSystemFont } from "../config.js";
+import { saveUserFont } from "../core/user_fonts.js";
 import * as UI from "../ui/index.js";
 
 const APP_NAME = "FONTSMITH";
@@ -150,11 +152,29 @@ function _revert() {
   working = seed.map(_copyBuf);
 }
 
+/** 名前を付けて VFS に保存 → レジストリ登録 → システムフォントに設定 */
+function _save() {
+  if (!working) return;
+  UI.openPromptDialog("FONT NAME:", {
+    title: "SAVE FONT",
+    defaultValue: "MYFONT",
+    maxLength: 16,
+    onResult: (name) => {
+      if (!name) return;
+      // ファイル名に使えない文字を除去
+      const clean = name.replace(/[/\\:*?"<>|]/g, "").trim() || "MYFONT";
+      const id = saveUserFont(clean, working);
+      // 保存したフォントをシステムに適用 + 選択を永続化
+      setSystemFont(id);
+    },
+  });
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  ウィジェット
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-let btnClear, btnInvert, btnApply, btnRevert;
+let btnClear, btnInvert, btnApply, btnRevert, btnSave;
 let widgetGroup;
 
 function _initWidgets() {
@@ -167,6 +187,7 @@ function _initWidgets() {
     "INVERT",
     _invertGlyph,
   );
+  btnSave = new UI.PushButton(TOOLBAR_X, EDITOR_Y + 36, "SAVE", _save);
   btnApply = new UI.PushButton(PAD, BTN_ROW_Y, "APPLY", _applyToSystem);
   btnRevert = new UI.PushButton(
     PAD + btnApply.w + 6,
@@ -174,7 +195,13 @@ function _initWidgets() {
     "REVERT",
     _revert,
   );
-  widgetGroup = new UI.WidgetGroup([btnClear, btnInvert, btnApply, btnRevert]);
+  widgetGroup = new UI.WidgetGroup([
+    btnClear,
+    btnInvert,
+    btnSave,
+    btnApply,
+    btnRevert,
+  ]);
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

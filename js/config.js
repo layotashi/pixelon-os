@@ -327,10 +327,70 @@ export function getSystemFontId() {
 
 /**
  * 現在のシステムフォント定義オブジェクトを返す。
- * @returns {{ id: string, label: string, file: string, glyphW: number, glyphH: number, cols: number }}
+ * @returns {{ id: string, label: string, file?: string, glyphW: number, glyphH: number, cols?: number }}
  */
 export function getSystemFont() {
   return FONTS.find((f) => f.id === _currentFontId) || FONTS[0];
+}
+
+// ── フォントレジストリ (組込 + FONTSMITH 製ユーザーフォント) ──
+//
+// 全フォントは 5x5 同一寸法。各定義は `_glyphs` (Uint8Array[95]、各 25 byte)
+// を持ち、切替は kernel 経由の content-swap (font.js setGlyphs) で行う。
+//   - 組込 default_5x5: boot 時に PNG からスナップショットして _glyphs を設定
+//   - ユーザーフォント:  registerUserFont で _glyphs 付きで登録
+
+/** フォント一覧 (登録/削除) 変更コールバック。Settings ドロップダウン更新用 */
+const _fontListChangeCallbacks = [];
+
+/** フォント一覧変更コールバックを登録する */
+export function onFontListChange(cb) {
+  _fontListChangeCallbacks.push(cb);
+}
+
+function _fireFontListChange() {
+  for (const cb of _fontListChangeCallbacks) cb();
+}
+
+/**
+ * 指定フォントのグリフデータを設定する (boot のスナップショット注入等)。
+ * @param {string} id
+ * @param {Uint8Array[]} glyphs
+ */
+export function setFontGlyphs(id, glyphs) {
+  const f = FONTS.find((x) => x.id === id);
+  if (f) f._glyphs = glyphs;
+}
+
+/**
+ * 指定フォントのグリフデータを返す (なければ null)。
+ * @param {string} id
+ * @returns {Uint8Array[]|null}
+ */
+export function getFontGlyphs(id) {
+  const f = FONTS.find((x) => x.id === id);
+  return f && f._glyphs ? f._glyphs : null;
+}
+
+/**
+ * FONTSMITH 製のユーザーフォントを登録する (同 id があれば上書き)。
+ * @param {string} id        一意なフォント ID
+ * @param {string} label     ドロップダウン表示名
+ * @param {Uint8Array[]} glyphs  5x5 グリフ配列 (95 文字)
+ * @returns {object} 登録された font 定義
+ */
+export function registerUserFont(id, label, glyphs) {
+  const existing = FONTS.find((f) => f.id === id);
+  if (existing) {
+    existing.label = label;
+    existing._glyphs = glyphs;
+    _fireFontListChange();
+    return existing;
+  }
+  const def = { id, label, user: true, glyphW: 5, glyphH: 5, _glyphs: glyphs };
+  FONTS.push(def);
+  _fireFontListChange();
+  return def;
 }
 
 /**
@@ -348,7 +408,9 @@ export function configSetFontSwitchCallback(fn) {
 
 /**
  * システムフォントを変更する。
- * フォント PNG の読み込み → GLYPH_W/H 更新 → コールバック発火。
+ * 全フォントが 5x5 同一寸法のため、切替は kernel コールバック内の
+ * content-swap (font.js setGlyphs) で行う。寸法不変なのでメトリクス・
+ * アイコン・レイアウトは変わらず、字形だけが置き換わる。
  * @param {string} id  FONTS に定義されたフォント ID
  * @returns {Promise<void>}
  */
