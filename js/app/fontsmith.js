@@ -136,13 +136,16 @@ function drawSelector(cr) {
   const baseY = cr.y + SELECTOR_Y;
   drawText(baseX, baseY, "LETTER:", 1);
   const startX = baseX + 50;
+  // セル中央配置のオフセット (drawText は整数座標を要求するので Math.floor)
+  const textOffsetX = Math.floor((SELECTOR_CELL_PX - GLYPH_W) / 2);
+  const textOffsetY = Math.floor((SELECTOR_CELL_PX - GLYPH_H) / 2) - 2;
   for (let i = 0; i < EDITABLE_LETTERS.length; i++) {
     const ch = EDITABLE_LETTERS[i];
     const x = startX + i * SELECTOR_CELL_PX;
     drawRect(x, baseY - 2, SELECTOR_CELL_PX, SELECTOR_CELL_PX, 1);
-    drawText(x + (SELECTOR_CELL_PX - GLYPH_W) / 2, baseY + 2, ch, 1);
+    drawText(x + textOffsetX, baseY + textOffsetY, ch, 1);
     if (ch === selectedLetter) {
-      // 選択中マーカー (下線)
+      // 選択中マーカー (下線、セル直下に)
       hline(x + 1, x + SELECTOR_CELL_PX - 2, baseY + SELECTOR_CELL_PX - 1, 1);
     }
   }
