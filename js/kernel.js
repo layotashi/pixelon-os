@@ -20,7 +20,7 @@
 import { initGpu, vram } from "./core/gpu.js";
 import { initInput, resetInput, updateInputLog } from "./core/input.js";
 import { initFont, getAllGlyphs, setGlyphs } from "./core/font.js";
-import { initCursor } from "./core/cursor.js";
+import { initCursor, setCursorHidden } from "./core/cursor.js";
 import { initIcon } from "./core/icon.js";
 import { initTextIcon } from "./core/text_icon.js";
 import { initAppIcon } from "./core/app_icon.js";
@@ -248,6 +248,8 @@ async function boot() {
       // capture.mjs が screenshot 撮影前に視覚効果 (Diagonal scanline /
       // Vignette) を切るために使う。production には影響しない。
       setEffect: Config.setEffectParam,
+      // capture.mjs がレビュー精度向上のためカーソルを隠す。production 不変。
+      setCursorHidden,
     };
 
     mainLoop();

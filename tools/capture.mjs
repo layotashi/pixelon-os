@@ -133,13 +133,19 @@ async function main() {
       { timeout: BOOT_TIMEOUT_MS },
     );
 
-    // 視覚効果 (Diagonal / Vignette) を OFF にする。
-    // screenshot レビューの判別精度を上げるため。production への影響無し
-    // (capture 専用の一時設定で、page を閉じれば消える)。
-    console.log(`[capture] disabling diag + vignette for clarity`);
-    await page.evaluate(() => {
+    // レビューの判別精度を上げるための調整。production への影響無し
+    // (capture 専用の一時設定で、page を閉じれば消える):
+    //   - Diagonal scanline / Vignette を OFF
+    //   - カーソルを非表示 (UI に重なって判読を妨げるため)
+    //   - 背景を単色 Solid (level 0) にしてディザ模様のノイズを除去
+    console.log(`[capture] applying review-clarity settings`);
+    await page.evaluate(async () => {
       window.__synesta.setEffect("diagEnabled", false);
       window.__synesta.setEffect("vignetteEnabled", false);
+      window.__synesta.setCursorHidden(true);
+      const Wallpaper = await import("/js/wallpaper.js");
+      Wallpaper.setBackgroundMode("solid");
+      Wallpaper.setSolidLevel(0);
     });
 
     // 環境変数 SYNESTA_FONT で起動時のシステムフォントを切替えられる
