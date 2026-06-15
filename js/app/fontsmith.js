@@ -183,37 +183,54 @@ function drawEditor(cr) {
   }
 }
 
+// パングラム (全アルファベットを含む英文): フォントプレビューの定番。
+// 編集対象の A/B/C/D を自然に含む単語が全部入っているのも好都合
+// (A=LAZY, B=BROWN, C=QUICK, D=DOG)。
+const PANGRAM_LINES = [
+  "THE QUICK BROWN FOX",
+  "JUMPS OVER THE LAZY DOG",
+];
+
+/** glyph に ON ピクセルが 1 つもなければ true */
+function _glyphIsEmpty(g) {
+  for (let i = 0; i < g.length; i++) if (g[i]) return false;
+  return true;
+}
+
 function drawPreview(cr) {
   const baseX = cr.x + 4;
   const baseY = cr.y + PREVIEW_Y;
   hline(cr.x, cr.x + cr.w - 1, baseY - 4, 1);
   drawText(baseX, baseY, "PREVIEW:", 1);
 
-  // x1 (= 自然サイズ)
-  const previewY1 = baseY + 12;
-  drawText(baseX, previewY1, "1x:", 1);
-  let cx = baseX + 24;
-  const text = "ABCD ABCD";
-  for (const ch of text) {
-    if (glyphs[ch]) {
-      drawGlyph(cx, previewY1, ch, 1);
-      cx += GLYPH_GRID_W + 1;
-    } else {
-      cx += GLYPH_GRID_W + 1;
+  // Pangram を 2 行で表示。編集済み文字 (A/B/C/D) は自作デザイン、その他は
+  // システムフォントで描画 → 「自分のフォントが実文の中でどう見えるか」が
+  // ひと目で分かる。全文字を同じ幅 (STEP) で進めることで桁が揃う。
+  const LINE_H = GLYPH_GRID_H + 2; // 5x7 グリッドの行間
+  const STEP = GLYPH_GRID_W + 1; // システムフォントの advance とも一致 (5+1)
+  let lineY = baseY + GLYPH_H + 4;
+  for (const line of PANGRAM_LINES) {
+    let cx = baseX;
+    for (const ch of line) {
+      const userGlyph = glyphs[ch];
+      // 編集済みの A/B/C/D で 1 px でも置かれていれば自作デザインを使う。
+      // 空の場合はシステムフォントにフォールバック (パングラムが読める状態を維持)。
+      if (userGlyph && !_glyphIsEmpty(userGlyph)) {
+        drawGlyph(cx, lineY, ch, 1);
+      } else if (ch !== " ") {
+        drawText(cx, lineY, ch, 1);
+      }
+      cx += STEP;
     }
+    lineY += LINE_H;
   }
 
-  // x2 (= 拡大プレビュー)
-  const previewY2 = previewY1 + 12;
-  drawText(baseX, previewY2, "2x:", 1);
-  cx = baseX + 24;
-  for (const ch of text) {
-    if (glyphs[ch]) {
-      drawGlyph(cx, previewY2, ch, 2);
-      cx += GLYPH_GRID_W * 2 + 2;
-    } else {
-      cx += GLYPH_GRID_W * 2 + 2;
-    }
+  // 選択中の文字を 2x で showcase (デザインの拡大確認)
+  const showcaseY = lineY + 4;
+  drawText(baseX, showcaseY, "SELECTED:", 1);
+  if (glyphs[selectedLetter]) {
+    // "SELECTED:" = 9 chars × 6 px ≈ 54 px → 64 px から 2x glyph 開始
+    drawGlyph(baseX + 64, showcaseY, selectedLetter, 2);
   }
 }
 
