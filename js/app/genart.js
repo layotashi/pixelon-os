@@ -14,6 +14,16 @@
  * 14のアルゴリズムが、それぞれ異なる角度から
  * この「創発」の神秘を1bitキャンバスに描き出す。
  *
+ * ─── アルゴリズム と レンダーモード ───
+ * アルゴリズムは「何を生むか」、レンダーモードは「どう見せるか」を分離する。
+ *   - 構造系 (線・粒子・凝集) … FLOW / ATTRACT / DLA / LSYS / SPIRAL / AUTOMATA
+ *       ストロークを直接ピクセルに刻む。DOT 専用・一回生成。
+ *   - 場系 (スカラー場 f(x,y) ∈ [0,1]) … REACT / VORONOI / WAVE /
+ *       PLASMA / DRIFT / GRID / LAND
+ *       場を fieldBuf に書き、共通レンダラが DOT (Bayer ディザ) か
+ *       ASCII (tone ramp) に変換する。両モード対応。
+ *   - RAIN … 文字が降り積もるデジタルの雨。文字そのものが主役ゆえ ASCII 専用。
+ *
  * アルゴリズム:
  *   FLOW     — ノイズ場に導かれた無数の粒子が織りなす有機的紋様
  *   REACT    — 化学反応の自己組織化が生む生命的パターン (Gray-Scott)
@@ -24,17 +34,17 @@
  *   WAVE     — 波動干渉: 複数波源の干渉縞が描くモアレ
  *   SPIRAL   — 黄金螺旋: フィボナッチと黄金角が織りなす自然の幾何学
  *   AUTOMATA — セルラーオートマトン: Wolfram 1D→2D 展開の万華鏡
- *   AA_PLSM  — ASCIIプラズマ: sin/cos干渉が文字濃淡で描くサイケデリックな紋様
- *   AA_FLOW  — ASCIIフロー: ノイズ場の流れの方向を文字の形で暗示する
- *   AA_RAIN  — ASCIIレイン: 文字が降り注ぎ積もっていくデジタルの雨
- *   AA_GRID  — ASCIIグリッド: 数理パターンが決定する文字タイルのテッセレーション
- *   AA_LAND  — ASCIIランド: fbm地形の高さマップを文字濃淡で描く風景
+ *   PLASMA   — sin/cos 干渉の多重合成が描くサイケデリックな紋様
+ *   DRIFT    — パーリンノイズ密度場の漂い (時間で流れる雲)
+ *   RAIN     — 文字が降り注ぎ積もっていくデジタルの雨 (ASCII 専用)
+ *   GRID     — 数理パターンが決定するタイルのテッセレーション
+ *   LAND     — fbm 地形の高さマップが描く風景
  *
  * 構成:
- *   - ツールバー (2行): アルゴリズム, プリセット, シード, 生成ボタン, 反転, 自動送り
- *   - キャンバス: 256×192 のアートキャンバス (リアルタイム漸進描画)
- *     AA 系アルゴリズムでは文字セル単位で描画
- *   - フッター: 進捗, アルゴリズム情報
+ *   - ツールバー (3行): アルゴリズム/スタイル/レンダー, シード/生成/反転, サイズ/書き出し
+ *   - キャンバス: 可変サイズのアートキャンバス (リアルタイム漸進描画)
+ *     ASCII レンダーでは文字セル単位で描画
+ *   - フッター: 進捗, 出力解像度
  */
 
 import { VRAM_WIDTH, VRAM_HEIGHT, palette } from "../config.js";
@@ -111,11 +121,11 @@ const ALGO_KEYS = [
   "wave",
   "spiral",
   "automata",
-  "aa_plasma",
-  "aa_flow",
-  "aa_rain",
-  "aa_grid",
-  "aa_land",
+  "plasma",
+  "drift",
+  "rain",
+  "grid",
+  "land",
 ];
 const ALGO_NAMES = [
   "FLOW",
@@ -127,12 +137,52 @@ const ALGO_NAMES = [
   "WAVE",
   "SPIRAL",
   "AUTOMATA",
-  "AA_PLSM",
-  "AA_FLOW",
-  "AA_RAIN",
-  "AA_GRID",
-  "AA_LAND",
+  "PLASMA",
+  "DRIFT",
+  "RAIN",
+  "GRID",
+  "LAND",
 ];
+
+/**
+ * 各アルゴリズムが対応するレンダーモード。
+ *   "dot"   — 1bit ピクセル (Bayer ディザ)。GIF 書き出し可。
+ *   "ascii" — 文字セル (tone ramp 濃淡)。
+ * 構造系は DOT 専用、場系は両対応、RAIN は ASCII 専用。
+ * 先頭要素が既定モード。
+ */
+const ALGO_MODES = {
+  flow: ["dot"],
+  react: ["dot", "ascii"],
+  attract: ["dot"],
+  dla: ["dot"],
+  lsys: ["dot"],
+  voronoi: ["dot", "ascii"],
+  wave: ["dot", "ascii"],
+  spiral: ["dot"],
+  automata: ["dot"],
+  plasma: ["dot", "ascii"],
+  drift: ["dot", "ascii"],
+  rain: ["ascii"],
+  grid: ["dot", "ascii"],
+  land: ["dot", "ascii"],
+};
+
+/** 場 (fieldBuf) パイプラインを使うアルゴリズム (RAIN は文字を直接書くため除外) */
+const FIELD_ALGOS = new Set([
+  "react",
+  "voronoi",
+  "wave",
+  "plasma",
+  "drift",
+  "grid",
+  "land",
+]);
+
+/** 現在のレンダーモード ("dot" | "ascii")。ALGO_MODES の制約下で選択される。 */
+let renderMode = "dot";
+
+const RENDER_LABELS = { dot: "DOT", ascii: "ASCII" };
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  プリセット定義
@@ -351,7 +401,7 @@ const PRESETS = {
     { name: "R30-RND", rule: 30, init: "random", width: artWidth },
     { name: "R110-RND", rule: 110, init: "random", width: artWidth },
   ],
-  aa_plasma: [
+  plasma: [
     {
       name: "CLASSIC",
       layers: 4,
@@ -401,57 +451,15 @@ const PRESETS = {
       chars: "",
     },
   ],
-  aa_flow: [
-    {
-      name: "BREEZE",
-      scale: 0.08,
-      octaves: 2,
-      gamma: 1.0,
-      chars: "",
-      mode: "dir",
-    },
-    {
-      name: "TORRENT",
-      scale: 0.15,
-      octaves: 4,
-      gamma: 0.8,
-      chars: "",
-      mode: "dir",
-    },
-    {
-      name: "GENTLE",
-      scale: 0.04,
-      octaves: 1,
-      gamma: 1.2,
-      chars: "",
-      mode: "dir",
-    },
-    {
-      name: "MIX",
-      scale: 0.06,
-      octaves: 3,
-      gamma: 1.0,
-      chars: "",
-      mode: "mix",
-    },
-    {
-      name: "DIGITS",
-      scale: 0.1,
-      octaves: 2,
-      gamma: 1.0,
-      chars: "0123456789",
-      mode: "density",
-    },
-    {
-      name: "DENSE",
-      scale: 0.05,
-      octaves: 3,
-      gamma: 0.7,
-      chars: "",
-      mode: "density",
-    },
+  drift: [
+    { name: "CLOUD", scale: 0.05, octaves: 3, gamma: 1.0, chars: "" },
+    { name: "BREEZE", scale: 0.08, octaves: 2, gamma: 1.1, chars: "" },
+    { name: "TORRENT", scale: 0.15, octaves: 4, gamma: 0.8, chars: "" },
+    { name: "VEIL", scale: 0.03, octaves: 2, gamma: 1.3, chars: " .:-=+" },
+    { name: "DIGITS", scale: 0.1, octaves: 2, gamma: 1.0, chars: "0123456789" },
+    { name: "DENSE", scale: 0.06, octaves: 5, gamma: 0.7, chars: "" },
   ],
-  aa_rain: [
+  rain: [
     {
       name: "DRIZZLE",
       density: 0.3,
@@ -494,7 +502,7 @@ const PRESETS = {
       gamma: 1.4,
     },
   ],
-  aa_grid: [
+  grid: [
     { name: "WAVE", patFn: "wave", freq: 0.12, gamma: 1.0, chars: "" },
     { name: "CHECKER", patFn: "checker", freq: 0.0, gamma: 1.0, chars: "" },
     { name: "DIAMOND", patFn: "diamond", freq: 0.08, gamma: 1.0, chars: "" },
@@ -514,7 +522,7 @@ const PRESETS = {
       chars: " .oO",
     },
   ],
-  aa_land: [
+  land: [
     {
       name: "HILLS",
       scale: 0.015,
@@ -718,12 +726,12 @@ function resizeArt(w, h) {
 
 /**
  * キャンバスサイズを適用する。
- * AA 系アルゴリズムではセルピッチ (CELL_W × CELL_H) の倍数にスナップし、
+ * ASCII レンダー時はセルピッチ (CELL_W × CELL_H) の倍数にスナップし、
  * 文字グリッドがキャンバス領域にぴったり収まるようにする。
  * NumberBox の表示値も同期し、ツールバーを再構築して再生成を開始する。
  */
 function applyArtSize(w, h) {
-  if (isAAAlgo()) {
+  if (renderMode === "ascii") {
     w = Math.max(
       AsciiArt.CELL_W,
       Math.round(w / AsciiArt.CELL_W) * AsciiArt.CELL_W,
@@ -833,6 +841,93 @@ function artCircle(cx, cy, r) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  場 (field) フレームワーク
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//
+// 場系アルゴリズムは fieldBuf (0..1 のスカラー値) を「描画対象の解像度」で埋め、
+// 共通レンダラ commitField() が DOT (Bayer ディザ) か ASCII (tone ramp) に変換する。
+// 座標系はアルゴリズムのネイティブ空間を保つことで、DOT/ASCII どちらでも
+// 模様の細かさ (周波数) が一致する:
+//   - セル座標ネイティブ (plasma/drift/grid/land) … fieldCellX/Y を使う
+//   - ピクセル座標ネイティブ (wave/voronoi)        … fieldPixelX/Y を使う
+//   - シミュ格子 (react)                          … 格子を fieldBuf に再標本化
+
+/** @type {Float32Array|null} 場のスカラー値 (描画対象解像度) */
+let fieldBuf = null;
+/** 場の解像度。DOT は artWidth×artHeight、ASCII は aaCols×aaRows。 */
+let fieldCols = 0,
+  fieldRows = 0;
+/** ASCII レンダー用の現在の tone ramp */
+let currentRamp = null;
+
+/** 現在のモードに応じて場の寸法を決め、fieldBuf (と ASCII なら aaLines/ramp) を確保 */
+function allocField(rampChars) {
+  if (renderMode === "ascii") {
+    aaCols = calcAACols();
+    aaRows = calcAARows();
+    fieldCols = aaCols;
+    fieldRows = aaRows;
+    aaLines = Array.from({ length: aaRows }, () => " ".repeat(aaCols));
+    currentRamp = rampChars
+      ? AsciiArt.buildToneRamp(rampChars)
+      : AsciiArt.getDefaultRamp();
+  } else {
+    fieldCols = artWidth;
+    fieldRows = artHeight;
+    currentRamp = null;
+  }
+  fieldBuf = new Float32Array(fieldCols * fieldRows);
+}
+
+// セル座標ネイティブ: fieldBuf の列/行インデックス → 連続セル座標。
+// ASCII では 1 セル = 1 文字、DOT では 1 セル = CELL_W×CELL_H ピクセル。
+function fieldCellX(c) {
+  return renderMode === "ascii" ? c : c / AsciiArt.CELL_W;
+}
+function fieldCellY(r) {
+  return renderMode === "ascii" ? r : r / AsciiArt.CELL_H;
+}
+// ピクセル座標ネイティブ: 源・母点は常にピクセル空間 [0,artWidth]×[0,artHeight]。
+// ASCII ではセル中心のピクセル座標で標本化する。
+function fieldPixelX(c) {
+  return renderMode === "ascii" ? (c + 0.5) * AsciiArt.CELL_W : c;
+}
+function fieldPixelY(r) {
+  return renderMode === "ascii" ? (r + 0.5) * AsciiArt.CELL_H : r;
+}
+
+/** fieldBuf → 出力 (DOT:artBuf / ASCII:aaLines)。場系の各ステップ末尾で呼ぶ。 */
+function commitField() {
+  if (!fieldBuf) return;
+  if (renderMode === "ascii") {
+    const ramp = currentRamp || AsciiArt.getDefaultRamp();
+    for (let r = 0; r < fieldRows; r++) {
+      let line = "";
+      const base = r * fieldCols;
+      for (let c = 0; c < fieldCols; c++) {
+        let v = fieldBuf[base + c];
+        if (v < 0) v = 0;
+        else if (v > 1) v = 1;
+        line += AsciiArt.findNearest(ramp, v);
+      }
+      aaLines[r] = line;
+    }
+  } else {
+    for (let y = 0; y < fieldRows; y++) {
+      const base = y * fieldCols;
+      for (let x = 0; x < fieldCols; x++) {
+        artBuf[base + x] = bayerDither(x, y, fieldBuf[base + x]);
+      }
+    }
+  }
+}
+
+/** 場系アルゴリズムか (fieldBuf パイプラインを使うか) */
+function usesField() {
+  return FIELD_ALGOS.has(ALGO_KEYS[currentAlgoIdx]);
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  状態
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -872,9 +967,9 @@ function downloadArt() {
 /** 生成過程の GIF 録画を開始する (現在の設定で再生成し、その過程をキャプチャ) */
 function startGifRecording() {
   if (gifRecording) return;
-  if (isAAAlgo()) {
-    // AA 系は artBuf を使わない (テキスト描画) ため GIF 未対応。PNG を案内。
-    statusText = "GIF: PIXEL ALGOS ONLY";
+  if (renderMode === "ascii") {
+    // ASCII レンダーは artBuf を使わない (文字描画) ため GIF 未対応。DOT を案内。
+    statusText = "GIF: DOT MODE ONLY";
     return;
   }
   gifRecording = true;
@@ -1134,7 +1229,7 @@ function reactInit(preset, s) {
   rdIter = 0;
   generating = true;
   progress = 0;
-  clearArt();
+  allocField();
 }
 
 function reactStep() {
@@ -1168,21 +1263,18 @@ function reactStep() {
     rdV = rdNV;
     rdNV = tv;
   }
-  // 格子 → アートバッファへニアレストネイバー拡大
-  for (let gy = 0; gy < rdH; gy++) {
-    for (let gx = 0; gx < rdW; gx++) {
-      const density = Math.min(1.0, rdV[gy * rdW + gx] * 3.5);
-      for (let dy = 0; dy < rdScale; dy++) {
-        const ay = gy * rdScale + dy;
-        if (ay >= artHeight) break;
-        for (let dx = 0; dx < rdScale; dx++) {
-          const ax = gx * rdScale + dx;
-          if (ax >= artWidth) break;
-          artBuf[ay * artWidth + ax] = bayerDither(ax, ay, density);
-        }
-      }
+  // シミュ格子 (rdW×rdH) → fieldBuf (描画対象解像度) へ正規化再標本化。
+  // commitField が DOT (Bayer) / ASCII (ramp) に変換する。
+  for (let fr = 0; fr < fieldRows; fr++) {
+    const gy = Math.min(rdH - 1, (((fr + 0.5) / fieldRows) * rdH) | 0);
+    const fbase = fr * fieldCols;
+    const gbase = gy * rdW;
+    for (let fc = 0; fc < fieldCols; fc++) {
+      const gx = Math.min(rdW - 1, (((fc + 0.5) / fieldCols) * rdW) | 0);
+      fieldBuf[fbase + fc] = Math.min(1.0, rdV[gbase + gx] * 3.5);
     }
   }
+  commitField();
   progress = rdIter / rdMaxIter;
   statusText = `ITER: ${rdIter}/${rdMaxIter}`;
   if (rdIter >= rdMaxIter) {
@@ -1634,8 +1726,8 @@ let vorPoints = null,
 function voronoiInit(preset, s) {
   vorPreset = preset;
   seedRng(s);
-  initNoise(s);
-  clearArt();
+  allocField();
+  // 母点はピクセル空間に配置 (モードに依らず一定の絶対位置)
   const n = preset.numPoints;
   vorPoints = new Float64Array(n * 2);
   for (let i = 0; i < n; i++) {
@@ -1655,21 +1747,25 @@ function voronoiInit(preset, s) {
 
 function voronoiStep() {
   const p = vorPreset,
-    n = p.numPoints,
-    rowsPerFrame = 2;
+    n = p.numPoints;
+  const rowsPerFrame = Math.max(1, Math.ceil(fieldRows / 120));
+  const maxR =
+    Math.sqrt((artWidth * artWidth + artHeight * artHeight) / n) * 0.9;
   for (
     let row = 0;
-    row < rowsPerFrame && vorScanY < artHeight;
+    row < rowsPerFrame && vorScanY < fieldRows;
     row++, vorScanY++
   ) {
-    const y = vorScanY;
-    for (let x = 0; x < artWidth; x++) {
+    const py = fieldPixelY(vorScanY);
+    const base = vorScanY * fieldCols;
+    for (let c = 0; c < fieldCols; c++) {
+      const px = fieldPixelX(c);
       let minD = Infinity,
         minI = 0,
         secD = Infinity;
       for (let i = 0; i < n; i++) {
-        const dx = x - vorPoints[i * 2],
-          dy = y - vorPoints[i * 2 + 1];
+        const dx = px - vorPoints[i * 2],
+          dy = py - vorPoints[i * 2 + 1];
         const d = dx * dx + dy * dy;
         if (d < minD) {
           secD = minD;
@@ -1677,24 +1773,24 @@ function voronoiStep() {
           minI = i;
         } else if (d < secD) secD = d;
       }
+      // 各モードはディザ前のスカラー値を返す (commitField が DOT/ASCII へ変換)
       let val = 0;
       if (p.mode === "edge") {
         val = Math.sqrt(secD) - Math.sqrt(minD) < 2.5 ? 1 : 0;
       } else if (p.mode === "dist") {
-        const maxR =
-          Math.sqrt((artWidth * artWidth + artHeight * artHeight) / n) * 0.9;
-        val = bayerDither(x, y, Math.min(1, Math.sqrt(minD) / maxR));
+        val = Math.min(1, Math.sqrt(minD) / maxR);
       } else if (p.mode === "checker") {
         val = minI & 1;
       } else if (p.mode === "id") {
-        val = bayerDither(x, y, ((minI * 7 + 3) % 16) / 16);
+        val = ((minI * 7 + 3) % 16) / 16;
       }
-      artBuf[y * artWidth + x] = val;
+      fieldBuf[base + c] = val;
     }
   }
-  progress = vorScanY / artHeight;
-  statusText = `SCAN: ${vorScanY}/${artHeight}`;
-  if (vorScanY >= artHeight) {
+  commitField();
+  progress = vorScanY / fieldRows;
+  statusText = `SCAN: ${vorScanY}/${fieldRows}`;
+  if (vorScanY >= fieldRows) {
     generating = false;
     progress = 1;
     statusText = `DONE - ${n} POINTS`;
@@ -1712,7 +1808,8 @@ let waveSources = null,
 function waveInit(preset, s) {
   wavePreset = preset;
   seedRng(s);
-  clearArt();
+  allocField();
+  // 波源はピクセル空間に配置 (モードに依らず一定の絶対位置)
   waveSources = [];
   for (let i = 0; i < preset.sources; i++) {
     waveSources.push({
@@ -1729,51 +1826,48 @@ function waveInit(preset, s) {
 }
 
 function waveStep() {
-  const p = wavePreset,
-    rowsPerFrame = 2;
+  const p = wavePreset;
+  const rowsPerFrame = Math.max(1, Math.ceil(fieldRows / 120));
+  const maxDim = Math.max(artWidth, artHeight);
   for (
     let row = 0;
-    row < rowsPerFrame && waveScanY < artHeight;
+    row < rowsPerFrame && waveScanY < fieldRows;
     row++, waveScanY++
   ) {
-    const y = waveScanY;
-    for (let x = 0; x < artWidth; x++) {
+    const py = fieldPixelY(waveScanY);
+    const base = waveScanY * fieldCols;
+    for (let c = 0; c < fieldCols; c++) {
+      const px = fieldPixelX(c);
       let sum = 0;
       for (let i = 0; i < waveSources.length; i++) {
         const s = waveSources[i];
         let d;
         if (p.mode === "concentric") {
-          const dx = x - s.x,
-            dy = y - s.y;
+          const dx = px - s.x,
+            dy = py - s.y;
           d = Math.sqrt(dx * dx + dy * dy);
         } else if (p.mode === "linear") {
-          d = (x - s.x) * Math.cos(s.angle) + (y - s.y) * Math.sin(s.angle);
+          d = (px - s.x) * Math.cos(s.angle) + (py - s.y) * Math.sin(s.angle);
         } else if (p.mode === "spiral") {
-          const dx = x - s.x,
-            dy = y - s.y;
+          const dx = px - s.x,
+            dy = py - s.y;
           d = Math.sqrt(dx * dx + dy * dy) + Math.atan2(dy, dx) * 10;
         }
         let amp = 1;
         if (p.decay) {
-          const dx = x - s.x,
-            dy = y - s.y;
-          amp = Math.max(
-            0,
-            1 - Math.sqrt(dx * dx + dy * dy) / Math.max(artWidth, artHeight),
-          );
+          const dx = px - s.x,
+            dy = py - s.y;
+          amp = Math.max(0, 1 - Math.sqrt(dx * dx + dy * dy) / maxDim);
         }
         sum += Math.sin(d * s.freq + s.phase) * amp;
       }
-      artBuf[y * artWidth + x] = bayerDither(
-        x,
-        y,
-        (sum / waveSources.length + 1) * 0.5,
-      );
+      fieldBuf[base + c] = (sum / waveSources.length + 1) * 0.5;
     }
   }
-  progress = waveScanY / artHeight;
-  statusText = `SCAN: ${waveScanY}/${artHeight}`;
-  if (waveScanY >= artHeight) {
+  commitField();
+  progress = waveScanY / fieldRows;
+  statusText = `SCAN: ${waveScanY}/${fieldRows}`;
+  if (waveScanY >= fieldRows) {
     generating = false;
     progress = 1;
     statusText = `DONE - ${waveSources.length} SOURCES`;
@@ -2049,9 +2143,6 @@ let aaCols = 0,
 /** レイヤーパラメータ配列 */
 let plasmaLayers = null;
 
-/** @type {{ ch: string, density: number }[]|null} 使用する tone ramp */
-let plasmaRamp = null;
-
 /** プラズマ漸進描画用 */
 let plasmaScanRow = 0;
 let plasmaPreset = null;
@@ -2073,16 +2164,11 @@ function plasmaInit(preset, s) {
   seedRng(s);
   plasmaGamma = preset.gamma;
 
-  aaCols = calcAACols();
-  aaRows = calcAARows();
-  aaLines = Array.from({ length: aaRows }, () => " ".repeat(aaCols));
+  allocField(preset.chars);
 
-  // tone ramp — カスタム文字列があればそちらを使う
-  plasmaRamp = preset.chars
-    ? AsciiArt.buildToneRamp(preset.chars)
-    : AsciiArt.getDefaultRamp();
-
-  // レイヤー生成: 各レイヤーに固有の周波数・位相・中心
+  // レイヤー中心はセル座標空間に置く (モードに依らず一定)
+  const cellCols = calcAACols(),
+    cellRows = calcAARows();
   const nLayers = preset.layers;
   plasmaLayers = [];
   for (let i = 0; i < nLayers; i++) {
@@ -2091,8 +2177,8 @@ function plasmaInit(preset, s) {
       freqY: preset.freqBase * (0.5 + rng() * 1.5),
       phaseX: rng() * Math.PI * 2,
       phaseY: rng() * Math.PI * 2,
-      cx: rng() * aaCols,
-      cy: rng() * aaRows,
+      cx: rng() * cellCols,
+      cy: rng() * cellRows,
       radialFreq: preset.freqBase * (0.3 + rng() * 2.0),
       weight: 0.5 + rng() * 0.5,
     });
@@ -2104,35 +2190,36 @@ function plasmaInit(preset, s) {
 }
 
 function plasmaStep() {
-  if (!plasmaLayers || !plasmaRamp || !aaLines) return;
-  const ramp = plasmaRamp;
+  if (!plasmaLayers || !fieldBuf) return;
   const invGamma = 1.0 / plasmaGamma;
   const layers = plasmaLayers;
   const nLayers = layers.length;
 
-  // 1 フレームで数行ずつ漸進的に描画
-  const rowsPerFrame = Math.max(1, Math.ceil(aaRows / 60));
+  // 1 フレームで数行ずつ漸進的に塗る
+  const rowsPerFrame = Math.max(1, Math.ceil(fieldRows / 60));
 
   for (
     let i = 0;
-    i < rowsPerFrame && plasmaScanRow < aaRows;
+    i < rowsPerFrame && plasmaScanRow < fieldRows;
     i++, plasmaScanRow++
   ) {
     const r = plasmaScanRow;
-    let line = "";
+    const cy = fieldCellY(r);
+    const base = r * fieldCols;
 
-    for (let c = 0; c < aaCols; c++) {
+    for (let c = 0; c < fieldCols; c++) {
+      const cx = fieldCellX(c);
       let sum = 0;
       for (let li = 0; li < nLayers; li++) {
         const L = layers[li];
         // sin/cos 干渉 + 放射成分
-        const dx = c - L.cx,
-          dy = r - L.cy;
+        const dx = cx - L.cx,
+          dy = cy - L.cy;
         const dist = Math.sqrt(dx * dx + dy * dy);
         sum +=
           L.weight *
-          (Math.sin(c * L.freqX + L.phaseX) +
-            Math.sin(r * L.freqY + L.phaseY) +
+          (Math.sin(cx * L.freqX + L.phaseX) +
+            Math.sin(cy * L.freqY + L.phaseY) +
             Math.sin(dist * L.radialFreq));
       }
 
@@ -2144,122 +2231,81 @@ function plasmaStep() {
       // ガンマ補正
       if (invGamma !== 1.0) v = v ** invGamma;
 
-      line += AsciiArt.findNearest(ramp, v);
+      fieldBuf[base + c] = v;
     }
-    aaLines[r] = line;
   }
+  commitField();
 
-  progress = plasmaScanRow / aaRows;
-  statusText = `ROW: ${plasmaScanRow}/${aaRows}`;
-  if (plasmaScanRow >= aaRows) {
+  progress = plasmaScanRow / fieldRows;
+  statusText = `ROW: ${plasmaScanRow}/${fieldRows}`;
+  if (plasmaScanRow >= fieldRows) {
     generating = false;
     progress = 1;
-    statusText = `DONE - ${aaCols}x${aaRows} CHARS`;
+    statusText = `DONE - ${fieldCols}x${fieldRows}`;
   }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  AA_FLOW — ASCII フローフィールド
+//  DRIFT — パーリンノイズ密度場
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //
-// パーリンノイズの流れ場を文字で表現する。
-// "dir" モード: 流れの角度に応じて方向性のある文字 (\ | / - 等) を選択。
-// "density" モード: ノイズ値を文字の濃淡にマッピング。
-// "mix" モード: 方向文字をベースに、ノイズ値で濃い/薄い文字を混ぜる。
+// fbm ノイズの値をそのまま濃淡 (密度) にマッピングするスカラー場。
+// 漂う雲・霧・煙のような有機的な階調を生む。
+// seed 由来のオフセットで二度と同じ模様は現れない。
+// (Phase 3 ではオフセットを時間で動かし、場が「流れる」)
 
-/** 方向文字の配列 — 角度を 8 方位に量子化して選択 */
-const DIR_CHARS = ["-", "\\", "|", "/", "-", "\\", "|", "/"];
+let driftPreset = null;
+let driftScanRow = 0;
+let driftOffX = 0,
+  driftOffY = 0;
 
-let aaFlowPreset = null;
-let aaFlowScanRow = 0;
-let aaFlowRamp = null;
-
-function aaFlowInit(preset, s) {
-  aaFlowPreset = preset;
+function driftInit(preset, s) {
+  driftPreset = preset;
   seedRng(s);
   initNoise(s);
-
-  aaCols = calcAACols();
-  aaRows = calcAARows();
-  aaLines = Array.from({ length: aaRows }, () => " ".repeat(aaCols));
-
-  aaFlowRamp = preset.chars
-    ? AsciiArt.buildToneRamp(preset.chars)
-    : AsciiArt.getDefaultRamp();
-
-  aaFlowScanRow = 0;
+  allocField(preset.chars);
+  // seed 由来オフセット
+  driftOffX = rng() * 1000;
+  driftOffY = rng() * 1000;
+  driftScanRow = 0;
   generating = true;
   progress = 0;
 }
 
-function aaFlowStep() {
-  if (!aaFlowPreset || !aaFlowRamp || !aaLines) return;
-  const p = aaFlowPreset;
-  const ramp = aaFlowRamp;
+function driftStep() {
+  if (!driftPreset || !fieldBuf) return;
+  const p = driftPreset;
   const invGamma = 1.0 / p.gamma;
-  const rowsPerFrame = Math.max(1, Math.ceil(aaRows / 60));
+  const rowsPerFrame = Math.max(1, Math.ceil(fieldRows / 60));
 
   for (
     let i = 0;
-    i < rowsPerFrame && aaFlowScanRow < aaRows;
-    i++, aaFlowScanRow++
+    i < rowsPerFrame && driftScanRow < fieldRows;
+    i++, driftScanRow++
   ) {
-    const r = aaFlowScanRow;
-    let line = "";
+    const r = driftScanRow;
+    const cy = fieldCellY(r);
+    const base = r * fieldCols;
 
-    for (let c = 0; c < aaCols; c++) {
-      const nx = c * p.scale,
-        ny = r * p.scale;
-      const val = fbm(nx, ny, p.octaves); // -1..1
-
-      if (p.mode === "dir") {
-        // 角度を文字に変換
-        const eps = 0.01;
-        const dndx =
-          fbm(nx + eps, ny, p.octaves) - fbm(nx - eps, ny, p.octaves);
-        const dndy =
-          fbm(nx, ny + eps, p.octaves) - fbm(nx, ny - eps, p.octaves);
-        const angle = Math.atan2(dndy, dndx); // -PI..PI
-        const idx = (((angle / Math.PI) * 4 + 8.5) | 0) % 8;
-        line += DIR_CHARS[idx];
-      } else if (p.mode === "mix") {
-        // 方向文字 + ノイズ値で濃淡切替
-        const eps = 0.01;
-        const dndx =
-          fbm(nx + eps, ny, p.octaves) - fbm(nx - eps, ny, p.octaves);
-        const dndy =
-          fbm(nx, ny + eps, p.octaves) - fbm(nx, ny - eps, p.octaves);
-        const angle = Math.atan2(dndy, dndx);
-        const mag = Math.sqrt(dndx * dndx + dndy * dndy);
-        // 強い勾配 → 方向文字、弱い → density 文字
-        if (mag > 0.005) {
-          const idx = (((angle / Math.PI) * 4 + 8.5) | 0) % 8;
-          line += DIR_CHARS[idx];
-        } else {
-          let v = (val + 1) * 0.5;
-          if (v < 0) v = 0;
-          if (v > 1) v = 1;
-          if (invGamma !== 1.0) v = v ** invGamma;
-          line += AsciiArt.findNearest(ramp, v);
-        }
-      } else {
-        // density モード
-        let v = (val + 1) * 0.5;
-        if (v < 0) v = 0;
-        if (v > 1) v = 1;
-        if (invGamma !== 1.0) v = v ** invGamma;
-        line += AsciiArt.findNearest(ramp, v);
-      }
+    for (let c = 0; c < fieldCols; c++) {
+      const cx = fieldCellX(c);
+      const nx = (cx + driftOffX) * p.scale;
+      const ny = (cy + driftOffY) * p.scale;
+      let v = (fbm(nx, ny, p.octaves) + 1) * 0.5; // -1..1 → 0..1
+      if (v < 0) v = 0;
+      else if (v > 1) v = 1;
+      if (invGamma !== 1.0) v = v ** invGamma;
+      fieldBuf[base + c] = v;
     }
-    aaLines[r] = line;
   }
+  commitField();
 
-  progress = aaFlowScanRow / aaRows;
-  statusText = `ROW: ${aaFlowScanRow}/${aaRows}`;
-  if (aaFlowScanRow >= aaRows) {
+  progress = driftScanRow / fieldRows;
+  statusText = `ROW: ${driftScanRow}/${fieldRows}`;
+  if (driftScanRow >= fieldRows) {
     generating = false;
     progress = 1;
-    statusText = `DONE - ${aaCols}x${aaRows} CHARS`;
+    statusText = `DONE - ${fieldCols}x${fieldRows}`;
   }
 }
 
@@ -2396,7 +2442,6 @@ function aaRainStep() {
 
 let aaGridPreset = null;
 let aaGridScanRow = 0;
-let aaGridRamp = null;
 /** seed 由来の乱数パラメータ */
 let aaGridParams = null;
 
@@ -2405,13 +2450,7 @@ function aaGridInit(preset, s) {
   seedRng(s);
   initNoise(s);
 
-  aaCols = calcAACols();
-  aaRows = calcAARows();
-  aaLines = Array.from({ length: aaRows }, () => " ".repeat(aaCols));
-
-  aaGridRamp = preset.chars
-    ? AsciiArt.buildToneRamp(preset.chars)
-    : AsciiArt.getDefaultRamp();
+  allocField(preset.chars);
 
   // seed 由来のパラメータ
   aaGridParams = {
@@ -2428,7 +2467,7 @@ function aaGridInit(preset, s) {
   progress = 0;
 }
 
-function _gridValue(patFn, c, r, freq, params) {
+function _gridValue(patFn, c, r, freq, params, cellCols, cellRows) {
   switch (patFn) {
     case "wave": {
       const v1 = Math.sin(c * freq * params.freqMod + params.phaseX);
@@ -2443,17 +2482,13 @@ function _gridValue(patFn, c, r, freq, params) {
       return (cx + cy) % 2 === 0 ? 0.8 : 0.2;
     }
     case "diamond": {
-      const dx = Math.abs(c - aaCols / 2);
-      const dy = Math.abs(r - aaRows / 2);
+      const dx = Math.abs(c - cellCols / 2);
+      const dy = Math.abs(r - cellRows / 2);
       const d = (dx + dy) * freq + params.phaseX;
       return Math.sin(d) * 0.5 + 0.5;
     }
     case "noise": {
-      const v = fbm(
-        (c + params.offsetX) * freq,
-        (r + params.offsetY) * freq,
-        3,
-      );
+      const v = fbm((c + params.offsetX) * freq, (r + params.offsetY) * freq, 3);
       return v * 0.5 + 0.5;
     }
     default:
@@ -2462,37 +2497,40 @@ function _gridValue(patFn, c, r, freq, params) {
 }
 
 function aaGridStep() {
-  if (!aaGridPreset || !aaGridRamp || !aaLines) return;
+  if (!aaGridPreset || !fieldBuf) return;
   const p = aaGridPreset;
-  const ramp = aaGridRamp;
   const invGamma = 1.0 / p.gamma;
   const params = aaGridParams;
-  const rowsPerFrame = Math.max(1, Math.ceil(aaRows / 60));
+  const cellCols = calcAACols(),
+    cellRows = calcAARows();
+  const rowsPerFrame = Math.max(1, Math.ceil(fieldRows / 60));
 
   for (
     let i = 0;
-    i < rowsPerFrame && aaGridScanRow < aaRows;
+    i < rowsPerFrame && aaGridScanRow < fieldRows;
     i++, aaGridScanRow++
   ) {
     const r = aaGridScanRow;
-    let line = "";
+    const cy = fieldCellY(r);
+    const base = r * fieldCols;
 
-    for (let c = 0; c < aaCols; c++) {
-      let v = _gridValue(p.patFn, c, r, p.freq, params);
+    for (let c = 0; c < fieldCols; c++) {
+      const cx = fieldCellX(c);
+      let v = _gridValue(p.patFn, cx, cy, p.freq, params, cellCols, cellRows);
       if (v < 0) v = 0;
       if (v > 1) v = 1;
       if (invGamma !== 1.0) v = v ** invGamma;
-      line += AsciiArt.findNearest(ramp, v);
+      fieldBuf[base + c] = v;
     }
-    aaLines[r] = line;
   }
+  commitField();
 
-  progress = aaGridScanRow / aaRows;
-  statusText = `ROW: ${aaGridScanRow}/${aaRows}`;
-  if (aaGridScanRow >= aaRows) {
+  progress = aaGridScanRow / fieldRows;
+  statusText = `ROW: ${aaGridScanRow}/${fieldRows}`;
+  if (aaGridScanRow >= fieldRows) {
     generating = false;
     progress = 1;
-    statusText = `DONE - ${aaCols}x${aaRows} CHARS`;
+    statusText = `DONE - ${fieldCols}x${fieldRows}`;
   }
 }
 
@@ -2507,7 +2545,6 @@ function aaGridStep() {
 
 let aaLandPreset = null;
 let aaLandScanRow = 0;
-let aaLandRamp = null;
 let aaLandOffX = 0,
   aaLandOffY = 0;
 
@@ -2516,13 +2553,7 @@ function aaLandInit(preset, s) {
   seedRng(s);
   initNoise(s);
 
-  aaCols = calcAACols();
-  aaRows = calcAARows();
-  aaLines = Array.from({ length: aaRows }, () => " ".repeat(aaCols));
-
-  aaLandRamp = preset.chars
-    ? AsciiArt.buildToneRamp(preset.chars)
-    : AsciiArt.getDefaultRamp();
+  allocField(preset.chars);
 
   // seed 由来のオフセット — 同じ地形を二度と見ない
   aaLandOffX = rng() * 1000;
@@ -2534,52 +2565,49 @@ function aaLandInit(preset, s) {
 }
 
 function aaLandStep() {
-  if (!aaLandPreset || !aaLandRamp || !aaLines) return;
+  if (!aaLandPreset || !fieldBuf) return;
   const p = aaLandPreset;
-  const ramp = aaLandRamp;
   const invGamma = 1.0 / p.gamma;
-  const rowsPerFrame = Math.max(1, Math.ceil(aaRows / 60));
+  const rowsPerFrame = Math.max(1, Math.ceil(fieldRows / 60));
 
   for (
     let i = 0;
-    i < rowsPerFrame && aaLandScanRow < aaRows;
+    i < rowsPerFrame && aaLandScanRow < fieldRows;
     i++, aaLandScanRow++
   ) {
     const r = aaLandScanRow;
-    let line = "";
+    const cy = fieldCellY(r);
+    const base = r * fieldCols;
 
-    for (let c = 0; c < aaCols; c++) {
-      const nx = (c + aaLandOffX) * p.scale;
-      const ny = (r + aaLandOffY) * p.scale;
+    for (let c = 0; c < fieldCols; c++) {
+      const cx = fieldCellX(c);
+      const nx = (cx + aaLandOffX) * p.scale;
+      const ny = (cy + aaLandOffY) * p.scale;
       const raw = fbm(nx, ny, p.octaves); // -1..1
-      let h = (raw + 1) * 0.5; // 0..1
+      const h = (raw + 1) * 0.5; // 0..1
 
+      let v;
       if (h < p.seaLevel) {
-        // 海面以下 — ランプの最も明るい (density 最小の) 文字
-        line += ramp[0].ch;
+        // 海面以下 — 最も明るい (密度最小) ＝ 値 0
+        v = 0;
       } else {
         // 標高を seaLevel..1 → 0..1 に再マッピング
-        let v = (h - p.seaLevel) / (1 - p.seaLevel);
+        v = (h - p.seaLevel) / (1 - p.seaLevel);
         if (v > 1) v = 1;
         if (invGamma !== 1.0) v = v ** invGamma;
-        line += AsciiArt.findNearest(ramp, v);
       }
+      fieldBuf[base + c] = v;
     }
-    aaLines[r] = line;
   }
+  commitField();
 
-  progress = aaLandScanRow / aaRows;
-  statusText = `ROW: ${aaLandScanRow}/${aaRows}`;
-  if (aaLandScanRow >= aaRows) {
+  progress = aaLandScanRow / fieldRows;
+  statusText = `ROW: ${aaLandScanRow}/${fieldRows}`;
+  if (aaLandScanRow >= fieldRows) {
     generating = false;
     progress = 1;
-    statusText = `DONE - ${aaCols}x${aaRows} CHARS`;
+    statusText = `DONE - ${fieldCols}x${fieldRows}`;
   }
-}
-
-/** 現在のアルゴリズムが AA 系かどうかを返す */
-function isAAAlgo() {
-  return ALGO_KEYS[currentAlgoIdx].startsWith("aa_");
 }
 
 function startGeneration() {
@@ -2615,19 +2643,19 @@ function startGeneration() {
     case "automata":
       automataInit(preset, seed);
       break;
-    case "aa_plasma":
+    case "plasma":
       plasmaInit(preset, seed);
       break;
-    case "aa_flow":
-      aaFlowInit(preset, seed);
+    case "drift":
+      driftInit(preset, seed);
       break;
-    case "aa_rain":
+    case "rain":
       aaRainInit(preset, seed);
       break;
-    case "aa_grid":
+    case "grid":
       aaGridInit(preset, seed);
       break;
-    case "aa_land":
+    case "land":
       aaLandInit(preset, seed);
       break;
   }
@@ -2663,19 +2691,19 @@ function stepGeneration() {
     case "automata":
       automataStep();
       break;
-    case "aa_plasma":
+    case "plasma":
       plasmaStep();
       break;
-    case "aa_flow":
-      aaFlowStep();
+    case "drift":
+      driftStep();
       break;
-    case "aa_rain":
+    case "rain":
       aaRainStep();
       break;
-    case "aa_grid":
+    case "grid":
       aaGridStep();
       break;
-    case "aa_land":
+    case "land":
       aaLandStep();
       break;
   }
@@ -2691,6 +2719,9 @@ function autoNext() {
   seedRng(seed + 7777);
   currentAlgoIdx = rngInt(0, ALGO_KEYS.length - 1);
   currentPresetIdx = rngInt(0, PRESETS[ALGO_KEYS[currentAlgoIdx]].length - 1);
+  // 対応モードの中からランダムに選び、DOT/ASCII の表情も自動で混ぜる
+  const modes = ALGO_MODES[ALGO_KEYS[currentAlgoIdx]];
+  renderMode = modes[rngInt(0, modes.length - 1)];
   buildToolbar();
   startGeneration();
 }
@@ -2702,7 +2733,8 @@ function autoNext() {
 /** @type {UI.WidgetGroup} */
 let toolbar;
 let toolbarRoot;
-let ddAlgo, ddPreset, lblSeed, nbSeed, btnDice, btnGen, tglInvert, tglAuto;
+let ddAlgo, ddPreset, ddRender, lblSeed, nbSeed, btnDice, btnGen;
+let tglInvert, tglAuto;
 let ddRatio, nbArtW, nbArtH, ddFormat, nbScale, btnSave, btnFile;
 let toolbarH = 0;
 
@@ -2715,7 +2747,10 @@ function buildToolbar() {
   ddAlgo = new UI.DropDown(0, 0, ALGO_NAMES, currentAlgoIdx, (i) => {
     currentAlgoIdx = i;
     currentPresetIdx = 0;
-    // AA 系に切り替わったらセル倍数にスナップ
+    // 新アルゴリズムが現在のレンダーモードに非対応なら既定モードへ
+    const modes = ALGO_MODES[ALGO_KEYS[i]];
+    if (!modes.includes(renderMode)) renderMode = modes[0];
+    // ASCII ならセル倍数にスナップして再生成
     applyArtSize(artWidth, artHeight);
     buildToolbar();
   });
@@ -2724,6 +2759,19 @@ function buildToolbar() {
     currentPresetIdx = i;
     startGeneration();
   });
+
+  // ── レンダーモード: アルゴリズムが対応するモードのみ提示 ──
+  const renderModes = ALGO_MODES[ALGO_KEYS[currentAlgoIdx]];
+  const renderLabels = renderModes.map((m) => RENDER_LABELS[m]);
+  let renderSel = renderModes.indexOf(renderMode);
+  if (renderSel < 0) renderSel = 0;
+  ddRender = new UI.DropDown(0, 0, renderLabels, renderSel, (i) => {
+    renderMode = renderModes[i];
+    // ASCII ならセル倍数にスナップ + バッファ再確保 + 再生成
+    applyArtSize(artWidth, artHeight);
+  });
+  ddRender.tooltip =
+    "Render: DOT = 1-bit pixels (GIF-able), ASCII = character cells";
 
   lblSeed = new UI.Label(0, 0, "SEED:");
   nbSeed = new UI.NumberBox(0, 0, 0, 9999, seed, 1);
@@ -2829,10 +2877,11 @@ function buildToolbar() {
   // ── レイアウト (3 行。出力解像度はフッターに表示) ──
   const lblAlgo = new UI.Label(0, 0, "ALGO:");
   const lblStyle = new UI.Label(0, 0, "STYLE:");
+  const lblRender = new UI.Label(0, 0, "AS:");
   const lblWH = new UI.Label(0, 0, "X"); // W × H
   const lblMul = new UI.Label(0, 0, "X"); // × scale
-  // 1行目: 何を作るか
-  const row1 = UI.HBox([lblAlgo, ddAlgo, lblStyle, ddPreset]);
+  // 1行目: 何を (ALGO) どんなスタイルで (STYLE) どう見せるか (AS = DOT/ASCII)
+  const row1 = UI.HBox([lblAlgo, ddAlgo, lblStyle, ddPreset, lblRender, ddRender]);
   // 2行目: 生成 (seed + トランスポート auto/GEN + 反転)
   const row2 = UI.HBox([lblSeed, nbSeed, btnDice, tglAuto, btnGen, tglInvert]);
   // 3行目: サイズ (比率 + W×H) + 書き出し (形式 ×倍率 + DOWNLOAD/SAVE)
@@ -2899,13 +2948,13 @@ function onDraw(contentRect) {
   );
   GPU.fillRect(cx, cy, artWidth, artHeight, 0);
 
-  if (isAAAlgo() && aaLines) {
-    // AA 描画パス: 文字列配列を直接描画
+  if (renderMode === "ascii" && aaLines) {
+    // ASCII レンダーパス: 文字列配列を直接描画
     const color = invertMode ? 0 : 1;
     if (invertMode) GPU.fillRect(cx, cy, artWidth, artHeight, 1);
     AsciiArt.drawAsciiArt(aaLines, cx, cy, color);
   } else {
-    // ピクセル描画パス
+    // DOT (ピクセル) レンダーパス
     GPU.blit(artBuf, artWidth, artHeight, cx, cy, 1);
     if (invertMode) GPU.invertRect(cx, cy, artWidth, artHeight);
   }
@@ -2970,9 +3019,11 @@ function onBeforeClose() {
   autoMode = false;
   autoTimer = 0;
   currentRatioIdx = 3; // 16:9
+  renderMode = "dot";
   exportFormatIdx = 0; // PNG
   exportScale = 8;
   resizeArt(320, 180); // 既定 16:9 320x180
+  fieldBuf = null;
   rdU = rdV = rdNU = rdNV = null;
   attrDensity = null;
   dlaGrid = null;
@@ -2983,18 +3034,14 @@ function onBeforeClose() {
   spiralSegments = null;
   aaLines = null;
   plasmaLayers = null;
-  plasmaRamp = null;
-  aaFlowPreset = null;
-  aaFlowRamp = null;
+  driftPreset = null;
   rainDrops = null;
   rainPreset = null;
   rainRamp = null;
   rainGrid = null;
   aaGridPreset = null;
-  aaGridRamp = null;
   aaGridParams = null;
   aaLandPreset = null;
-  aaLandRamp = null;
   return true;
 }
 
