@@ -37,8 +37,9 @@
  *   - フッター: 進捗, アルゴリズム情報
  */
 
-import { VRAM_WIDTH, VRAM_HEIGHT } from "../config.js";
+import { VRAM_WIDTH, VRAM_HEIGHT, palette } from "../config.js";
 import * as GPU from "../core/gpu.js";
+import { encodeGif } from "../core/gif.js";
 import { drawText, textWidth, GLYPH_H } from "../core/font.js";
 import { ICON_W, ICON_H } from "../core/icon.js";
 import { wmOpen, wmRegister } from "../wm/index.js";
@@ -83,7 +84,24 @@ const CANVAS_GAP = 4;
 
 /** PNG エクスポート倍率 */
 let exportScale = 2;
-const EXPORT_SCALES = [1, 2, 4, 8];
+// DOWNLOAD の出力形式: PNG=静止画 / GIF=生成過程アニメ (SNS 向け)。倍率も内包。
+const EXPORT_FORMATS = [
+  { label: "PNG x1", type: "png", scale: 1 },
+  { label: "PNG x2", type: "png", scale: 2 },
+  { label: "PNG x4", type: "png", scale: 4 },
+  { label: "GIF x1", type: "gif", scale: 1 },
+  { label: "GIF x2", type: "gif", scale: 2 },
+];
+let currentExportIdx = 1; // 既定 PNG x2
+
+// ── GIF 録画 (生成過程をキャプチャ) ──
+const GIF_FRAME_COUNT = 30; // 生成過程を約 30 フレームでサンプル
+const GIF_FPS = 12;
+let gifRecording = false;
+/** @type {Uint8Array[]} 生成中の artBuf スナップショット */
+let gifFrames = [];
+let gifNextSample = 0; // 次にサンプルする progress 閾値
+let gifScale = 2;
 
 /** アルゴリズム定義 */
 const ALGO_KEYS = [
@@ -813,6 +831,77 @@ const AUTO_INTERVAL = 90;
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /** 現在のアートを PNG でダウンロード */
+/** ダウンロードボタン: 選択中の形式 (PNG/GIF) で出力する */
+function downloadArt() {
+  const f = EXPORT_FORMATS[currentExportIdx];
+  if (f.type === "gif") {
+    startGifRecording(f.scale);
+  } else {
+    exportScale = f.scale;
+    saveArtAsPng();
+  }
+}
+
+/** 生成過程の GIF 録画を開始する (現在の設定で再生成し、その過程をキャプチャ) */
+function startGifRecording(scale) {
+  if (gifRecording) return;
+  if (isAAAlgo()) {
+    // AA 系は artBuf を使わない (テキスト描画) ため GIF 未対応。PNG を案内。
+    statusText = "GIF: PIXEL ALGOS ONLY";
+    return;
+  }
+  gifRecording = true;
+  gifScale = scale;
+  gifFrames = [];
+  gifNextSample = 0;
+  statusText = "RECORDING GIF...";
+  seed = nbSeed.value;
+  startGeneration();
+}
+
+/** 録画した GIF をエンコードしてダウンロードする */
+function finishGifRecording() {
+  gifRecording = false;
+  if (gifFrames.length === 0) {
+    statusText = "";
+    return;
+  }
+  statusText = "ENCODING GIF...";
+  // エンコードを次フレームに遅延して "ENCODING" 表示を反映させる
+  setTimeout(() => {
+    let bg = palette.bg;
+    let fg = palette.fg;
+    if (invertMode) {
+      const t = bg;
+      bg = fg;
+      fg = t;
+    }
+    const blob = encodeGif(
+      gifFrames,
+      artWidth,
+      artHeight,
+      bg,
+      fg,
+      GIF_FPS,
+      gifScale,
+    );
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const algoName = ALGO_NAMES[currentAlgoIdx];
+    const presetName =
+      PRESETS[ALGO_KEYS[currentAlgoIdx]][currentPresetIdx].name;
+    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    a.download = `genart_${algoName}_${presetName}_${seed}_${ts}.gif`;
+    a.href = url;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    gifFrames = [];
+    statusText = "";
+  }, 30);
+}
+
 function saveArtAsPng() {
   const scale = exportScale;
   GPU.beginCapture(artWidth, artHeight);
@@ -2684,24 +2773,18 @@ function buildToolbar() {
   });
   nbArtH.tooltip = "Canvas height";
 
-  const scaleLabels = EXPORT_SCALES.map((s) => `x${s}`);
-  ddScale = new UI.DropDown(
-    0,
-    0,
-    scaleLabels,
-    EXPORT_SCALES.indexOf(exportScale),
-    (i) => {
-      exportScale = EXPORT_SCALES[i];
-    },
-  );
-  ddScale.tooltip = "Export scale";
+  const exportLabels = EXPORT_FORMATS.map((f) => f.label);
+  ddScale = new UI.DropDown(0, 0, exportLabels, currentExportIdx, (i) => {
+    currentExportIdx = i;
+  });
+  ddScale.tooltip = "Download format: PNG = still image, GIF = generation animation";
 
   // PC へ書き出す (PNG) = DOWNLOAD / SYNESTA 内に保存 (PBM→VFS) = SAVE。
   // 旧 "SAVE"/"FILE" は違いが分かりにくかったため明確化。
   btnSave = new UI.PushButton(0, 0, "DOWNLOAD", () => {
-    saveArtAsPng();
+    downloadArt();
   });
-  btnSave.tooltip = "Download as PNG to your computer";
+  btnSave.tooltip = "Download to your computer (PNG or GIF, per the format dropdown)";
 
   btnFile = new UI.PushButton(0, 0, "SAVE", () => {
     saveArtToVfs();
@@ -2742,8 +2825,23 @@ function buildToolbar() {
 function onDraw(contentRect) {
   if (generating) stepGeneration();
 
-  // 自動送り
-  if (autoMode && !generating) {
+  // GIF 録画: 生成過程を progress 閾値ごとに artBuf スナップショットでサンプル。
+  // 完了したら最終形を数フレーム保持してエンコード → ダウンロード。
+  if (gifRecording) {
+    if (generating) {
+      if (progress >= gifNextSample) {
+        gifFrames.push(artBuf.slice());
+        gifNextSample += 1 / GIF_FRAME_COUNT;
+      }
+    } else {
+      const final = artBuf.slice();
+      for (let k = 0; k < 5; k++) gifFrames.push(final); // 完成形を少しホールド
+      finishGifRecording();
+    }
+  }
+
+  // 自動送り (GIF 録画中は抑止)
+  if (autoMode && !generating && !gifRecording) {
     autoTimer++;
     if (autoTimer >= AUTO_INTERVAL) {
       autoTimer = 0;
