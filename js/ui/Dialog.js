@@ -357,12 +357,16 @@ export function openAlertDialog(message, opts = {}) {
   });
 
   // ── レイアウト ──
-  const root = VBox([lblMessage, btnOk], DLG_GAP);
+  // confirm と同様、ボタンを HBox に入れて自然幅を保つ (VBox 直下だと
+  // 交差軸 stretch でメッセージ幅まで横長になってしまうため)。
+  const btnRow = HBox([btnOk]);
+  const root = VBox([lblMessage, btnRow], DLG_GAP);
   root.layout(FOCUS_MARGIN, FOCUS_MARGIN);
 
-  // ボタンを右揃え
-  if (btnOk.w < lblMessage.w) {
-    btnOk.x += lblMessage.w - btnOk.w;
+  // ボタン行を右揃え
+  if (btnRow.w < lblMessage.w) {
+    const offset = lblMessage.w - btnRow.w;
+    for (const child of btnRow.children) child.x += offset;
   }
 
   const group = new WidgetGroup(root.leaves());

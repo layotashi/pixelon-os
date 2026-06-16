@@ -13,7 +13,6 @@
 
 import { FocusableWidget } from "../FocusableWidget.js";
 import * as Ports from "../ports.js";
-import { BUTTON_PADDING } from "../ui_helpers.js";
 
 export class ButtonBase extends FocusableWidget {
   /**
@@ -85,9 +84,16 @@ export class ButtonBase extends FocusableWidget {
         Ports.drawIcon(this.icon, iconX, iconY, 1);
       }
     } else {
-      // テキストモード
-      const textX = fillX + BUTTON_PADDING;
-      const textY = fillY + BUTTON_PADDING;
+      // テキストモード: ラベルをボタン中央に配置する。
+      // w/h が自然サイズより大きい (VBox 等で stretch された) 場合でも中央を保ち、
+      // 左に張り付いて右側が空く「横長・左揃え」を防ぐ。
+      // 自然サイズでは従来の左上 padding と同一座標になる (既存の見た目は不変)。
+      const tw =
+        this._label.length > 0
+          ? this._label.length * (Ports.GLYPH_W + 1) - 1
+          : 0;
+      const textX = absX + Math.floor((this.w - tw) / 2);
+      const textY = absY + Math.floor((this.h - Ports.GLYPH_H) / 2);
       if (active) {
         Ports.fillRect(fillX, fillY, fillW, fillH, 1);
         Ports.drawText(textX, textY, this._label, 0);
