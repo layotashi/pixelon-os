@@ -51,7 +51,7 @@ import { VRAM_WIDTH, VRAM_HEIGHT, palette } from "../config.js";
 import * as GPU from "../core/gpu.js";
 import { encodeGif } from "../core/gif.js";
 import { encodeMp4, isMp4Supported } from "../core/mp4.js";
-import { drawText, textWidth, GLYPH_H } from "../core/font.js";
+import { drawText, getGlyph, textWidth, GLYPH_W, GLYPH_H } from "../core/font.js";
 import { ICON_W, ICON_H } from "../core/icon.js";
 import { wmOpen, wmRegister } from "../wm/index.js";
 import * as UI from "../ui/index.js";
@@ -109,6 +109,21 @@ let exportFormatIdx = 0; // availableFormats() のインデックス
 let exportScale = 8; // 倍率 (小さいドット絵を SNS 解像度へ拡大)
 const EXPORT_SCALE_MIN = 1,
   EXPORT_SCALE_MAX = 32;
+
+/**
+ * 額縁 (マット): アート内容と枠線の間に置く背景余白 (px)。DOT/ASCII 共通で、
+ * 表示・書き出しの両方に含まれる (作品として「額装」される)。0 で枠線に密着。
+ */
+let outerMargin = 1;
+const MARGIN_MIN = 0,
+  MARGIN_MAX = 16;
+/**
+ * ASCII の字間 (px)。文字数は変えず、文字どうしの間隔だけ調整する。
+ * 既定 1 で従来どおり。0 で密着、大きくすると空間的な ASCII になる。
+ */
+let charSpacing = 1;
+const SPACING_MIN = 0,
+  SPACING_MAX = 6;
 
 /** この環境で選べる書き出し形式 (MP4 は WebCodecs 対応時のみ) */
 function availableFormats() {
@@ -997,7 +1012,8 @@ const AUTO_INTERVAL = 90;
  */
 function videoEffectiveScale(key) {
   const cap = key === "mp4" ? 1920 : 512;
-  const maxDim = Math.max(artWidth, artHeight);
+  // 額縁マット込みのキャンバス長辺で上限判定する
+  const maxDim = Math.max(artWidth, artHeight) + outerMargin * 2;
   return Math.max(1, Math.min(exportScale, Math.floor(cap / maxDim)));
 }
 
@@ -1055,13 +1071,19 @@ function finishVideoRecording() {
     fg = t;
   }
 
+  // 各フレームを額縁付きキャンバスに合成 (動画は DOT 専用なので composeDotBuffer)
+  const m = outerMargin;
+  const cw = artWidth + m * 2,
+    ch = artHeight + m * 2;
+  const matte = (f) => composeDotBuffer(f).buf;
+
   if (videoFormat === "mp4") {
     // MP4: WebCodecs で非同期エンコード
     statusText = "ENCODING MP4...";
     videoEncoding = true;
-    const frames = gifFrames;
+    const frames = gifFrames.map(matte);
     gifFrames = [];
-    encodeMp4(frames, artWidth, artHeight, bg, fg, GIF_FPS, gifScale)
+    encodeMp4(frames, cw, ch, bg, fg, GIF_FPS, gifScale)
       .then((blob) => {
         downloadVideoBlob(blob, "mp4");
         statusText = "";
@@ -1079,7 +1101,8 @@ function finishVideoRecording() {
   // GIF: 自前エンコーダで同期エンコード (次フレームに遅延して "ENCODING" を表示)
   statusText = "ENCODING GIF...";
   setTimeout(() => {
-    const blob = encodeGif(gifFrames, artWidth, artHeight, bg, fg, GIF_FPS, gifScale);
+    const frames = gifFrames.map(matte);
+    const blob = encodeGif(frames, cw, ch, bg, fg, GIF_FPS, gifScale);
     downloadVideoBlob(blob, "gif");
     gifFrames = [];
     statusText = "";
@@ -1102,12 +1125,12 @@ function downloadVideoBlob(blob, ext) {
 }
 
 function saveArtAsPng() {
-  const scale = exportScale;
-  GPU.beginCapture(artWidth, artHeight);
-  // artBuf → キャプチャバッファへ直接コピー (blit は vram/active に描くので利用)
-  GPU.blit(artBuf, artWidth, artHeight, 0, 0, 1);
-  if (invertMode) GPU.invertRect(0, 0, artWidth, artHeight);
-  const canvas = GPU.endCapture(scale);
+  // 額縁付きの合成キャンバスを書き出す (DOT/ASCII 両対応・マット込み)
+  const { buf, w, h } = composeCanvas();
+  GPU.beginCapture(w, h);
+  GPU.blit(buf, w, h, 0, 0, 1);
+  if (invertMode) GPU.invertRect(0, 0, w, h);
+  const canvas = GPU.endCapture(exportScale);
 
   canvas.toBlob((blob) => {
     if (!blob) return;
@@ -2780,9 +2803,9 @@ function autoNext() {
 /** @type {UI.WidgetGroup} */
 let toolbar;
 let toolbarRoot;
-let ddAlgo, ddPreset, ddRender, lblSeed, nbSeed, btnDice, btnGen;
+let ddAlgo, ddPreset, ddRender, nbGap, lblSeed, nbSeed, btnDice, btnGen;
 let tglInvert, tglAuto;
-let ddRatio, nbArtW, nbArtH, ddFormat, nbScale, btnSave, btnFile;
+let ddRatio, nbArtW, nbArtH, nbPad, ddFormat, nbScale, btnSave, btnFile;
 let toolbarH = 0;
 
 const BTN_PAD = 8,
@@ -2816,9 +2839,24 @@ function buildToolbar() {
     renderMode = renderModes[i];
     // ASCII ならセル倍数にスナップ + バッファ再確保 + 再生成
     applyArtSize(artWidth, artHeight);
+    buildToolbar(); // GAP (字間) の表示/非表示をモードに合わせて切替
   });
   ddRender.tooltip =
     "Render: DOT = 1-bit pixels (GIF-able), ASCII = character cells";
+
+  // ── 字間 (GAP): ASCII のときだけ。文字数は変えず間隔のみ ──
+  nbGap = new UI.NumberBox(
+    0,
+    0,
+    SPACING_MIN,
+    SPACING_MAX,
+    charSpacing,
+    1,
+    (v) => {
+      charSpacing = v;
+    },
+  );
+  nbGap.tooltip = "Char spacing (ASCII): gap between glyphs, count unchanged";
 
   lblSeed = new UI.Label(0, 0, "SEED:");
   nbSeed = new UI.NumberBox(0, 0, 0, 9999, seed, 1);
@@ -2913,6 +2951,12 @@ function buildToolbar() {
   );
   nbScale.tooltip = "Export scale (free integer; 1-bit art enlarges crisply for SNS)";
 
+  // ── 額縁マット (PAD): アートと枠の間の背景余白。DOT/ASCII 共通・書き出し込み ──
+  nbPad = new UI.NumberBox(0, 0, MARGIN_MIN, MARGIN_MAX, outerMargin, 1, (v) => {
+    outerMargin = v;
+  });
+  nbPad.tooltip = "Frame matte: background margin around the art (in export too)";
+
   // PC へ書き出す = DOWNLOAD / SYNESTA 内に保存 (PBM→VFS) = SAVE。
   btnSave = new UI.PushButton(0, 0, "DOWNLOAD", () => {
     downloadArt();
@@ -2928,18 +2972,24 @@ function buildToolbar() {
   const lblAlgo = new UI.Label(0, 0, "ALGO:");
   const lblStyle = new UI.Label(0, 0, "STYLE:");
   const lblRender = new UI.Label(0, 0, "AS:");
+  const lblGap = new UI.Label(0, 0, "GAP:");
+  const lblPad = new UI.Label(0, 0, "PAD:");
   const lblWH = new UI.Label(0, 0, "X"); // W × H
   const lblMul = new UI.Label(0, 0, "X"); // × scale
-  // 1行目: 何を (ALGO) どんなスタイルで (STYLE) どう見せるか (AS = DOT/ASCII)
-  const row1 = UI.HBox([lblAlgo, ddAlgo, lblStyle, ddPreset, lblRender, ddRender]);
+  // 1行目: 何を (ALGO) どんなスタイルで (STYLE) どう見せるか (AS) + 字間 (ASCII のみ)
+  const row1Items = [lblAlgo, ddAlgo, lblStyle, ddPreset, lblRender, ddRender];
+  if (renderMode === "ascii") row1Items.push(lblGap, nbGap);
+  const row1 = UI.HBox(row1Items);
   // 2行目: 生成 (seed + トランスポート auto/GEN + 反転)
   const row2 = UI.HBox([lblSeed, nbSeed, btnDice, tglAuto, btnGen, tglInvert]);
-  // 3行目: サイズ (比率 + W×H) + 書き出し (形式 ×倍率 + DOWNLOAD/SAVE)
+  // 3行目: サイズ (比率 + W×H + 額縁PAD) + 書き出し (形式 ×倍率 + DOWNLOAD/SAVE)
   const row3 = UI.HBox([
     ddRatio,
     nbArtW,
     lblWH,
     nbArtH,
+    lblPad,
+    nbPad,
     ddFormat,
     lblMul,
     nbScale,
@@ -2949,6 +2999,91 @@ function buildToolbar() {
   toolbarRoot = UI.VBox([row1, row2, row3]);
   toolbar = new UI.WidgetGroup(toolbarRoot);
   toolbarH = toolbarRoot.y + toolbarRoot.h;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  額縁 (マット) と合成
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//
+// アート内容の周囲に outerMargin px の背景マットを足し、1px の枠線で囲うと
+// 「額縁」になる。ASCII は字間 charSpacing でグリフを配置する (文字数は変えず
+// 間隔だけ調整)。表示・書き出しとも、この合成バッファ (0=背景/マット, 1=前景)
+// を経由するので、額縁は画面にも書き出しファイルにも等しく反映される。
+
+function asciiContentW() {
+  const cols = calcAACols();
+  return cols * GLYPH_W + Math.max(0, cols - 1) * charSpacing;
+}
+function asciiContentH() {
+  const rows = calcAARows();
+  return rows * GLYPH_H + Math.max(0, rows - 1) * charSpacing;
+}
+/** アート内容 (マット無し) の表示寸法 */
+function contentDispW() {
+  return renderMode === "ascii" ? asciiContentW() : artWidth;
+}
+function contentDispH() {
+  return renderMode === "ascii" ? asciiContentH() : artHeight;
+}
+/** 額縁込みのキャンバス寸法 (= 内容 + マット×2) */
+function canvasDispW() {
+  return contentDispW() + outerMargin * 2;
+}
+function canvasDispH() {
+  return contentDispH() + outerMargin * 2;
+}
+
+/** DOT バッファ (artWidth×artHeight) をマット付きキャンバスに合成 */
+function composeDotBuffer(src) {
+  const m = outerMargin;
+  const cw = artWidth + m * 2,
+    ch = artHeight + m * 2;
+  const out = new Uint8Array(cw * ch);
+  for (let y = 0; y < artHeight; y++) {
+    out.set(src.subarray(y * artWidth, (y + 1) * artWidth), (y + m) * cw + m);
+  }
+  return { buf: out, w: cw, h: ch };
+}
+
+/** ASCII グリフ列をマット付きキャンバスにラスタライズ (字間 charSpacing) */
+function composeAsciiBuffer() {
+  const m = outerMargin,
+    s = charSpacing;
+  // 実際の aaLines の寸法から計算する (描画と確実に一致させ、境界外書込を防ぐ)
+  const lines = aaLines || [];
+  const rows = lines.length;
+  const cols = rows > 0 ? lines[0].length : 0;
+  const contentW = cols * GLYPH_W + Math.max(0, cols - 1) * s;
+  const contentH = rows * GLYPH_H + Math.max(0, rows - 1) * s;
+  const cw = contentW + m * 2,
+    ch = contentH + m * 2;
+  const out = new Uint8Array(cw * ch);
+  const stepX = GLYPH_W + s,
+    stepY = GLYPH_H + s;
+  for (let r = 0; r < lines.length; r++) {
+    const line = lines[r];
+    const oy = m + r * stepY;
+    for (let c = 0; c < line.length; c++) {
+      const g = getGlyph(line[c]);
+      if (!g) continue;
+      const ox = m + c * stepX;
+      for (let gy = 0; gy < GLYPH_H; gy++) {
+        const dstRow = (oy + gy) * cw + ox;
+        const gRow = gy * GLYPH_W;
+        for (let gx = 0; gx < GLYPH_W; gx++) {
+          if (g[gRow + gx]) out[dstRow + gx] = 1;
+        }
+      }
+    }
+  }
+  return { buf: out, w: cw, h: ch };
+}
+
+/** 現在の表示内容を額縁付き 1bit バッファ (0=背景, 1=前景) に合成して返す */
+function composeCanvas() {
+  return renderMode === "ascii"
+    ? composeAsciiBuffer()
+    : composeDotBuffer(artBuf);
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -3000,36 +3135,24 @@ function onDraw(contentRect) {
 
   toolbar.draw(contentRect);
 
-  // キャンバスの左端をツールバー (FOCUS_MARGIN 起点) に揃える。
-  // 以前は contentRect.x 起点で、ツールバーより FOCUS_MARGIN px 左にずれていた。
-  const ax = contentRect.x + UI.FOCUS_MARGIN;
-  const cx = ax + 1,
-    cy = contentRect.y + toolbarH + CANVAS_GAP + 1;
-  GPU.drawRect(
-    ax,
-    contentRect.y + toolbarH + CANVAS_GAP,
-    artWidth + 2,
-    artHeight + 2,
-    1,
-  );
-  GPU.fillRect(cx, cy, artWidth, artHeight, 0);
+  // 額縁付きキャンバスを合成 (マット + 内容)。表示も書き出しも同じ合成を通す。
+  const { buf, w: cw, h: ch } = composeCanvas();
 
-  if (renderMode === "ascii" && aaLines) {
-    // ASCII レンダーパス: 文字列配列を直接描画
-    const color = invertMode ? 0 : 1;
-    if (invertMode) GPU.fillRect(cx, cy, artWidth, artHeight, 1);
-    AsciiArt.drawAsciiArt(aaLines, cx, cy, color);
-  } else {
-    // DOT (ピクセル) レンダーパス
-    GPU.blit(artBuf, artWidth, artHeight, cx, cy, 1);
-    if (invertMode) GPU.invertRect(cx, cy, artWidth, artHeight);
-  }
+  // キャンバスの左端をツールバー (FOCUS_MARGIN 起点) に揃える。
+  const ax = contentRect.x + UI.FOCUS_MARGIN;
+  const cy0 = contentRect.y + toolbarH + CANVAS_GAP;
+  const cx = ax + 1,
+    cy = cy0 + 1;
+  GPU.drawRect(ax, cy0, cw + 2, ch + 2, 1); // 枠線 (額縁の縁)
+  GPU.fillRect(cx, cy, cw, ch, 0); // 背景 + マット
+  GPU.blit(buf, cw, ch, cx, cy, 1); // 前景 (内容)
+  if (invertMode) GPU.invertRect(cx, cy, cw, ch);
 
   if (generating) {
-    const barW = artWidth + 2,
+    const barW = cw + 2,
       barH = 3,
       barX = ax,
-      barY = cy + artHeight + 2;
+      barY = cy + ch + 2;
     GPU.fillRect(barX, barY, barW, barH, 0);
     GPU.drawRect(barX, barY, barW, barH, 1);
     const filled = ((barW - 2) * progress) | 0;
@@ -3040,8 +3163,8 @@ function onDraw(contentRect) {
     const secs = ((AUTO_INTERVAL - autoTimer) / 60).toFixed(1);
     const txt = `NEXT: ${secs}s`;
     const tw = textWidth(txt);
-    const ty = cy + artHeight - GLYPH_H - 2,
-      tx = cx + artWidth - tw - 2;
+    const ty = cy + ch - GLYPH_H - 2,
+      tx = cx + cw - tw - 2;
     // 背景を描いてからテキスト
     GPU.fillRect(tx - 1, ty - 1, tw + 2, GLYPH_H + 2, invertMode ? 1 : 0);
     drawText(tx, ty, txt, invertMode ? 0 : 1);
@@ -3055,21 +3178,23 @@ function onInput(ev) {
 function onMeasure() {
   const tbSize = toolbar.measure();
   return {
-    w: Math.max(tbSize.w, UI.FOCUS_MARGIN + artWidth + 2),
-    h: toolbarH + CANVAS_GAP + artHeight + 2 + 6,
+    w: Math.max(tbSize.w, UI.FOCUS_MARGIN + canvasDispW() + 2),
+    h: toolbarH + CANVAS_GAP + canvasDispH() + 2 + 6,
   };
 }
 
 function onDrawFooter(footerRect) {
   drawText(footerRect.x, footerRect.y, statusText, 1);
-  // 右側: キャンバス寸法 → 書き出し解像度 (倍率込み)。頭で計算せずに済むよう常時表示。
+  // 右側: 額縁込みキャンバス寸法 → 書き出し解像度 (倍率込み)。常時表示。
   // 動画 (GIF/MP4) は実効倍率 (上限つき) を反映する。
   const key = currentFormatKey();
   const eScale = key === "png" ? exportScale : videoEffectiveScale(key);
-  const outW = artWidth * eScale;
-  const outH = artHeight * eScale;
+  const cw = canvasDispW(),
+    ch = canvasDispH();
+  const outW = cw * eScale;
+  const outH = ch * eScale;
   const fmt = key.toUpperCase();
-  const info = `${artWidth}x${artHeight} ->${fmt} ${outW}x${outH}`;
+  const info = `${cw}x${ch} ->${fmt} ${outW}x${outH}`;
   const rw = textWidth(info);
   drawText(footerRect.x + footerRect.w - rw, footerRect.y, info, 1);
 }
@@ -3086,6 +3211,8 @@ function onBeforeClose() {
   autoTimer = 0;
   currentRatioIdx = 3; // 16:9
   renderMode = "dot";
+  outerMargin = 1;
+  charSpacing = 1;
   animTime = 0;
   gifRecording = false;
   gifLoopFrame = 0;
