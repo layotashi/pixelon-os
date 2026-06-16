@@ -1963,6 +1963,11 @@ function handleRightClick(mx, my) {
     if (hitTestBody(win, mx, my)) {
       const newIdx = bringToFront(i);
       const target = windows[newIdx];
+      // ABOUT パネル表示中はボディ右クリックでも戻る (左右どちらでも復帰)
+      if (target._aboutMode && !target._aboutAnim) {
+        _startAboutTransition(target, false);
+        return;
+      }
       if (target.onInput) {
         const { lx, ly } = toLocalCoords(target, mx, my);
         safeOnInput(target, {
@@ -2125,6 +2130,13 @@ function handleHeaderClick(i, mx, my) {
 function handleBodyClick(i, mx, my) {
   const newIdx = bringToFront(i);
   const target = windows[newIdx];
+
+  // ABOUT パネル表示中にボディをクリック → アプリへ戻る (ディゾルブ)。
+  // 「CLICK TO RETURN」ヒントの通りの直感的な復帰。遷移中は無視。
+  if (target._aboutMode && !target._aboutAnim) {
+    _startAboutTransition(target, false);
+    return;
+  }
 
   // スクロールバー領域クリック → スクロールバー入力処理
   if (hitTestWindowScrollbar(target, mx, my)) {
@@ -2749,8 +2761,8 @@ function drawAboutPanel(win, cr) {
     y += lineH;
   }
 
-  // 下部の復帰ヒント (右クリックメニューで HIDE ABOUT)
-  const hint = "RIGHT-CLICK TO RETURN";
+  // 下部の復帰ヒント (ボディをクリックで戻る)
+  const hint = "CLICK TO RETURN";
   drawText(x, cr.y + cr.h - GLYPH_H - 1, hint, 1);
 }
 
