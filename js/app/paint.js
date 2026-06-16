@@ -1192,8 +1192,8 @@ WM.wmRegister(
     _initWidgets();
     paintWinId = WM.wmOpen(-1, -1, 0, 0, APP_NAME, onDraw, onInput, onMeasure, {
       about:
-        "A 1-bit pixel paint tool with a 128x96 canvas. Pick a tool from " +
-        "the sidebar and draw, then save your image to the filesystem.",
+        "A 1-bit pixel paint tool. Pick a tool from the sidebar and draw " +
+        "on the canvas, then save your image to the filesystem.",
       footer: true,
       onDrawFooter,
       onBeforeClose,
