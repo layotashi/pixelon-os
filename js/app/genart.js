@@ -54,45 +54,42 @@ const APP_NAME = "GENART";
 //  定数
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/** アートキャンバスサイズ (可変) */
-let artWidth = 320; // SIZE_PRESETS[0] と一致させる
-let artHeight = 192;
+/** アートキャンバスサイズ (可変)。既定 16:9 320x180 (ツールバー幅と一致し横長 SNS 向き) */
+let artWidth = 320;
+let artHeight = 180;
 
-/** キャンバスサイズのプリセット (w=0 は画面全体、w=-1 は CUSTOM=W/H 直接入力) */
-// 既定 (index 0) は 320x192: ツールバー幅とほぼ一致し、左右の死に空間が出ない。
-const SIZE_PRESETS = [
-  { label: "320x192", w: 320, h: 192 },
-  { label: "256x192", w: 256, h: 192 },
-  { label: "320x240", w: 320, h: 240 },
-  { label: "400x300", w: 400, h: 300 },
-  { label: "512x384", w: 512, h: 384 },
-  { label: "SQUARE", w: 256, h: 256 }, // SNS 向けの正方形
-  { label: "SCREEN", w: 0, h: 0 },
-  { label: "CUSTOM", w: -1, h: -1 },
+/**
+ * アスペクト比プリセット (w:h)。サイズは「比率 → 寸法」で指定する。
+ * 比率を選ぶと W/H が連動し、FREE は W/H を独立指定できる。
+ * 黄金比 (PHI) / 白銀比 (SQRT2) など美的な比率も用意。
+ */
+const ASPECT_RATIOS = [
+  { label: "1:1", w: 1, h: 1 },
+  { label: "4:3", w: 4, h: 3 },
+  { label: "3:4", w: 3, h: 4 },
+  { label: "16:9", w: 16, h: 9 },
+  { label: "9:16", w: 9, h: 16 },
+  { label: "PHI", w: 1618, h: 1000 }, // 黄金比 ≈ 1.618
+  { label: "SQRT2", w: 1414, h: 1000 }, // 白銀比 ≈ 1.414
+  { label: "FREE", w: 0, h: 0 }, // W/H 独立
 ];
-const SIZE_CUSTOM_IDX = SIZE_PRESETS.length - 1;
-let currentSizeIdx = 0;
+let currentRatioIdx = 3; // 16:9
 
-/** キャンバスサイズの許容範囲 */
-const ART_W_MIN = 32,
+/** キャンバスサイズの許容範囲 (ドット絵向けに小さい値も許容) */
+const ART_W_MIN = 8,
   ART_W_MAX = 800;
-const ART_H_MIN = 24,
+const ART_H_MIN = 8,
   ART_H_MAX = 600;
 
 /** ツールバーとキャンバスの間の間隔 */
 const CANVAS_GAP = 4;
 
-/** PNG エクスポート倍率 */
-let exportScale = 2;
-// DOWNLOAD の出力形式: PNG=静止画 / GIF=生成過程アニメ (SNS 向け)。倍率も内包。
-const EXPORT_FORMATS = [
-  { label: "PNG x1", type: "png", scale: 1 },
-  { label: "PNG x2", type: "png", scale: 2 },
-  { label: "PNG x4", type: "png", scale: 4 },
-  { label: "GIF x1", type: "gif", scale: 1 },
-  { label: "GIF x2", type: "gif", scale: 2 },
-];
-let currentExportIdx = 1; // 既定 PNG x2
+/** 書き出し設定: 形式 (PNG/GIF) + 倍率 (自由整数。2 のべき乗に縛らない) */
+const EXPORT_FORMAT_LABELS = ["PNG", "GIF"];
+let exportFormatIdx = 0; // 0=PNG, 1=GIF
+let exportScale = 8; // 倍率 (小さいドット絵を SNS 解像度へ拡大)
+const EXPORT_SCALE_MIN = 1,
+  EXPORT_SCALE_MAX = 32;
 
 // ── GIF 録画 (生成過程をキャプチャ) ──
 const GIF_FRAME_COUNT = 30; // 生成過程を約 30 フレームでサンプル
@@ -101,7 +98,7 @@ let gifRecording = false;
 /** @type {Uint8Array[]} 生成中の artBuf スナップショット */
 let gifFrames = [];
 let gifNextSample = 0; // 次にサンプルする progress 閾値
-let gifScale = 2;
+let gifScale = 8;
 
 /** アルゴリズム定義 */
 const ALGO_KEYS = [
@@ -744,6 +741,30 @@ function applyArtSize(w, h) {
   startGeneration();
 }
 
+// ── アスペクト比 → 寸法 ──
+// 比率を選ぶと W/H が連動する。FREE (w=0) は W/H を独立指定。
+
+/** 比率変更時: 現在の幅を基準に高さを合わせる */
+function applyRatio() {
+  const r = ASPECT_RATIOS[currentRatioIdx];
+  if (r.w === 0) return; // FREE: 現状維持
+  applyArtSize(artWidth, Math.round((artWidth * r.h) / r.w));
+}
+
+/** 幅変更時: 比率に従って高さを算出 (FREE なら高さ据え置き) */
+function applyRatioFromWidth(w) {
+  const r = ASPECT_RATIOS[currentRatioIdx];
+  if (r.w === 0) applyArtSize(w, nbArtH.value);
+  else applyArtSize(w, Math.round((w * r.h) / r.w));
+}
+
+/** 高さ変更時: 比率に従って幅を算出 (FREE なら幅据え置き) */
+function applyRatioFromHeight(h) {
+  const r = ASPECT_RATIOS[currentRatioIdx];
+  if (r.w === 0) applyArtSize(nbArtW.value, h);
+  else applyArtSize(Math.round((h * r.w) / r.h), h);
+}
+
 function artPset(x, y) {
   x = x | 0;
   y = y | 0;
@@ -830,20 +851,26 @@ const AUTO_INTERVAL = 90;
 //  PNG 保存 / 壁紙設定
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/** 現在のアートを PNG でダウンロード */
-/** ダウンロードボタン: 選択中の形式 (PNG/GIF) で出力する */
+/**
+ * GIF の実効倍率。GIF は フレーム数 × 面積 で巨大化するため、出力の長辺が
+ * ~512px に収まるよう倍率の上限を抑える (PNG は exportScale をそのまま使う)。
+ */
+function gifEffectiveScale() {
+  const maxDim = Math.max(artWidth, artHeight);
+  return Math.max(1, Math.min(exportScale, Math.floor(512 / maxDim)));
+}
+
+/** ダウンロードボタン: 選択中の形式 (PNG/GIF) × 倍率で出力する */
 function downloadArt() {
-  const f = EXPORT_FORMATS[currentExportIdx];
-  if (f.type === "gif") {
-    startGifRecording(f.scale);
+  if (exportFormatIdx === 1) {
+    startGifRecording();
   } else {
-    exportScale = f.scale;
-    saveArtAsPng();
+    saveArtAsPng(); // exportScale を参照
   }
 }
 
 /** 生成過程の GIF 録画を開始する (現在の設定で再生成し、その過程をキャプチャ) */
-function startGifRecording(scale) {
+function startGifRecording() {
   if (gifRecording) return;
   if (isAAAlgo()) {
     // AA 系は artBuf を使わない (テキスト描画) ため GIF 未対応。PNG を案内。
@@ -851,7 +878,7 @@ function startGifRecording(scale) {
     return;
   }
   gifRecording = true;
-  gifScale = scale;
+  gifScale = gifEffectiveScale();
   gifFrames = [];
   gifNextSample = 0;
   statusText = "RECORDING GIF...";
@@ -2676,7 +2703,7 @@ function autoNext() {
 let toolbar;
 let toolbarRoot;
 let ddAlgo, ddPreset, lblSeed, nbSeed, btnDice, btnGen, tglInvert, tglAuto;
-let ddSize, nbArtW, nbArtH, ddScale, btnSave, btnFile;
+let ddRatio, nbArtW, nbArtH, ddFormat, nbScale, btnSave, btnFile;
 let toolbarH = 0;
 
 const BTN_PAD = 8,
@@ -2745,71 +2772,78 @@ function buildToolbar() {
   tglAuto.h = ICON_H + BTN_PAD + BTN_BORDER;
   tglAuto.tooltip = "Auto shuffle (play/pause)";
 
-  // ── サイズ ──
-  const sizeLabels = SIZE_PRESETS.map((s) => s.label);
-  ddSize = new UI.DropDown(0, 0, sizeLabels, currentSizeIdx, (i) => {
-    currentSizeIdx = i;
-    const sp = SIZE_PRESETS[i];
-    if (sp.w > 0) {
-      applyArtSize(sp.w, sp.h);
-    } else if (sp.w === 0) {
-      applyArtSize(VRAM_WIDTH, VRAM_HEIGHT); // SCREEN
-    }
-    // CUSTOM (w=-1) 選択時は W/H NumberBox の現在値をそのまま使用
+  // ── サイズ: アスペクト比 → 寸法 ──
+  const ratioLabels = ASPECT_RATIOS.map((r) => r.label);
+  ddRatio = new UI.DropDown(0, 0, ratioLabels, currentRatioIdx, (i) => {
+    currentRatioIdx = i;
+    applyRatio();
   });
-  ddSize.tooltip = "Canvas size preset";
+  ddRatio.tooltip = "Aspect ratio (W/H follow it; FREE = independent W/H)";
 
-  // CUSTOM サイズ用の W/H 直接入力 (SNS 向け正方形など任意寸法)。
+  // W/H 直接入力。比率が選択されていれば連動、FREE なら独立。
   nbArtW = new UI.NumberBox(0, 0, ART_W_MIN, ART_W_MAX, artWidth, 1, (v) => {
-    currentSizeIdx = SIZE_CUSTOM_IDX;
-    ddSize.selectedIndex = SIZE_CUSTOM_IDX;
-    applyArtSize(v, nbArtH.value);
+    applyRatioFromWidth(v);
   });
   nbArtW.tooltip = "Canvas width";
   nbArtH = new UI.NumberBox(0, 0, ART_H_MIN, ART_H_MAX, artHeight, 1, (v) => {
-    currentSizeIdx = SIZE_CUSTOM_IDX;
-    ddSize.selectedIndex = SIZE_CUSTOM_IDX;
-    applyArtSize(nbArtW.value, v);
+    applyRatioFromHeight(v);
   });
   nbArtH.tooltip = "Canvas height";
 
-  const exportLabels = EXPORT_FORMATS.map((f) => f.label);
-  ddScale = new UI.DropDown(0, 0, exportLabels, currentExportIdx, (i) => {
-    currentExportIdx = i;
-  });
-  ddScale.tooltip = "Download format: PNG = still image, GIF = generation animation";
+  // ── 書き出し: 形式 (PNG/GIF) + 自由倍率 ──
+  ddFormat = new UI.DropDown(
+    0,
+    0,
+    EXPORT_FORMAT_LABELS,
+    exportFormatIdx,
+    (i) => {
+      exportFormatIdx = i;
+    },
+  );
+  ddFormat.tooltip = "Export format: PNG = still, GIF = generation animation";
 
-  // PC へ書き出す (PNG) = DOWNLOAD / SYNESTA 内に保存 (PBM→VFS) = SAVE。
-  // 旧 "SAVE"/"FILE" は違いが分かりにくかったため明確化。
+  nbScale = new UI.NumberBox(
+    0,
+    0,
+    EXPORT_SCALE_MIN,
+    EXPORT_SCALE_MAX,
+    exportScale,
+    1,
+    (v) => {
+      exportScale = v;
+    },
+  );
+  nbScale.tooltip = "Export scale (free integer; 1-bit art enlarges crisply for SNS)";
+
+  // PC へ書き出す = DOWNLOAD / SYNESTA 内に保存 (PBM→VFS) = SAVE。
   btnSave = new UI.PushButton(0, 0, "DOWNLOAD", () => {
     downloadArt();
   });
-  btnSave.tooltip = "Download to your computer (PNG or GIF, per the format dropdown)";
+  btnSave.tooltip = "Download to your computer (PNG or GIF × scale)";
 
   btnFile = new UI.PushButton(0, 0, "SAVE", () => {
     saveArtToVfs();
   });
   btnFile.tooltip = "Save as PBM to the SYNESTA disk (VFS)";
 
-  // ── レイアウト ──
-  // 無ラベルだと FLOW/SILK/256X192 が何の設定か初見で分からないため、各グループに
-  // ラベルを付けて整理する (近接: ラベル + 行で機能をまとめる)。
+  // ── レイアウト (3 行。出力解像度はフッターに表示) ──
   const lblAlgo = new UI.Label(0, 0, "ALGO:");
   const lblStyle = new UI.Label(0, 0, "STYLE:");
-  const lblSize = new UI.Label(0, 0, "SIZE:");
-  const lblWH = new UI.Label(0, 0, "X");
+  const lblWH = new UI.Label(0, 0, "X"); // W × H
+  const lblMul = new UI.Label(0, 0, "X"); // × scale
   // 1行目: 何を作るか
   const row1 = UI.HBox([lblAlgo, ddAlgo, lblStyle, ddPreset]);
   // 2行目: 生成 (seed + トランスポート auto/GEN + 反転)
   const row2 = UI.HBox([lblSeed, nbSeed, btnDice, tglAuto, btnGen, tglInvert]);
-  // 3行目: サイズ (preset + W×H) + 書き出し (倍率 + DOWNLOAD/SAVE)
+  // 3行目: サイズ (比率 + W×H) + 書き出し (形式 ×倍率 + DOWNLOAD/SAVE)
   const row3 = UI.HBox([
-    lblSize,
-    ddSize,
+    ddRatio,
     nbArtW,
     lblWH,
     nbArtH,
-    ddScale,
+    ddFormat,
+    lblMul,
+    nbScale,
     btnSave,
     btnFile,
   ]);
@@ -2913,17 +2947,16 @@ function onMeasure() {
 
 function onDrawFooter(footerRect) {
   drawText(footerRect.x, footerRect.y, statusText, 1);
-  const res = isAAAlgo()
-    ? aaCols + "x" + aaRows + "CH"
-    : artWidth + "x" + artHeight;
-  const algoLabel =
-    ALGO_NAMES[currentAlgoIdx] +
-    ":" +
-    PRESETS[ALGO_KEYS[currentAlgoIdx]][currentPresetIdx].name +
-    " " +
-    res;
-  const rw = textWidth(algoLabel);
-  drawText(footerRect.x + footerRect.w - rw, footerRect.y, algoLabel, 1);
+  // 右側: キャンバス寸法 → 書き出し解像度 (倍率込み)。頭で計算せずに済むよう常時表示。
+  // GIF は実効倍率 (上限つき) を反映する。
+  const isGif = exportFormatIdx === 1;
+  const eScale = isGif ? gifEffectiveScale() : exportScale;
+  const outW = artWidth * eScale;
+  const outH = artHeight * eScale;
+  const fmt = EXPORT_FORMAT_LABELS[exportFormatIdx];
+  const info = `${artWidth}x${artHeight} ->${fmt} ${outW}x${outH}`;
+  const rw = textWidth(info);
+  drawText(footerRect.x + footerRect.w - rw, footerRect.y, info, 1);
 }
 
 function onBeforeClose() {
@@ -2936,9 +2969,10 @@ function onBeforeClose() {
   invertMode = false;
   autoMode = false;
   autoTimer = 0;
-  currentSizeIdx = 0;
-  exportScale = 2;
-  resizeArt(SIZE_PRESETS[0].w, SIZE_PRESETS[0].h);
+  currentRatioIdx = 3; // 16:9
+  exportFormatIdx = 0; // PNG
+  exportScale = 8;
+  resizeArt(320, 180); // 既定 16:9 320x180
   rdU = rdV = rdNU = rdNV = null;
   attrDensity = null;
   dlaGrid = null;
