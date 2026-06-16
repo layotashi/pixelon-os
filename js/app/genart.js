@@ -50,6 +50,7 @@
 import { VRAM_WIDTH, VRAM_HEIGHT, palette } from "../config.js";
 import * as GPU from "../core/gpu.js";
 import { encodeGif } from "../core/gif.js";
+import { encodeMp4, isMp4Supported } from "../core/mp4.js";
 import { drawText, textWidth, GLYPH_H } from "../core/font.js";
 import { ICON_W, ICON_H } from "../core/icon.js";
 import { wmOpen, wmRegister } from "../wm/index.js";
@@ -94,22 +95,42 @@ const ART_H_MIN = 8,
 /** ツールバーとキャンバスの間の間隔 */
 const CANVAS_GAP = 4;
 
-/** 書き出し設定: 形式 (PNG/GIF) + 倍率 (自由整数。2 のべき乗に縛らない) */
-const EXPORT_FORMAT_LABELS = ["PNG", "GIF"];
-let exportFormatIdx = 0; // 0=PNG, 1=GIF
+/**
+ * 書き出し設定: 形式 (PNG / GIF / MP4) + 倍率 (自由整数。2 のべき乗に縛らない)。
+ * 静止画 = PNG、動画 = GIF (全環境・画質忠実) / MP4 (WebCodecs 必須・SNS ネイティブ)。
+ * MP4 は WebCodecs 非対応ブラウザでは選択肢に出さない (availableFormats)。
+ */
+const EXPORT_FORMATS = [
+  { key: "png", label: "PNG" },
+  { key: "gif", label: "GIF" },
+  { key: "mp4", label: "MP4" },
+];
+let exportFormatIdx = 0; // availableFormats() のインデックス
 let exportScale = 8; // 倍率 (小さいドット絵を SNS 解像度へ拡大)
 const EXPORT_SCALE_MIN = 1,
   EXPORT_SCALE_MAX = 32;
 
-// ── GIF 録画 (生成過程をキャプチャ) ──
-const GIF_FRAME_COUNT = 30; // 生成過程を約 30 フレームでサンプル
+/** この環境で選べる書き出し形式 (MP4 は WebCodecs 対応時のみ) */
+function availableFormats() {
+  return EXPORT_FORMATS.filter((f) => f.key !== "mp4" || isMp4Supported());
+}
+/** 現在選択中の形式キー */
+function currentFormatKey() {
+  const a = availableFormats();
+  return (a[exportFormatIdx] || a[0]).key;
+}
+
+// ── 動画録画 (GIF / MP4 で共有。生成過程 or アニメ 1 周期をフレーム捕捉) ──
+const GIF_FRAME_COUNT = 30; // 生成過程 / 1 周期を約 30 フレームでサンプル
 const GIF_FPS = 12;
-let gifRecording = false;
-/** @type {Uint8Array[]} 生成中の artBuf スナップショット */
+let videoFormat = "gif"; // 録画中の出力形式 ("gif" | "mp4")
+let videoEncoding = false; // MP4 の非同期エンコード中フラグ
+let gifRecording = false; // フレーム捕捉中フラグ (GIF/MP4 共通)
+/** @type {Uint8Array[]} 捕捉した artBuf スナップショット */
 let gifFrames = [];
 let gifNextSample = 0; // 次にサンプルする progress 閾値
 let gifScale = 8;
-let gifLoopFrame = 0; // アニメ算法のループ GIF 用フレームカウンタ
+let gifLoopFrame = 0; // アニメ算法のループ用フレームカウンタ
 
 /** アルゴリズム定義 */
 const ALGO_KEYS = [
@@ -969,91 +990,115 @@ const AUTO_INTERVAL = 90;
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /**
- * GIF の実効倍率。GIF は フレーム数 × 面積 で巨大化するため、出力の長辺が
- * ~512px に収まるよう倍率の上限を抑える (PNG は exportScale をそのまま使う)。
+ * 動画の実効倍率。フレーム数 × 面積 で巨大化するため出力長辺に上限を設ける。
+ *   - GIF: ~512px (パレット可逆だが容量が嵩む)
+ *   - MP4: ~1920px (H.264 で圧縮が効くため高解像度を許容)
+ * PNG は exportScale をそのまま使う。
  */
-function gifEffectiveScale() {
+function videoEffectiveScale(key) {
+  const cap = key === "mp4" ? 1920 : 512;
   const maxDim = Math.max(artWidth, artHeight);
-  return Math.max(1, Math.min(exportScale, Math.floor(512 / maxDim)));
+  return Math.max(1, Math.min(exportScale, Math.floor(cap / maxDim)));
 }
 
-/** ダウンロードボタン: 選択中の形式 (PNG/GIF) × 倍率で出力する */
+/** ダウンロードボタン: 選択中の形式 (PNG / GIF / MP4) × 倍率で出力する */
 function downloadArt() {
-  if (exportFormatIdx === 1) {
-    startGifRecording();
-  } else {
+  const key = currentFormatKey();
+  if (key === "png") {
     saveArtAsPng(); // exportScale を参照
+  } else {
+    startVideoRecording(key); // "gif" | "mp4"
   }
 }
 
 /**
- * GIF 録画を開始する。
- *   - アニメ系: 現在の場のまま 1 周期 (2π) を撮ってシームレスループ GIF にする。
+ * 動画録画 (フレーム捕捉) を開始する。GIF / MP4 共通。
+ *   - アニメ系: 現在の場のまま 1 周期 (2π) を撮ってシームレスループにする。
  *   - 一回生成系: 現在の設定で再生成し、その生成過程を撮る。
  */
-function startGifRecording() {
-  if (gifRecording) return;
+function startVideoRecording(format) {
+  if (gifRecording || videoEncoding) return;
   if (renderMode === "ascii") {
-    // ASCII レンダーは artBuf を使わない (文字描画) ため GIF 未対応。DOT を案内。
-    statusText = "GIF: DOT MODE ONLY";
+    // ASCII レンダーは artBuf を使わない (文字描画) ため動画未対応。DOT を案内。
+    statusText = "VIDEO: DOT MODE ONLY";
     return;
   }
+  videoFormat = format;
   gifRecording = true;
-  gifScale = gifEffectiveScale();
+  gifScale = videoEffectiveScale(format);
   gifFrames = [];
+  const tag = format.toUpperCase();
   if (isAnimated()) {
     // 現在の場パラメータを保ったまま 1 周期をループ撮影 (再生成しない)
     gifLoopFrame = 0;
-    statusText = "RECORDING LOOP...";
+    statusText = `RECORDING ${tag} LOOP...`;
   } else {
     gifNextSample = 0;
-    statusText = "RECORDING GIF...";
+    statusText = `RECORDING ${tag}...`;
     seed = nbSeed.value;
     startGeneration();
   }
 }
 
-/** 録画した GIF をエンコードしてダウンロードする */
-function finishGifRecording() {
+/** 捕捉したフレームを GIF/MP4 にエンコードしてダウンロードする */
+function finishVideoRecording() {
   gifRecording = false;
   if (gifFrames.length === 0) {
     statusText = "";
     return;
   }
+  let bg = palette.bg;
+  let fg = palette.fg;
+  if (invertMode) {
+    const t = bg;
+    bg = fg;
+    fg = t;
+  }
+
+  if (videoFormat === "mp4") {
+    // MP4: WebCodecs で非同期エンコード
+    statusText = "ENCODING MP4...";
+    videoEncoding = true;
+    const frames = gifFrames;
+    gifFrames = [];
+    encodeMp4(frames, artWidth, artHeight, bg, fg, GIF_FPS, gifScale)
+      .then((blob) => {
+        downloadVideoBlob(blob, "mp4");
+        statusText = "";
+      })
+      .catch((err) => {
+        console.error("[GENART] MP4 encode failed:", err);
+        statusText = "MP4 ENCODE ERROR";
+      })
+      .finally(() => {
+        videoEncoding = false;
+      });
+    return;
+  }
+
+  // GIF: 自前エンコーダで同期エンコード (次フレームに遅延して "ENCODING" を表示)
   statusText = "ENCODING GIF...";
-  // エンコードを次フレームに遅延して "ENCODING" 表示を反映させる
   setTimeout(() => {
-    let bg = palette.bg;
-    let fg = palette.fg;
-    if (invertMode) {
-      const t = bg;
-      bg = fg;
-      fg = t;
-    }
-    const blob = encodeGif(
-      gifFrames,
-      artWidth,
-      artHeight,
-      bg,
-      fg,
-      GIF_FPS,
-      gifScale,
-    );
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    const algoName = ALGO_NAMES[currentAlgoIdx];
-    const presetName =
-      PRESETS[ALGO_KEYS[currentAlgoIdx]][currentPresetIdx].name;
-    const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-    a.download = `genart_${algoName}_${presetName}_${seed}_${ts}.gif`;
-    a.href = url;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    const blob = encodeGif(gifFrames, artWidth, artHeight, bg, fg, GIF_FPS, gifScale);
+    downloadVideoBlob(blob, "gif");
     gifFrames = [];
     statusText = "";
   }, 30);
+}
+
+/** Blob を genart_<ALGO>_<PRESET>_<seed>_<ts>.<ext> としてダウンロードする */
+function downloadVideoBlob(blob, ext) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const algoName = ALGO_NAMES[currentAlgoIdx];
+  const presetName = PRESETS[ALGO_KEYS[currentAlgoIdx]][currentPresetIdx].name;
+  const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  a.download = `genart_${algoName}_${presetName}_${seed}_${ts}.${ext}`;
+  a.href = url;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function saveArtAsPng() {
@@ -2840,17 +2885,20 @@ function buildToolbar() {
   });
   nbArtH.tooltip = "Canvas height";
 
-  // ── 書き出し: 形式 (PNG/GIF) + 自由倍率 ──
+  // ── 書き出し: 形式 (PNG/GIF/MP4) + 自由倍率 ──
+  const formats = availableFormats();
+  if (exportFormatIdx >= formats.length) exportFormatIdx = 0;
   ddFormat = new UI.DropDown(
     0,
     0,
-    EXPORT_FORMAT_LABELS,
+    formats.map((f) => f.label),
     exportFormatIdx,
     (i) => {
       exportFormatIdx = i;
     },
   );
-  ddFormat.tooltip = "Export format: PNG = still, GIF = generation animation";
+  ddFormat.tooltip =
+    "Export format: PNG = still, GIF = loop (any browser), MP4 = loop (SNS)";
 
   nbScale = new UI.NumberBox(
     0,
@@ -2915,7 +2963,7 @@ function onDraw(contentRect) {
     gifFrames.push(artBuf.slice());
     gifLoopFrame++;
     statusText = `RECORDING LOOP ${gifLoopFrame}/${GIF_FRAME_COUNT}`;
-    if (gifLoopFrame >= GIF_FRAME_COUNT) finishGifRecording();
+    if (gifLoopFrame >= GIF_FRAME_COUNT) finishVideoRecording();
   } else if (isAnimated()) {
     // ── 連続アニメ (常時)。場を毎フレーム再計算し、t をシームレスに周回 ──
     animTime += ANIM_DT;
@@ -2925,7 +2973,7 @@ function onDraw(contentRect) {
     // ── 一回生成系 (漸進描画) ──
     if (generating) stepGeneration();
 
-    // GIF 録画: 生成過程を progress 閾値ごとに artBuf スナップショットでサンプル。
+    // 動画録画: 生成過程を progress 閾値ごとに artBuf スナップショットでサンプル。
     // 完了したら最終形を数フレーム保持してエンコード → ダウンロード。
     if (gifRecording) {
       if (generating) {
@@ -2936,7 +2984,7 @@ function onDraw(contentRect) {
       } else {
         const final = artBuf.slice();
         for (let k = 0; k < 5; k++) gifFrames.push(final); // 完成形を少しホールド
-        finishGifRecording();
+        finishVideoRecording();
       }
     }
   }
@@ -3015,12 +3063,12 @@ function onMeasure() {
 function onDrawFooter(footerRect) {
   drawText(footerRect.x, footerRect.y, statusText, 1);
   // 右側: キャンバス寸法 → 書き出し解像度 (倍率込み)。頭で計算せずに済むよう常時表示。
-  // GIF は実効倍率 (上限つき) を反映する。
-  const isGif = exportFormatIdx === 1;
-  const eScale = isGif ? gifEffectiveScale() : exportScale;
+  // 動画 (GIF/MP4) は実効倍率 (上限つき) を反映する。
+  const key = currentFormatKey();
+  const eScale = key === "png" ? exportScale : videoEffectiveScale(key);
   const outW = artWidth * eScale;
   const outH = artHeight * eScale;
-  const fmt = EXPORT_FORMAT_LABELS[exportFormatIdx];
+  const fmt = key.toUpperCase();
   const info = `${artWidth}x${artHeight} ->${fmt} ${outW}x${outH}`;
   const rw = textWidth(info);
   drawText(footerRect.x + footerRect.w - rw, footerRect.y, info, 1);
@@ -3041,6 +3089,8 @@ function onBeforeClose() {
   animTime = 0;
   gifRecording = false;
   gifLoopFrame = 0;
+  videoFormat = "gif";
+  videoEncoding = false;
   exportFormatIdx = 0; // PNG
   exportScale = 8;
   resizeArt(320, 180); // 既定 16:9 320x180
