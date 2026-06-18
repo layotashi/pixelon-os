@@ -60,31 +60,28 @@ const APP_NAME = "GENART";
 //  定数
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/** アートキャンバスサイズ (可変)。既定 16:9 320x180 (ツールバー幅と一致し横長 SNS 向き) */
-let artWidth = 317; // = 16:9 グリッド 53×30 (字間1) の内容ピクセル
-let artHeight = 179;
-
-/**
- * アスペクト比プリセット (w:h)。サイズは「比率 → 寸法」で指定する。
- * 比率を選ぶと W/H が連動し、FREE は W/H を独立指定できる。
- * 黄金比 (PHI) / 白銀比 (SQRT2) など美的な比率も用意。
- */
-// サイズは「文字グリッド (cols × rows)」で定義する。内容ピクセルは
-// cols×GLYPH_W + (cols-1)×字間 で決まり、DOT もこの寸法で場を描くため、
-// DOT/ASCII の外寸が完全一致する。外寸 = 内容 + マット×2 なのでマットは
-// 各辺きっかり PAD px (端数ゼロ = 1px 単位で上下左右対称)。
-const SIZE_PRESETS = [
-  { label: "1:1", cols: 40, rows: 40 }, // 239x239
-  { label: "4:3", cols: 44, rows: 33 }, // 263x197
-  { label: "3:4", cols: 33, rows: 44 }, // 197x263
-  { label: "16:9", cols: 53, rows: 30 }, // 317x179
-  { label: "9:16", cols: 30, rows: 53 }, // 179x317
-  { label: "PHI", cols: 53, rows: 33 }, // 317x197 (黄金比 ≈ 横)
-  { label: "PHI V", cols: 33, rows: 53 }, // 197x317 (黄金比 ≈ 縦)
+// ── サイズモデル ──
+// 最終出力外寸を OUTPUT プリセットから選ぶ。プレビュー (画面・基準解像度) は
+// 出力を OUTPUT_SCALE で割った baseW×baseH。書き出しは base を整数 ×OUTPUT_SCALE
+// するだけなので「1 ドット = 物理 OUTPUT_SCALE ピクセル」が厳密に保たれ、かつ
+// 1920×1080 等の丸いサイズちょうどになる (均一ドット & 正確サイズの両立)。
+// プレビューが小さいので画面外にはみ出す問題も解消する。
+const OUTPUT_SCALE = 8;
+const OUTPUT_PRESETS = [
+  { label: "1920x1080", baseW: 240, baseH: 135 }, // 16:9
+  { label: "1080x1920", baseW: 135, baseH: 240 }, // 9:16
+  { label: "1440x1080", baseW: 180, baseH: 135 }, // 4:3
+  { label: "1080x1440", baseW: 135, baseH: 180 }, // 3:4
+  { label: "1080x1080", baseW: 135, baseH: 135 }, // 1:1
 ];
-let currentSizeIdx = 3; // 16:9
-let gridCols = 53,
-  gridRows = 30;
+let currentOutIdx = 0;
+let baseW = 240, // プレビュー/基準解像度 (出力 = base × OUTPUT_SCALE)
+  baseH = 135;
+
+// アート (場/グリフ) の描画領域。PAD で base から上下左右対称に削った内側。
+// DOT はこの解像度で場を描き、PAD マットを付けて base に合成 → ×8。
+let artWidth = 240;
+let artHeight = 135;
 
 /** ツールバーとキャンバスの間の間隔 */
 const CANVAS_GAP = 4;
@@ -100,12 +97,6 @@ const EXPORT_FORMATS = [
   { key: "mp4", label: "MP4" },
 ];
 let exportFormatIdx = 0; // availableFormats() のインデックス
-// 出力の長辺 px。合成キャンバス (額縁込み) をこの長辺へ正確にリサンプルする
-// (1bit ニアレストネイバー = 滲まない)。短辺はアスペクトから自動。
-let outputLongEdge = 1080;
-const OUT_MIN = 64,
-  OUT_MAX = 4096;
-const OUTPUT_PRESETS = [720, 1080, 1440, 1920, 2160];
 
 /**
  * 額縁 (マット): アート内容と枠線の間に置く背景余白 (px)。DOT/ASCII 共通で、
@@ -739,23 +730,22 @@ function resizeArt(w, h) {
 }
 
 /**
- * 文字グリッド (gridCols × gridRows) と字間から内容ピクセルを確定し、
- * その寸法でアートバッファを取り直して再生成する。
- * DOT もこの内容寸法 (= ASCII グリフ列の実ピクセル) で場を描くので、
- * DOT/ASCII の外寸が完全一致し、マットは各辺きっかり PAD px (対称) になる。
+ * base から PAD を上下左右対称に削った内側をアート描画領域として確定し、
+ * その解像度でアートバッファを取り直して再生成する。
+ * DOT はこの解像度で場を描き、PAD マットを付けて base に合成 → ×OUTPUT_SCALE。
  */
 function applySize() {
-  artWidth = gridCols * GLYPH_W + (gridCols - 1) * charSpacing;
-  artHeight = gridRows * GLYPH_H + (gridRows - 1) * charSpacing;
+  artWidth = Math.max(8, baseW - 2 * outerMargin);
+  artHeight = Math.max(8, baseH - 2 * outerMargin);
   resizeArt(artWidth, artHeight);
   startGeneration();
 }
 
-/** SIZE プリセットを適用する */
-function applySizePreset(idx) {
-  currentSizeIdx = idx;
-  gridCols = SIZE_PRESETS[idx].cols;
-  gridRows = SIZE_PRESETS[idx].rows;
+/** OUTPUT プリセット (最終外寸) を適用する */
+function applyOutputPreset(idx) {
+  currentOutIdx = idx;
+  baseW = OUTPUT_PRESETS[idx].baseW;
+  baseH = OUTPUT_PRESETS[idx].baseH;
   applySize();
 }
 
@@ -939,44 +929,11 @@ const AUTO_INTERVAL = 90;
 //  PNG 保存 / 壁紙設定
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/**
- * 出力寸法。合成キャンバス (額縁込み) の長辺を outputLongEdge px に合わせ、
- * 短辺はアスペクトから算出する。PNG/GIF/MP4 で共通。
- */
-function outputDims() {
-  const cw = canvasDispW(),
-    ch = canvasDispH();
-  const f = outputLongEdge / Math.max(cw, ch);
-  return {
-    w: Math.max(1, Math.round(cw * f)),
-    h: Math.max(1, Math.round(ch * f)),
-  };
-}
-
-/**
- * 1bit バッファを dw×dh へニアレストネイバーでリサンプルする。
- * 1bit ゆえ拡大してもエッジは硬いまま (滲まない)。中央寄せ標本化なので
- * 対称な入力は対称な出力になる (額縁マットの上下左右対称が保たれる)。
- */
-function resample1bit(src, sw, sh, dw, dh) {
-  const out = new Uint8Array(dw * dh);
-  for (let y = 0; y < dh; y++) {
-    const sy = Math.min(sh - 1, (((y + 0.5) * sh) / dh) | 0);
-    const sbase = sy * sw,
-      dbase = y * dw;
-    for (let x = 0; x < dw; x++) {
-      const sx = Math.min(sw - 1, (((x + 0.5) * sw) / dw) | 0);
-      out[dbase + x] = src[sbase + sx];
-    }
-  }
-  return out;
-}
-
-/** ダウンロードボタン: 選択中の形式 (PNG / GIF / MP4) × 倍率で出力する */
+/** ダウンロードボタン: 選択中の形式 (PNG / GIF / MP4) を base ×OUTPUT_SCALE で出力 */
 function downloadArt() {
   const key = currentFormatKey();
   if (key === "png") {
-    saveArtAsPng(); // outputLongEdge へリサンプル
+    saveArtAsPng(); // base ×OUTPUT_SCALE
   } else {
     startVideoRecording(key); // "gif" | "mp4"
   }
@@ -1034,26 +991,23 @@ function finishVideoRecording() {
     fg = t;
   }
 
-  // 各フレーム (内容 artWidth×artHeight) を額縁合成し、出力長辺へ正確リサンプル。
-  // 捕捉フレームは DOT=artBuf / ASCII=グリフラスタ どちらも artWidth×artHeight。
-  const m = outerMargin;
-  const cw = artWidth + m * 2,
-    ch = artHeight + m * 2;
-  const { w: ow, h: oh } = outputDims();
-  const matte = (f) => resample1bit(composeDotBuffer(f).buf, cw, ch, ow, oh);
-
+  // 捕捉フレームは合成済み base バッファ (captureFrame)。整数 ×OUTPUT_SCALE で
+  // 書き出す = 1 ドット = 物理 OUTPUT_SCALE ピクセルの均一拡大 (滲まない)。
   if (videoFormat === "mp4") {
     // MP4: WebCodecs で非同期エンコード。
     // 万一エンコーダの flush が解決しなくても videoEncoding が立ったまま
     // DOWNLOAD を永久に塞がないよう、タイムアウトで必ず決着させる。
     statusText = "ENCODING MP4...";
     videoEncoding = true;
-    const frames = gifFrames.map(matte);
+    const frames = gifFrames;
     gifFrames = [];
     const timeout = new Promise((_, reject) =>
       setTimeout(() => reject(new Error("MP4 encode timeout")), 30000),
     );
-    Promise.race([encodeMp4(frames, ow, oh, bg, fg, GIF_FPS, 1), timeout])
+    Promise.race([
+      encodeMp4(frames, baseW, baseH, bg, fg, GIF_FPS, OUTPUT_SCALE),
+      timeout,
+    ])
       .then((blob) => {
         downloadVideoBlob(blob, "mp4");
         statusText = "";
@@ -1071,8 +1025,8 @@ function finishVideoRecording() {
   // GIF: 自前エンコーダで同期エンコード (次フレームに遅延して "ENCODING" を表示)
   statusText = "ENCODING GIF...";
   setTimeout(() => {
-    const frames = gifFrames.map(matte);
-    const blob = encodeGif(frames, ow, oh, bg, fg, GIF_FPS, 1);
+    const frames = gifFrames;
+    const blob = encodeGif(frames, baseW, baseH, bg, fg, GIF_FPS, OUTPUT_SCALE);
     downloadVideoBlob(blob, "gif");
     gifFrames = [];
     statusText = "";
@@ -1095,14 +1049,12 @@ function downloadVideoBlob(blob, ext) {
 }
 
 function saveArtAsPng() {
-  // 額縁付きの合成キャンバスを出力長辺へ正確リサンプルして書き出す (DOT/ASCII 両対応)
+  // 合成済み base バッファを整数 ×OUTPUT_SCALE で書き出す (DOT/ASCII 両対応・均一ドット)
   const { buf, w, h } = composeCanvas();
-  const { w: ow, h: oh } = outputDims();
-  const out = resample1bit(buf, w, h, ow, oh);
-  GPU.beginCapture(ow, oh);
-  GPU.blit(out, ow, oh, 0, 0, 1);
-  if (invertMode) GPU.invertRect(0, 0, ow, oh);
-  const canvas = GPU.endCapture(1);
+  GPU.beginCapture(w, h);
+  GPU.blit(buf, w, h, 0, 0, 1);
+  if (invertMode) GPU.invertRect(0, 0, w, h);
+  const canvas = GPU.endCapture(OUTPUT_SCALE);
 
   canvas.toBlob((blob) => {
     if (!blob) return;
@@ -1444,17 +1396,14 @@ let plasmaPreset = null;
 let plasmaGamma = 1.0;
 
 /**
- * AA キャンバスの cols/rows をピクセルサイズから算出する。
- * 文字セルピッチ (CELL_W × CELL_H = 6×8) でキャンバス領域を割る。
+ * ASCII の文字数 (cols/rows) を算出する。base から PAD を引いた描画領域に
+ * 中心対称に並ぶグリフ数 (asciiLayout)。base/PAD/字間に追従する。
  */
-// ASCII の文字グリッドはサイズプリセットが定める gridCols×gridRows。
-// artWidth = gridCols×GLYPH_W + (gridCols-1)×字間 なので、ASCII グリフ列の
-// 実ピクセル extent は artWidth に一致する (DOT と同寸 = 外寸一致)。
 function calcAACols() {
-  return Math.max(4, gridCols);
+  return Math.max(4, asciiLayout(baseW, outerMargin, GLYPH_W, charSpacing).n);
 }
 function calcAARows() {
-  return Math.max(3, gridRows);
+  return Math.max(3, asciiLayout(baseH, outerMargin, GLYPH_H, charSpacing).n);
 }
 
 function plasmaInit(preset, s) {
@@ -2592,7 +2541,7 @@ let toolbarRoot;
 let ddAlgo, ddPreset, ddRender, nbGap, ddDither, ddEdge;
 let lblSeed, nbSeed, btnDice, btnGen;
 let tglInvert, tglAuto;
-let ddSize, nbPad, ddFormat, ddOut, nbOut, btnSave, btnFile;
+let ddSize, nbPad, ddFormat, btnSave, btnFile;
 let toolbarH = 0;
 
 const BTN_PAD = 8,
@@ -2715,16 +2664,16 @@ function buildToolbar() {
   tglAuto.h = ICON_H + BTN_PAD + BTN_BORDER;
   tglAuto.tooltip = "Auto shuffle (play/pause)";
 
-  // ── サイズ: プリセット (文字グリッド = アスペクト & 基準解像度) ──
-  // DOT/ASCII とも同じ内容寸法を使うので外寸が一致 (シャッフルで箱が動かない)。
-  const sizeLabels = SIZE_PRESETS.map((s) => s.label);
-  ddSize = new UI.DropDown(0, 0, sizeLabels, currentSizeIdx, (i) => {
-    applySizePreset(i);
+  // ── 出力外寸プリセット (OUTPUT): 最終出力サイズ。プレビューは ÷OUTPUT_SCALE ──
+  // 書き出しは整数 ×OUTPUT_SCALE なので均一ドット & 丸いサイズちょうど。
+  const outLabels = OUTPUT_PRESETS.map((o) => o.label);
+  ddSize = new UI.DropDown(0, 0, outLabels, currentOutIdx, (i) => {
+    applyOutputPreset(i);
   });
   ddSize.tooltip =
-    "Size preset: aspect & base resolution (DOT/ASCII identical). Scale up via X.";
+    "Output size. Preview = output / 8; export upscales x8 (uniform crisp pixels).";
 
-  // ── 書き出し: 形式 (PNG/GIF/MP4) + 自由倍率 ──
+  // ── 書き出し: 形式 (PNG/GIF/MP4) ──
   const formats = availableFormats();
   if (exportFormatIdx >= formats.length) exportFormatIdx = 0;
   ddFormat = new UI.DropDown(
@@ -2739,32 +2688,12 @@ function buildToolbar() {
   ddFormat.tooltip =
     "Export format: PNG = still, GIF = loop (any browser), MP4 = loop (SNS)";
 
-  // ── 出力長辺 (OUT): プリセット (720/1080/1440/1920/2160) + 任意 px 入力 ──
-  // 合成キャンバスをこの長辺へ正確リサンプル。短辺はアスペクトから自動。
-  let outSel = OUTPUT_PRESETS.indexOf(outputLongEdge);
-  if (outSel < 0) outSel = 1; // 一致しなければ 1080 を選択表示 (値は nbOut が真)
-  ddOut = new UI.DropDown(
-    0,
-    0,
-    OUTPUT_PRESETS.map((v) => String(v)),
-    outSel,
-    (i) => {
-      outputLongEdge = OUTPUT_PRESETS[i];
-      if (nbOut) nbOut.value = outputLongEdge;
-    },
-  );
-  ddOut.tooltip = "Output long edge (px). Preset; short edge follows aspect.";
-
-  nbOut = new UI.NumberBox(0, 0, OUT_MIN, OUT_MAX, outputLongEdge, 8, (v) => {
-    outputLongEdge = v;
-  });
-  nbOut.tooltip = "Output long edge (px), free value. Crisp nearest-neighbor resample.";
-
-  // ── 額縁マット (PAD): アートと枠の間の背景余白。DOT/ASCII 共通・書き出し込み ──
+  // ── 額縁マット (PAD): base から上下左右対称に削る描画領域の余白。書き出し込み ──
   nbPad = new UI.NumberBox(0, 0, MARGIN_MIN, MARGIN_MAX, outerMargin, 1, (v) => {
-    outerMargin = v; // 各辺 PAD px の対称マット (アートは不変、合成で反映)
+    outerMargin = v; // 描画領域 = base - 2*PAD。各辺 PAD px の対称マット
+    applySize(); // 描画領域が変わるので取り直して再生成
   });
-  nbPad.tooltip = "Frame matte: symmetric margin around the art (in export too)";
+  nbPad.tooltip = "Frame matte: symmetric margin, trims the drawing area (in export too)";
 
   // PC へ書き出す = DOWNLOAD / SYNESTA 内に保存 (PBM→VFS) = SAVE。
   btnSave = new UI.PushButton(0, 0, "DOWNLOAD", () => {
@@ -2784,24 +2713,20 @@ function buildToolbar() {
   const lblGap = new UI.Label(0, 0, "GAP:");
   const lblDither = new UI.Label(0, 0, "DITHER:");
   const lblEdge = new UI.Label(0, 0, "EDGE:");
-  const lblSize = new UI.Label(0, 0, "SIZE:");
-  const lblPad = new UI.Label(0, 0, "PAD:");
   const lblOut = new UI.Label(0, 0, "OUT:");
+  const lblPad = new UI.Label(0, 0, "PAD:");
   // 1行目: 何を (ALGO) どんなスタイルで (STYLE) どう見せるか (AS)
   //   + ASCII なら字間 (GAP)、DOT ならディザ行列 (DITHER) を対称に出す
   const row1Items = [lblAlgo, ddAlgo, lblStyle, ddPreset, lblRender, ddRender];
   if (renderMode === "ascii") row1Items.push(lblGap, nbGap);
   else row1Items.push(lblDither, ddDither);
   const row1 = UI.HBox(row1Items);
-  // 2行目: 生成 (seed + トランスポート auto/GEN + 反転)
-  //   + REACT/BZ なら境界条件 (EDGE) をここに置く (1 行目の幅に余裕がないため)
-  //   + 出力長辺 (OUT) もここ。3 行目は DOWNLOAD/SAVE で幅が足りないため。
+  // 2行目: 生成 (seed + トランスポート auto/GEN + 反転) + REACT/BZ なら EDGE
   const row2Items = [lblSeed, nbSeed, btnDice, tglAuto, btnGen, tglInvert];
   if (algoSupportsEdge()) row2Items.push(lblEdge, ddEdge);
-  row2Items.push(lblOut, ddOut, nbOut);
   const row2 = UI.HBox(row2Items);
-  // 3行目: サイズ (SIZE + 額縁PAD) + 書き出し (形式 + DOWNLOAD/SAVE)
-  const row3 = UI.HBox([lblSize, ddSize, lblPad, nbPad, ddFormat, btnSave, btnFile]);
+  // 3行目: 出力外寸 (OUT) + 額縁 PAD + 書き出し (形式 + DOWNLOAD/SAVE)
+  const row3 = UI.HBox([lblOut, ddSize, lblPad, nbPad, ddFormat, btnSave, btnFile]);
   toolbarRoot = UI.VBox([row1, row2, row3]);
   toolbar = new UI.WidgetGroup(toolbarRoot);
   toolbarH = toolbarRoot.y + toolbarRoot.h;
@@ -2816,65 +2741,67 @@ function buildToolbar() {
 // 間隔だけ調整)。表示・書き出しとも、この合成バッファ (0=背景/マット, 1=前景)
 // を経由するので、額縁は画面にも書き出しファイルにも等しく反映される。
 
-function asciiContentW() {
-  const cols = calcAACols();
-  return cols * GLYPH_W + Math.max(0, cols - 1) * charSpacing;
-}
-function asciiContentH() {
-  const rows = calcAARows();
-  return rows * GLYPH_H + Math.max(0, rows - 1) * charSpacing;
-}
-/** アート内容 (マット無し) の表示寸法 */
-function contentDispW() {
-  return renderMode === "ascii" ? asciiContentW() : artWidth;
-}
-function contentDispH() {
-  return renderMode === "ascii" ? asciiContentH() : artHeight;
-}
-/** 額縁込みのキャンバス寸法 (= 内容 + マット×2) */
+// プレビュー/合成キャンバス寸法 = base (出力 = base × OUTPUT_SCALE)。
+// DOT/ASCII とも同じ base に合成するので外寸が完全一致する。
 function canvasDispW() {
-  return contentDispW() + outerMargin * 2;
+  return baseW;
 }
 function canvasDispH() {
-  return contentDispH() + outerMargin * 2;
+  return baseH;
 }
 
-/** DOT バッファ (artWidth×artHeight) をマット付きキャンバスに合成 */
-function composeDotBuffer(src) {
-  const m = outerMargin;
-  const cw = artWidth + m * 2,
-    ch = artHeight + m * 2;
-  const out = new Uint8Array(cw * ch);
-  for (let y = 0; y < artHeight; y++) {
-    out.set(src.subarray(y * artWidth, (y + 1) * artWidth), (y + m) * cw + m);
+/**
+ * ASCII グリフを base 1 軸内に「中心対称」に配置する位置列を返す。
+ * 可視 extent を中央寄せし、余り 1px はグリフ間ギャップに吸収することで、
+ * 外側マージンを左右 (上下) 厳密一致させる (1px 単位で対称)。
+ * PAD 分を内側に確保し、はみ出す手前までグリフを並べる。
+ *
+ * @returns {{ n:number, pos:number[], margin:number }}
+ */
+function asciiLayout(baseDim, pad, glyphSize, spacing) {
+  const usable = Math.max(glyphSize, baseDim - 2 * pad);
+  const pitch = glyphSize + spacing;
+  let n = Math.floor((usable + spacing) / pitch); // 可視 extent <= usable
+  if (n < 1) n = 1;
+  const ev = n * glyphSize + (n - 1) * spacing; // 可視 extent
+  const margin = (baseDim - ev) >> 1; // 左右共通の外側マージン (floor)
+  const extra = baseDim - 2 * margin - ev; // 0 or 1 (中央寄りギャップへ吸収)
+  const mid = n >> 1;
+  const pos = new Array(n);
+  for (let i = 0; i < n; i++) {
+    pos[i] = margin + i * pitch + (i >= mid ? extra : 0);
   }
-  return { buf: out, w: cw, h: ch };
+  return { n, pos, margin };
 }
 
-/** ASCII グリフ列をマット付きキャンバスにラスタライズ (字間 charSpacing) */
+/** DOT バッファ (artWidth×artHeight) を PAD マット付きで base に合成 */
+function composeDotBuffer(src) {
+  const out = new Uint8Array(baseW * baseH);
+  // artWidth = baseW - 2*PAD なので x0 = PAD。端数なく左右上下対称。
+  const x0 = (baseW - artWidth) >> 1,
+    y0 = (baseH - artHeight) >> 1;
+  for (let y = 0; y < artHeight; y++) {
+    out.set(src.subarray(y * artWidth, (y + 1) * artWidth), (y0 + y) * baseW + x0);
+  }
+  return { buf: out, w: baseW, h: baseH };
+}
+
+/** ASCII グリフを base に中心対称ラスタライズ (PAD + 量子化余白は対称) */
 function composeAsciiBuffer() {
-  const m = outerMargin,
-    s = charSpacing;
-  // 実際の aaLines の寸法から計算する (描画と確実に一致させ、境界外書込を防ぐ)
   const lines = aaLines || [];
   const rows = lines.length;
-  const cols = rows > 0 ? lines[0].length : 0;
-  const contentW = cols * GLYPH_W + Math.max(0, cols - 1) * s;
-  const contentH = rows * GLYPH_H + Math.max(0, rows - 1) * s;
-  const cw = contentW + m * 2,
-    ch = contentH + m * 2;
-  const out = new Uint8Array(cw * ch);
-  const stepX = GLYPH_W + s,
-    stepY = GLYPH_H + s;
-  for (let r = 0; r < lines.length; r++) {
+  const lx = asciiLayout(baseW, outerMargin, GLYPH_W, charSpacing);
+  const ly = asciiLayout(baseH, outerMargin, GLYPH_H, charSpacing);
+  const out = new Uint8Array(baseW * baseH);
+  for (let r = 0; r < rows && r < ly.n; r++) {
     const line = lines[r];
-    const oy = m + r * stepY;
-    for (let c = 0; c < line.length; c++) {
+    const oy = ly.pos[r];
+    for (let c = 0; c < line.length && c < lx.n; c++) {
       const g = getGlyph(line[c]);
       if (!g) continue;
-      const ox = m + c * stepX;
+      const ox = lx.pos[c];
       for (let gy = 0; gy < GLYPH_H; gy++) {
-        const dstRow = (oy + gy) * cw + ox;
+        const dstRow = (oy + gy) * baseW + ox;
         const gRow = gy * GLYPH_W;
         for (let gx = 0; gx < GLYPH_W; gx++) {
           if (g[gRow + gx]) out[dstRow + gx] = 1;
@@ -2882,52 +2809,19 @@ function composeAsciiBuffer() {
       }
     }
   }
-  return { buf: out, w: cw, h: ch };
+  return { buf: out, w: baseW, h: baseH };
 }
 
-/** 現在の表示内容を額縁付き 1bit バッファ (0=背景, 1=前景) に合成して返す */
+/** 現在の表示内容を base サイズの 1bit バッファ (0=背景, 1=前景) に合成して返す */
 function composeCanvas() {
   return renderMode === "ascii"
     ? composeAsciiBuffer()
     : composeDotBuffer(artBuf);
 }
 
-/**
- * ASCII グリフ列をマット無しの内容バッファ (artWidth×artHeight) にラスタライズ。
- * サイズ統一により ASCII グリフ列の実 extent = artWidth×artHeight なのでぴったり。
- * 録画フレーム捕捉に使う (DOT の artBuf と同寸 = 同じ額縁合成・リサンプルに乗る)。
- */
-function rasterizeAsciiContent() {
-  const s = charSpacing;
-  const out = new Uint8Array(artWidth * artHeight);
-  const lines = aaLines || [];
-  const stepX = GLYPH_W + s,
-    stepY = GLYPH_H + s;
-  for (let r = 0; r < lines.length; r++) {
-    const line = lines[r];
-    const oy = r * stepY;
-    for (let c = 0; c < line.length; c++) {
-      const g = getGlyph(line[c]);
-      if (!g) continue;
-      const ox = c * stepX;
-      for (let gy = 0; gy < GLYPH_H; gy++) {
-        const yy = oy + gy;
-        if (yy >= artHeight) break;
-        const dstRow = yy * artWidth + ox;
-        const gRow = gy * GLYPH_W;
-        for (let gx = 0; gx < GLYPH_W; gx++) {
-          if (ox + gx >= artWidth) break;
-          if (g[gRow + gx]) out[dstRow + gx] = 1;
-        }
-      }
-    }
-  }
-  return out;
-}
-
-/** 録画用フレーム捕捉: DOT は artBuf、ASCII はグリフラスタ (どちらも内容寸法) */
+/** 録画用フレーム捕捉: 合成済み base バッファ (DOT/ASCII 共通) */
 function captureFrame() {
-  return renderMode === "ascii" ? rasterizeAsciiContent() : artBuf.slice();
+  return composeCanvas().buf;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -3029,11 +2923,12 @@ function onMeasure() {
 
 function onDrawFooter(footerRect) {
   drawText(footerRect.x, footerRect.y, statusText, 1);
-  // 右側: 額縁込みキャンバス寸法 → 出力解像度 (長辺リサンプル)。常時表示。
+  // 右側: プレビュー base 寸法 → 出力解像度 (base ×OUTPUT_SCALE)。常時表示。
   const key = currentFormatKey();
   const cw = canvasDispW(),
     ch = canvasDispH();
-  const { w: outW, h: outH } = outputDims();
+  const outW = cw * OUTPUT_SCALE,
+    outH = ch * OUTPUT_SCALE;
   const fmt = key.toUpperCase();
   const info = `${cw}x${ch} ->${fmt} ${outW}x${outH}`;
   const rw = textWidth(info);
@@ -3050,9 +2945,9 @@ function onBeforeClose() {
   invertMode = false;
   autoMode = false;
   autoTimer = 0;
-  currentSizeIdx = 3; // 16:9
-  gridCols = SIZE_PRESETS[3].cols;
-  gridRows = SIZE_PRESETS[3].rows;
+  currentOutIdx = 0; // 1920x1080
+  baseW = OUTPUT_PRESETS[0].baseW;
+  baseH = OUTPUT_PRESETS[0].baseH;
   renderMode = "dot";
   outerMargin = 1;
   charSpacing = 1;
@@ -3064,11 +2959,7 @@ function onBeforeClose() {
   videoFormat = "gif";
   videoEncoding = false;
   exportFormatIdx = 0; // PNG
-  outputLongEdge = 1080;
-  resizeArt(
-    gridCols * GLYPH_W + (gridCols - 1) * charSpacing,
-    gridRows * GLYPH_H + (gridRows - 1) * charSpacing,
-  ); // 既定 16:9 グリッド 53×30 → 317×179
+  resizeArt(baseW - 2 * outerMargin, baseH - 2 * outerMargin);
   fieldBuf = null;
   rdU = rdV = rdNU = rdNV = null;
   vorPoints = null;
