@@ -51,6 +51,7 @@ onFontChange(() => {
   CELL_W = GLYPH_W + 1;
   CELL_H = GLYPH_H + 1;
   _cachedRamp = null;
+  _tofuSig = undefined;
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -59,6 +60,13 @@ onFontChange(() => {
 
 /** @type {{ ch: string, density: number }[] | null} */
 let _cachedRamp = null;
+
+/**
+ * フォント全体から確定した豆腐 (未定義プレースホルダ箱) のビットマップ署名。
+ * undefined = 未算出, null = 豆腐なし, string = 豆腐署名。
+ * @type {string | null | undefined}
+ */
+let _tofuSig = undefined;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  Density 計算
@@ -89,6 +97,40 @@ function glyphSignature(glyph) {
   return s;
 }
 
+/**
+ * フォント全体 (ASCII 0x20–0x7E) を走査し、豆腐 (未定義グリフの
+ * プレースホルダ箱) のビットマップ署名を確定する (キャッシュ付き)。
+ *
+ * 未定義スロットは同一の箱グリフで繰り返し現れるため、非空ビットマップのうち
+ * 最頻の署名を豆腐とみなす。TOFU_MIN 個以上重複していなければ豆腐なし (null)。
+ *
+ * フォント全体から一度だけ確定するので、個々の tone ramp に豆腐文字が
+ * 1 個しか含まれなくても (例: preset の "o")、確実に除外できる。
+ *
+ * @returns {string | null}  豆腐署名、なければ null
+ */
+function getTofuSignature() {
+  if (_tofuSig !== undefined) return _tofuSig;
+  const freq = new Map();
+  for (let c = FIRST_CHAR; c <= LAST_CHAR; c++) {
+    const glyph = getGlyph(String.fromCharCode(c));
+    if (!glyph) continue;
+    if (calcDensity(glyph) === 0) continue; // 空白は対象外
+    const sig = glyphSignature(glyph);
+    freq.set(sig, (freq.get(sig) || 0) + 1);
+  }
+  let sig = null;
+  let n = 0;
+  for (const [s, count] of freq) {
+    if (count > n) {
+      n = count;
+      sig = s;
+    }
+  }
+  _tofuSig = n >= TOFU_MIN ? sig : null;
+  return _tofuSig;
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  Tone Ramp
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -110,40 +152,17 @@ export function buildToneRamp(chars) {
     }
   }
 
-  // ── グリフ収集 (ビットマップ署名付き) ──
-  const entries = [];
+  // ── 豆腐 (未定義グリフのプレースホルダ箱) を除外しつつグリフ収集 ──
+  // 豆腐署名はフォント全体から確定する (getTofuSignature)。これにより
+  // ramp に豆腐文字が 1 個しか含まれなくても (例: preset の "o") 確実に落とす。
+  // (豆腐は塗り潰し箱 = density が高いため、除外しないと最暗部に箱が出る)
+  const tofuSig = getTofuSignature();
+  const ramp = [];
   for (const ch of chars) {
     const glyph = getGlyph(ch);
     if (!glyph) continue;
-    entries.push({
-      ch,
-      sig: glyphSignature(glyph),
-      density: calcDensity(glyph),
-    });
-  }
-
-  // ── 豆腐 (未定義グリフのプレースホルダ箱) を除外 ──
-  // 未定義スロットは同一ビットマップで繰り返し現れる。非空ビットマップのうち
-  // 最頻の署名を豆腐とみなし、TOFU_MIN 個以上重複していればランプから落とす。
-  // (豆腐は塗り潰し箱 = density が高いため、除外しないと最暗部に箱が出る)
-  const freq = new Map();
-  for (const e of entries) {
-    if (e.density === 0) continue; // 空白は対象外
-    freq.set(e.sig, (freq.get(e.sig) || 0) + 1);
-  }
-  let tofuSig = null;
-  let tofuN = 0;
-  for (const [sig, n] of freq) {
-    if (n > tofuN) {
-      tofuN = n;
-      tofuSig = sig;
-    }
-  }
-
-  const ramp = [];
-  for (const e of entries) {
-    if (tofuN >= TOFU_MIN && e.sig === tofuSig) continue;
-    ramp.push({ ch: e.ch, density: e.density });
+    if (tofuSig !== null && glyphSignature(glyph) === tofuSig) continue;
+    ramp.push({ ch, density: calcDensity(glyph) });
   }
 
   // density 昇順 (同 density なら文字コード順)

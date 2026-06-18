@@ -421,7 +421,7 @@ const PRESETS = {
       patFn: "diamond",
       freq: 0.05,
       gamma: 1.2,
-      chars: " .oO",
+      chars: " .:O",
     },
   ],
   land: [
@@ -479,7 +479,7 @@ const PRESETS = {
     { name: "DROPS", count: 9, gamma: 1.3, chars: "" },
     { name: "MERGE", count: 3, gamma: 0.55, chars: "" },
     { name: "SWARM", count: 14, gamma: 1.0, chars: "" },
-    { name: "ORBIT", count: 6, gamma: 0.9, chars: " .oO@" },
+    { name: "ORBIT", count: 6, gamma: 0.9, chars: " .:O0@" },
   ],
   moire: [
     { name: "LINES", layers: 2, freq: 0.5, curve: false, gamma: 1.0, chars: "" },
