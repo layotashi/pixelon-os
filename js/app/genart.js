@@ -991,21 +991,31 @@ function finishVideoRecording() {
     fg = t;
   }
 
-  // 捕捉フレームは合成済み base バッファ (captureFrame)。整数 ×OUTPUT_SCALE で
-  // 書き出す = 1 ドット = 物理 OUTPUT_SCALE ピクセルの均一拡大 (滲まない)。
+  // 書き出しフレームと寸法・倍率をモード別に用意する。
+  //   DOT  : base 合成バッファ → encode が整数 ×OUTPUT_SCALE 拡大 (均一)。
+  //   ASCII: 各フレームの aaLines を出力解像度でラスタライズ → ×8 で厳密対称。
+  const ascii = renderMode === "ascii";
+  const encW = ascii ? baseW * OUTPUT_SCALE : baseW;
+  const encH = ascii ? baseH * OUTPUT_SCALE : baseH;
+  const encScale = ascii ? 1 : OUTPUT_SCALE;
+  const prepFrames = () =>
+    ascii
+      ? gifFrames.map((lines) => composeAsciiBuffer(OUTPUT_SCALE, lines).buf)
+      : gifFrames;
+
   if (videoFormat === "mp4") {
     // MP4: WebCodecs で非同期エンコード。
     // 万一エンコーダの flush が解決しなくても videoEncoding が立ったまま
     // DOWNLOAD を永久に塞がないよう、タイムアウトで必ず決着させる。
     statusText = "ENCODING MP4...";
     videoEncoding = true;
-    const frames = gifFrames;
+    const frames = prepFrames();
     gifFrames = [];
     const timeout = new Promise((_, reject) =>
       setTimeout(() => reject(new Error("MP4 encode timeout")), 30000),
     );
     Promise.race([
-      encodeMp4(frames, baseW, baseH, bg, fg, GIF_FPS, OUTPUT_SCALE),
+      encodeMp4(frames, encW, encH, bg, fg, GIF_FPS, encScale),
       timeout,
     ])
       .then((blob) => {
@@ -1025,8 +1035,8 @@ function finishVideoRecording() {
   // GIF: 自前エンコーダで同期エンコード (次フレームに遅延して "ENCODING" を表示)
   statusText = "ENCODING GIF...";
   setTimeout(() => {
-    const frames = gifFrames;
-    const blob = encodeGif(frames, baseW, baseH, bg, fg, GIF_FPS, OUTPUT_SCALE);
+    const frames = prepFrames();
+    const blob = encodeGif(frames, encW, encH, bg, fg, GIF_FPS, encScale);
     downloadVideoBlob(blob, "gif");
     gifFrames = [];
     statusText = "";
@@ -1049,12 +1059,17 @@ function downloadVideoBlob(blob, ext) {
 }
 
 function saveArtAsPng() {
-  // 合成済み base バッファを整数 ×OUTPUT_SCALE で書き出す (DOT/ASCII 両対応・均一ドット)
-  const { buf, w, h } = composeCanvas();
+  // DOT: base を整数 ×OUTPUT_SCALE で拡大 (均一ドット)。
+  // ASCII: 出力解像度で直接ラスタライズ (×8 で外側マージン厳密対称)。
+  const ascii = renderMode === "ascii";
+  const { buf, w, h } = ascii
+    ? composeAsciiBuffer(OUTPUT_SCALE)
+    : composeDotBuffer(artBuf);
+  const capScale = ascii ? 1 : OUTPUT_SCALE;
   GPU.beginCapture(w, h);
   GPU.blit(buf, w, h, 0, 0, 1);
   if (invertMode) GPU.invertRect(0, 0, w, h);
-  const canvas = GPU.endCapture(OUTPUT_SCALE);
+  const canvas = GPU.endCapture(capScale);
 
   canvas.toBlob((blob) => {
     if (!blob) return;
@@ -2751,26 +2766,23 @@ function canvasDispH() {
 }
 
 /**
- * ASCII グリフを base 1 軸内に「中心対称」に配置する位置列を返す。
- * 可視 extent を中央寄せし、余り 1px はグリフ間ギャップに吸収することで、
- * 外側マージンを左右 (上下) 厳密一致させる (1px 単位で対称)。
- * PAD 分を内側に確保し、はみ出す手前までグリフを並べる。
+ * ASCII グリフを 1 軸に均一ピッチで中央寄せ配置する位置列を返す (scale 倍)。
+ * 文字数 n は base (scale 1) で確定。配置はスケール先で行うので、書き出しの
+ * ×OUTPUT_SCALE では余りが必ず偶数になり、外側マージンが左右上下で厳密一致する。
+ * 均一ピッチなので中央に継ぎ目 (シーム) を作らない (4 象限分割バグの修正)。
  *
  * @returns {{ n:number, pos:number[], margin:number }}
  */
-function asciiLayout(baseDim, pad, glyphSize, spacing) {
+function asciiLayout(baseDim, pad, glyphSize, spacing, scale = 1) {
   const usable = Math.max(glyphSize, baseDim - 2 * pad);
   const pitch = glyphSize + spacing;
-  let n = Math.floor((usable + spacing) / pitch); // 可視 extent <= usable
+  let n = Math.floor((usable + spacing) / pitch); // 文字数 (base で確定)
   if (n < 1) n = 1;
-  const ev = n * glyphSize + (n - 1) * spacing; // 可視 extent
-  const margin = (baseDim - ev) >> 1; // 左右共通の外側マージン (floor)
-  const extra = baseDim - 2 * margin - ev; // 0 or 1 (中央寄りギャップへ吸収)
-  const mid = n >> 1;
+  const ps = pitch * scale;
+  const ev = n * glyphSize * scale + (n - 1) * spacing * scale; // 可視 extent (scale 倍)
+  const margin = (baseDim * scale - ev) >> 1; // 中央寄せ (均一ピッチ)
   const pos = new Array(n);
-  for (let i = 0; i < n; i++) {
-    pos[i] = margin + i * pitch + (i >= mid ? extra : 0);
-  }
+  for (let i = 0; i < n; i++) pos[i] = margin + i * ps;
   return { n, pos, margin };
 }
 
@@ -2786,14 +2798,19 @@ function composeDotBuffer(src) {
   return { buf: out, w: baseW, h: baseH };
 }
 
-/** ASCII グリフを base に中心対称ラスタライズ (PAD + 量子化余白は対称) */
-function composeAsciiBuffer() {
-  const lines = aaLines || [];
-  const rows = lines.length;
-  const lx = asciiLayout(baseW, outerMargin, GLYPH_W, charSpacing);
-  const ly = asciiLayout(baseH, outerMargin, GLYPH_H, charSpacing);
-  const out = new Uint8Array(baseW * baseH);
-  for (let r = 0; r < rows && r < ly.n; r++) {
+/**
+ * ASCII グリフを base×scale のバッファに均一ピッチ中央寄せでラスタライズ。
+ * scale=1 はプレビュー、scale=OUTPUT_SCALE は書き出し (×8 で厳密対称)。
+ * lines 省略時は現在の aaLines (録画では各フレームの行を渡す)。
+ */
+function composeAsciiBuffer(scale = 1, lines = aaLines) {
+  lines = lines || [];
+  const lx = asciiLayout(baseW, outerMargin, GLYPH_W, charSpacing, scale);
+  const ly = asciiLayout(baseH, outerMargin, GLYPH_H, charSpacing, scale);
+  const W = baseW * scale,
+    H = baseH * scale;
+  const out = new Uint8Array(W * H);
+  for (let r = 0; r < lines.length && r < ly.n; r++) {
     const line = lines[r];
     const oy = ly.pos[r];
     for (let c = 0; c < line.length && c < lx.n; c++) {
@@ -2801,27 +2818,38 @@ function composeAsciiBuffer() {
       if (!g) continue;
       const ox = lx.pos[c];
       for (let gy = 0; gy < GLYPH_H; gy++) {
-        const dstRow = (oy + gy) * baseW + ox;
         const gRow = gy * GLYPH_W;
+        const yBase = oy + gy * scale;
         for (let gx = 0; gx < GLYPH_W; gx++) {
-          if (g[gRow + gx]) out[dstRow + gx] = 1;
+          if (!g[gRow + gx]) continue;
+          const xBase = ox + gx * scale;
+          for (let sy = 0; sy < scale; sy++) {
+            const row = (yBase + sy) * W + xBase;
+            for (let sx = 0; sx < scale; sx++) out[row + sx] = 1;
+          }
         }
       }
     }
   }
-  return { buf: out, w: baseW, h: baseH };
+  return { buf: out, w: W, h: H };
 }
 
-/** 現在の表示内容を base サイズの 1bit バッファ (0=背景, 1=前景) に合成して返す */
+/** プレビュー用: base サイズの 1bit バッファ (0=背景, 1=前景) */
 function composeCanvas() {
   return renderMode === "ascii"
-    ? composeAsciiBuffer()
+    ? composeAsciiBuffer(1)
     : composeDotBuffer(artBuf);
 }
 
-/** 録画用フレーム捕捉: 合成済み base バッファ (DOT/ASCII 共通) */
+/**
+ * 録画フレーム捕捉。DOT は base 合成バッファ (encode 時に整数 ×OUTPUT_SCALE)、
+ * ASCII は各フレームの aaLines をコピー (encode 時に出力解像度でラスタライズ
+ * → ×8 で厳密対称)。
+ */
 function captureFrame() {
-  return composeCanvas().buf;
+  return renderMode === "ascii"
+    ? (aaLines || []).slice()
+    : composeDotBuffer(artBuf).buf;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
