@@ -11,13 +11,14 @@
  *   3. 秩序と混沌の狭間 — 完全な規則性でも完全な乱雑さでもない、
  *      その境界領域にこそ、最も美しい構造が宿ること
  *
- * 14のアルゴリズムが、それぞれ異なる角度から
+ * 8つのアルゴリズムが、それぞれ異なる角度から
  * この「創発」の神秘を1bitキャンバスに描き出す。
  *
  * ─── アルゴリズム と レンダーモード ───
  * アルゴリズムは「何を生むか」、レンダーモードは「どう見せるか」を分離する。
- *   - 構造系 (線・粒子・凝集) … FLOW / ATTRACT / DLA / LSYS / SPIRAL / AUTOMATA
- *       ストロークを直接ピクセルに刻む。DOT 専用・一回生成。
+ * 1bit・低解像度で映えるのは「面の質量と中間調テクスチャ」を持つ場 (スカラー場)
+ * 系のみ。線・点の構造系はディザ/ASCII で質量が乗らず映えないため、GENART は
+ * 場のパラダイムに統一している。
  *   - 場系 (スカラー場 f(x,y) ∈ [0,1]) … REACT / VORONOI / WAVE /
  *       PLASMA / DRIFT / GRID / LAND
  *       場を fieldBuf に書き、共通レンダラが DOT (Bayer ディザ) か
@@ -25,15 +26,9 @@
  *   - RAIN … 文字が降り積もるデジタルの雨。文字そのものが主役ゆえ ASCII 専用。
  *
  * アルゴリズム:
- *   FLOW     — ノイズ場に導かれた無数の粒子が織りなす有機的紋様
  *   REACT    — 化学反応の自己組織化が生む生命的パターン (Gray-Scott)
- *   ATTRACT  — カオス力学系の軌道が描く数理の美 (Clifford / De Jong)
- *   DLA      — ランダムウォーカーの凝集が紡ぐ樹枝状結晶
- *   LSYS     — L-System: 再帰的文法が描く植物の幾何学
  *   VORONOI  — ボロノイ割り: 空間分割が紡ぐ細胞的テッセレーション
  *   WAVE     — 波動干渉: 複数波源の干渉縞が描くモアレ
- *   SPIRAL   — 黄金螺旋: フィボナッチと黄金角が織りなす自然の幾何学
- *   AUTOMATA — セルラーオートマトン: Wolfram 1D→2D 展開の万華鏡
  *   PLASMA   — sin/cos 干渉の多重合成が描くサイケデリックな紋様
  *   DRIFT    — パーリンノイズ密度場の漂い (時間で流れる雲)
  *   RAIN     — 文字が降り注ぎ積もっていくデジタルの雨 (ASCII 専用)
@@ -154,15 +149,9 @@ let gifLoopFrame = 0; // アニメ算法のループ用フレームカウンタ
 
 /** アルゴリズム定義 */
 const ALGO_KEYS = [
-  "flow",
   "react",
-  "attract",
-  "dla",
-  "lsys",
   "voronoi",
   "wave",
-  "spiral",
-  "automata",
   "plasma",
   "drift",
   "rain",
@@ -170,15 +159,9 @@ const ALGO_KEYS = [
   "land",
 ];
 const ALGO_NAMES = [
-  "FLOW",
   "REACT",
-  "ATTRACT",
-  "DLA",
-  "LSYS",
   "VORONOI",
   "WAVE",
-  "SPIRAL",
-  "AUTOMATA",
   "PLASMA",
   "DRIFT",
   "RAIN",
@@ -190,19 +173,12 @@ const ALGO_NAMES = [
  * 各アルゴリズムが対応するレンダーモード。
  *   "dot"   — 1bit ピクセル (Bayer ディザ)。GIF 書き出し可。
  *   "ascii" — 文字セル (tone ramp 濃淡)。
- * 構造系は DOT 専用、場系は両対応、RAIN は ASCII 専用。
- * 先頭要素が既定モード。
+ * 場系は両対応、RAIN は ASCII 専用。先頭要素が既定モード。
  */
 const ALGO_MODES = {
-  flow: ["dot"],
   react: ["dot", "ascii"],
-  attract: ["dot"],
-  dla: ["dot"],
-  lsys: ["dot"],
   voronoi: ["dot", "ascii"],
   wave: ["dot", "ascii"],
-  spiral: ["dot"],
-  automata: ["dot"],
   plasma: ["dot", "ascii"],
   drift: ["dot", "ascii"],
   rain: ["ascii"],
@@ -231,7 +207,7 @@ const RENDER_LABELS = { dot: "DOT", ascii: "ASCII" };
  * 場を時刻 t∈[0,2π) で毎フレーム再計算し、常に動き続ける「生きたキャンバス」。
  * 位相を進める (plasma/grid/wave) か、ノイズ標本点を円運動させる (drift/land) ことで
  * t が一周すると元に戻る ＝ 周期的 ＝ シームレスにループする (GIF ループの素地)。
- * 構造系・VORONOI・REACT・RAIN は一回生成 (時間発展しない)。
+ * VORONOI・REACT・RAIN は一回生成 (時間発展しない)。
  */
 const ANIM_ALGOS = new Set(["plasma", "drift", "grid", "land", "wave"]);
 /** アニメ 1 周期のフレーム数 (≈3秒@60fps)。GIF ループもこの周期で撮る。 */
@@ -252,82 +228,6 @@ function isAnimated() {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 const PRESETS = {
-  flow: [
-    {
-      name: "SILK",
-      scale: 0.004,
-      octaves: 1,
-      particles: 3000,
-      steps: 350,
-      stepSize: 0.7,
-      angleOfs: 0,
-      warp: false,
-      curl: false,
-      density: false,
-    },
-    {
-      name: "STORM",
-      scale: 0.011,
-      octaves: 4,
-      particles: 2500,
-      steps: 200,
-      stepSize: 1.1,
-      angleOfs: 0,
-      warp: false,
-      curl: false,
-      density: false,
-    },
-    {
-      name: "MARBLE",
-      scale: 0.005,
-      octaves: 3,
-      particles: 3500,
-      steps: 280,
-      stepSize: 0.7,
-      angleOfs: 0,
-      warp: true,
-      warpAmt: 2.5,
-      curl: false,
-      density: false,
-    },
-    {
-      name: "VORTEX",
-      scale: 0.005,
-      octaves: 3,
-      particles: 3000,
-      steps: 280,
-      stepSize: 1.0,
-      angleOfs: 0,
-      warp: false,
-      curl: true,
-      density: false,
-    },
-    {
-      name: "SMOKE",
-      scale: 0.006,
-      octaves: 5,
-      particles: 8000,
-      steps: 160,
-      stepSize: 0.5,
-      angleOfs: 0,
-      warp: true,
-      warpAmt: 1.8,
-      curl: false,
-      density: true,
-    },
-    {
-      name: "RIVER",
-      scale: 0.003,
-      octaves: 2,
-      particles: 4000,
-      steps: 500,
-      stepSize: 1.2,
-      angleOfs: Math.PI * 0.5,
-      warp: false,
-      curl: true,
-      density: false,
-    },
-  ],
   react: [
     { name: "MITOSIS", f: 0.0367, k: 0.0649, iters: 4000 },
     { name: "CORAL", f: 0.0545, k: 0.062, iters: 3500 },
@@ -335,78 +235,6 @@ const PRESETS = {
     { name: "MAZE", f: 0.029, k: 0.057, iters: 5000 },
     { name: "SPOTS", f: 0.014, k: 0.054, iters: 6000 },
     { name: "HOLES", f: 0.039, k: 0.058, iters: 4000 },
-  ],
-  attract: [
-    { name: "WINGS", a: -1.4, b: 1.6, c: 1.0, d: 0.7, type: "clifford" },
-    { name: "RIBBON", a: 1.7, b: 1.7, c: 0.6, d: 1.2, type: "clifford" },
-    { name: "NEBULA", a: -2.0, b: -2.0, c: -1.2, d: 2.0, type: "dejong" },
-    { name: "GALAXY", a: 1.5, b: -1.8, c: 1.6, d: 0.9, type: "clifford" },
-    { name: "DRAGON", a: -1.2, b: -1.9, c: 1.8, d: -1.6, type: "dejong" },
-    { name: "FERN", a: 1.1, b: -1.32, c: -1.03, d: 1.54, type: "clifford" },
-  ],
-  dla: [
-    { name: "CRYSTAL", seedMode: "center", maxP: 5000, dirs: 4 },
-    { name: "FROST", seedMode: "bottom", maxP: 4000, dirs: 4 },
-    { name: "DENDRITE", seedMode: "center", maxP: 5000, dirs: 4 },
-    { name: "CORAL", seedMode: "multi", maxP: 5000, dirs: 8 },
-    { name: "STAR", seedMode: "ring", maxP: 5000, dirs: 4 },
-    { name: "LICHEN", seedMode: "scatter", maxP: 4000, dirs: 8 },
-  ],
-  lsys: [
-    {
-      name: "TREE",
-      axiom: "F",
-      rules: { F: "FF+[+F-F-F]-[-F+F+F]" },
-      angle: 22.5,
-      depth: 4,
-      len: 4,
-      startAngle: -90,
-    },
-    {
-      name: "BUSH",
-      axiom: "F",
-      rules: { F: "F[+FF][-FF]F[-F][+F]F" },
-      angle: 25,
-      depth: 3,
-      len: 6,
-      startAngle: -90,
-    },
-    {
-      name: "FERN",
-      axiom: "X",
-      rules: { X: "F+[[X]-X]-F[-FX]+X", F: "FF" },
-      angle: 25,
-      depth: 5,
-      len: 3,
-      startAngle: -90,
-    },
-    {
-      name: "KOCH",
-      axiom: "F--F--F",
-      rules: { F: "F+F--F+F" },
-      angle: 60,
-      depth: 4,
-      len: 2,
-      startAngle: 0,
-    },
-    {
-      name: "DRAGON",
-      axiom: "FX",
-      rules: { X: "X+YF+", Y: "-FX-Y" },
-      angle: 90,
-      depth: 12,
-      len: 3,
-      startAngle: 0,
-    },
-    {
-      name: "HILBERT",
-      axiom: "A",
-      rules: { A: "-BF+AFA+FB-", B: "+AF-BFB-FA+" },
-      angle: 90,
-      depth: 5,
-      len: 3,
-      startAngle: 0,
-    },
   ],
   voronoi: [
     { name: "CELLS", numPoints: 80, mode: "edge", distortion: 0 },
@@ -429,40 +257,6 @@ const PRESETS = {
     { name: "RAIN", sources: 12, mode: "concentric", freq: 0.12, decay: true },
     { name: "LENS", sources: 5, mode: "concentric", freq: 0.05, decay: true },
     { name: "WARP", sources: 3, mode: "spiral", freq: 0.03, decay: false },
-  ],
-  spiral: [
-    {
-      name: "SUNFLWR",
-      dotMode: "circle",
-      numDots: 2000,
-      baseR: 1.2,
-      dotScale: 0.5,
-    },
-    {
-      name: "GALAXY",
-      dotMode: "trail",
-      numDots: 3000,
-      baseR: 0.8,
-      dotScale: 0.3,
-    },
-    { name: "NAUTILUS", dotMode: "log", numDots: 1, baseR: 1.0, dotScale: 1.0 },
-    {
-      name: "DAISY",
-      dotMode: "petal",
-      numDots: 800,
-      baseR: 1.0,
-      dotScale: 0.8,
-    },
-    { name: "PINE", dotMode: "cone", numDots: 1500, baseR: 0.9, dotScale: 0.6 },
-    { name: "DNA", dotMode: "helix", numDots: 2000, baseR: 1.0, dotScale: 0.4 },
-  ],
-  automata: [
-    { name: "RULE30", rule: 30, init: "center", width: artWidth },
-    { name: "RULE90", rule: 90, init: "center", width: artWidth },
-    { name: "RULE110", rule: 110, init: "center", width: artWidth },
-    { name: "RULE150", rule: 150, init: "center", width: artWidth },
-    { name: "R30-RND", rule: 30, init: "random", width: artWidth },
-    { name: "R110-RND", rule: 110, init: "random", width: artWidth },
   ],
   plasma: [
     {
@@ -1202,103 +996,6 @@ function saveArtToVfs() {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  FLOW — フローフィールド粒子トレース (密度蓄積モード追加)
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-let flowDone = 0;
-let flowPreset = null;
-let flowDensity = null;
-
-function flowInit(preset, s) {
-  flowPreset = preset;
-  initNoise(s);
-  seedRng(s);
-  clearArt();
-  flowDone = 0;
-  generating = true;
-  progress = 0;
-  flowDensity = preset.density ? new Uint32Array(artWidth * artHeight) : null;
-}
-
-function flowStep() {
-  const p = flowPreset;
-  const batch = 30;
-
-  for (let b = 0; b < batch && flowDone < p.particles; b++, flowDone++) {
-    let x = rng() * artWidth;
-    let y = rng() * artHeight;
-
-    for (let s = 0; s < p.steps; s++) {
-      const px = x | 0,
-        py = y | 0;
-      if (px < 0 || px >= artWidth || py < 0 || py >= artHeight) break;
-
-      let nx = x * p.scale,
-        ny = y * p.scale;
-
-      if (p.warp) {
-        const warpX = fbm(nx + 0.0, ny + 0.0, p.octaves);
-        const warpY = fbm(nx + 5.2, ny + 1.3, p.octaves);
-        nx += warpX * p.warpAmt;
-        ny += warpY * p.warpAmt;
-      }
-
-      let angle;
-      if (p.curl) {
-        const eps = 0.01;
-        const dndy =
-          fbm(nx, ny + eps, p.octaves) - fbm(nx, ny - eps, p.octaves);
-        const dndx =
-          fbm(nx + eps, ny, p.octaves) - fbm(nx - eps, ny, p.octaves);
-        angle = Math.atan2(-dndx, dndy);
-      } else {
-        angle = fbm(nx, ny, p.octaves) * Math.PI * 2.5 + p.angleOfs;
-      }
-
-      const nx2 = x + Math.cos(angle) * p.stepSize;
-      const ny2 = y + Math.sin(angle) * p.stepSize;
-
-      if (flowDensity) {
-        if (px >= 0 && px < artWidth && py >= 0 && py < artHeight)
-          flowDensity[py * artWidth + px]++;
-      } else {
-        artLine(px, py, nx2 | 0, ny2 | 0);
-      }
-
-      x = nx2;
-      y = ny2;
-    }
-  }
-
-  if (flowDensity) {
-    let maxD = 0;
-    for (let i = 0; i < flowDensity.length; i++)
-      if (flowDensity[i] > maxD) maxD = flowDensity[i];
-    if (maxD > 0) {
-      const logMax = Math.log(1 + maxD);
-      for (let y = 0; y < artHeight; y++) {
-        for (let x = 0; x < artWidth; x++) {
-          const d = flowDensity[y * artWidth + x];
-          artBuf[y * artWidth + x] = bayerDither(
-            x,
-            y,
-            Math.log(1 + d) / logMax,
-          );
-        }
-      }
-    }
-  }
-
-  progress = flowDone / p.particles;
-  statusText = `PARTICLES: ${flowDone}/${p.particles}`;
-  if (flowDone >= p.particles) {
-    generating = false;
-    progress = 1;
-    statusText = `DONE - ${p.particles} PARTICLES`;
-  }
-}
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  REACT — 反応拡散系 (Gray-Scott)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //
@@ -1412,434 +1109,6 @@ function reactStep() {
     generating = false;
     progress = 1;
     statusText = `DONE - f=${rdPreset.f} k=${rdPreset.k}`;
-  }
-}
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  ATTRACT — 奇妙なアトラクタ
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-let attrDensity = null,
-  attrX = 0,
-  attrY = 0,
-  attrIter = 0;
-const ATTR_MAX_ITER = 8_000_000;
-let attrPreset = null,
-  attrMinX,
-  attrMaxX,
-  attrMinY,
-  attrMaxY;
-
-function attractInit(preset, s) {
-  attrPreset = { ...preset };
-  seedRng(s);
-
-  // ── seed からパラメータに微小摂動を加える ──
-  // 同じ族のアトラクタだが、毎回わずかに異なる形状になる。
-  // 摂動量 ±0.02 — 構造を保ちつつ変化が目に見える範囲。
-  const perturb = 0.02;
-  attrPreset.a = preset.a + (rng() * 2 - 1) * perturb;
-  attrPreset.b = preset.b + (rng() * 2 - 1) * perturb;
-  attrPreset.c = preset.c + (rng() * 2 - 1) * perturb;
-  attrPreset.d = preset.d + (rng() * 2 - 1) * perturb;
-
-  const p = attrPreset;
-  let x = rng() * 2 - 1,
-    y = rng() * 2 - 1;
-  let minX = Infinity,
-    maxX = -Infinity,
-    minY = Infinity,
-    maxY = -Infinity;
-  for (let i = 0; i < 200000; i++) {
-    let nx, ny;
-    if (p.type === "dejong") {
-      nx = Math.sin(p.a * y) - Math.cos(p.b * x);
-      ny = Math.sin(p.c * x) - Math.cos(p.d * y);
-    } else {
-      nx = Math.sin(p.a * y) + p.c * Math.cos(p.a * x);
-      ny = Math.sin(p.b * x) + p.d * Math.cos(p.b * y);
-    }
-    x = nx;
-    y = ny;
-    if (i > 200) {
-      if (x < minX) minX = x;
-      if (x > maxX) maxX = x;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
-    }
-  }
-  const mx = (maxX - minX) * 0.05,
-    my = (maxY - minY) * 0.05;
-  attrMinX = minX - mx;
-  attrMaxX = maxX + mx;
-  attrMinY = minY - my;
-  attrMaxY = maxY + my;
-  const rangeX = attrMaxX - attrMinX,
-    rangeY = attrMaxY - attrMinY,
-    aspect = artWidth / artHeight;
-  if (rangeX / rangeY > aspect) {
-    const nh = rangeX / aspect,
-      cy2 = (attrMinY + attrMaxY) / 2;
-    attrMinY = cy2 - nh / 2;
-    attrMaxY = cy2 + nh / 2;
-  } else {
-    const nw = rangeY * aspect,
-      cx2 = (attrMinX + attrMaxX) / 2;
-    attrMinX = cx2 - nw / 2;
-    attrMaxX = cx2 + nw / 2;
-  }
-  attrDensity = new Uint32Array(artWidth * artHeight);
-  attrX = x;
-  attrY = y;
-  attrIter = 0;
-  generating = true;
-  progress = 0;
-  clearArt();
-}
-
-function attractStep() {
-  const p = attrPreset,
-    batch = 60_000,
-    isDJ = p.type === "dejong";
-  for (let i = 0; i < batch; i++, attrIter++) {
-    let nx, ny;
-    if (isDJ) {
-      nx = Math.sin(p.a * attrY) - Math.cos(p.b * attrX);
-      ny = Math.sin(p.c * attrX) - Math.cos(p.d * attrY);
-    } else {
-      nx = Math.sin(p.a * attrY) + p.c * Math.cos(p.a * attrX);
-      ny = Math.sin(p.b * attrX) + p.d * Math.cos(p.b * attrY);
-    }
-    attrX = nx;
-    attrY = ny;
-    const px =
-      (((attrX - attrMinX) / (attrMaxX - attrMinX)) * (artWidth - 1)) | 0;
-    const py =
-      (((attrY - attrMinY) / (attrMaxY - attrMinY)) * (artHeight - 1)) | 0;
-    if (px >= 0 && px < artWidth && py >= 0 && py < artHeight)
-      attrDensity[py * artWidth + px]++;
-  }
-  let maxD = 0;
-  for (let i = 0; i < attrDensity.length; i++)
-    if (attrDensity[i] > maxD) maxD = attrDensity[i];
-  if (maxD > 0) {
-    const logMax = Math.log(1 + maxD);
-    for (let y = 0; y < artHeight; y++)
-      for (let x = 0; x < artWidth; x++) {
-        artBuf[y * artWidth + x] = bayerDither(
-          x,
-          y,
-          Math.log(1 + attrDensity[y * artWidth + x]) / logMax,
-        );
-      }
-  }
-  progress = attrIter / ATTR_MAX_ITER;
-  statusText = `POINTS: ${(attrIter / 1000) | 0}K`;
-  if (attrIter >= ATTR_MAX_ITER) {
-    generating = false;
-    progress = 1;
-    statusText = `DONE - ${(ATTR_MAX_ITER / 1e6) | 0}M POINTS`;
-  }
-}
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  DLA — 拡散律速凝集 (新シードモード追加)
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-let dlaGrid = null,
-  dlaCount = 0,
-  dlaMaxP = 5000;
-let dlaPreset = null,
-  dlaRadius = 5,
-  dlaTopY = 0;
-let dlaStall = 0;
-const DLA_STALL_LIMIT = 400;
-
-function dlaInit(preset, s) {
-  dlaPreset = preset;
-  dlaMaxP = preset.maxP;
-  seedRng(s);
-  dlaGrid = new Uint8Array(artWidth * artHeight);
-  dlaCount = 0;
-  dlaRadius = 5;
-  dlaTopY = artHeight;
-  dlaStall = 0;
-  if (preset.seedMode === "center") {
-    dlaGrid[(artHeight >> 1) * artWidth + (artWidth >> 1)] = 1;
-    dlaCount = 1;
-    dlaTopY = artHeight >> 1;
-  } else if (preset.seedMode === "bottom") {
-    for (let x = 0; x < artWidth; x += 3) {
-      dlaGrid[(artHeight - 1) * artWidth + x] = 1;
-      dlaCount++;
-    }
-    dlaTopY = artHeight - 1;
-  } else if (preset.seedMode === "multi") {
-    const n = 4 + rngInt(0, 3);
-    for (let i = 0; i < n; i++) {
-      const x = rngInt((artWidth * 0.2) | 0, (artWidth * 0.8) | 0),
-        y = rngInt((artHeight * 0.2) | 0, (artHeight * 0.8) | 0);
-      dlaGrid[y * artWidth + x] = 1;
-      dlaCount++;
-      if (y < dlaTopY) dlaTopY = y;
-    }
-  } else if (preset.seedMode === "ring") {
-    const cx = artWidth >> 1,
-      cy = artHeight >> 1,
-      r = 8;
-    for (let a = 0; a < 360; a += 5) {
-      const rad = (a * Math.PI) / 180;
-      const x = (cx + Math.cos(rad) * r) | 0,
-        y = (cy + Math.sin(rad) * r) | 0;
-      if (x >= 0 && x < artWidth && y >= 0 && y < artHeight) {
-        dlaGrid[y * artWidth + x] = 1;
-        dlaCount++;
-      }
-    }
-    dlaTopY = cy - r;
-    dlaRadius = r;
-  } else if (preset.seedMode === "scatter") {
-    const n = 15 + rngInt(0, 10);
-    for (let i = 0; i < n; i++) {
-      const x = rngInt(10, artWidth - 10),
-        y = rngInt(10, artHeight - 10);
-      dlaGrid[y * artWidth + x] = 1;
-      dlaCount++;
-      if (y < dlaTopY) dlaTopY = y;
-    }
-  }
-  generating = true;
-  progress = 0;
-  clearArt();
-  for (let i = 0; i < dlaGrid.length; i++) artBuf[i] = dlaGrid[i];
-}
-
-const DIR4 = [
-  [1, 0],
-  [-1, 0],
-  [0, 1],
-  [0, -1],
-];
-const DIR8 = [
-  [1, 0],
-  [-1, 0],
-  [0, 1],
-  [0, -1],
-  [1, 1],
-  [-1, 1],
-  [1, -1],
-  [-1, -1],
-];
-
-function dlaStep() {
-  const dirs = dlaPreset.dirs === 8 ? DIR8 : DIR4;
-  const walkersPerFrame = 80,
-    maxSteps = 4000;
-  const countBefore = dlaCount;
-  for (let w = 0; w < walkersPerFrame && dlaCount < dlaMaxP; w++) {
-    let x, y;
-    if (dlaPreset.seedMode === "bottom") {
-      x = rngInt(0, artWidth - 1);
-      y = Math.max(0, dlaTopY - 15 - rngInt(0, 10));
-    } else {
-      const r = Math.min(dlaRadius + 15, Math.min(artWidth, artHeight) * 0.48);
-      const angle = rng() * Math.PI * 2;
-      x = ((artWidth >> 1) + Math.cos(angle) * r) | 0;
-      y = ((artHeight >> 1) + Math.sin(angle) * r) | 0;
-    }
-    for (let step = 0; step < maxSteps; step++) {
-      // neighbor check
-      let hasN = false;
-      for (let di = 0; di < dirs.length; di++) {
-        const nx = x + dirs[di][0],
-          ny = y + dirs[di][1];
-        if (
-          nx >= 0 &&
-          nx < artWidth &&
-          ny >= 0 &&
-          ny < artHeight &&
-          dlaGrid[ny * artWidth + nx]
-        ) {
-          hasN = true;
-          break;
-        }
-      }
-      if (hasN) {
-        if (
-          x >= 0 &&
-          x < artWidth &&
-          y >= 0 &&
-          y < artHeight &&
-          !dlaGrid[y * artWidth + x]
-        ) {
-          dlaGrid[y * artWidth + x] = 1;
-          artBuf[y * artWidth + x] = 1;
-          dlaCount++;
-          if (dlaPreset.seedMode !== "bottom") {
-            const dx2 = x - (artWidth >> 1),
-              dy2 = y - (artHeight >> 1);
-            const dist = Math.sqrt(dx2 * dx2 + dy2 * dy2);
-            if (dist > dlaRadius) dlaRadius = dist;
-          }
-          if (y < dlaTopY) dlaTopY = y;
-        }
-        break;
-      }
-      const d = dirs[rngInt(0, dirs.length - 1)];
-      x += d[0];
-      y += d[1];
-      if (x < 0 || x >= artWidth || y < 0 || y >= artHeight) break;
-      if (dlaPreset.seedMode === "bottom") {
-        if (y < dlaTopY - 30 || y >= artHeight) break;
-      } else {
-        const dx2 = x - (artWidth >> 1),
-          dy2 = y - (artHeight >> 1);
-        if (dx2 * dx2 + dy2 * dy2 > (dlaRadius + 35) * (dlaRadius + 35)) break;
-      }
-    }
-  }
-  // ストール検出: 1フレームで1個も付着しなければカウントアップ
-  if (dlaCount === countBefore) dlaStall++;
-  else dlaStall = 0;
-
-  progress = dlaCount / dlaMaxP;
-  statusText = `PARTICLES: ${dlaCount}/${dlaMaxP}`;
-  if (dlaCount >= dlaMaxP || dlaStall >= DLA_STALL_LIMIT) {
-    generating = false;
-    progress = 1;
-    statusText =
-      dlaStall >= DLA_STALL_LIMIT
-        ? `DONE - ${dlaCount} PARTICLES (SATURATED)`
-        : `DONE - ${dlaMaxP} PARTICLES`;
-  }
-}
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  LSYS — L-System (Lindenmayer System)
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//
-// 文字列書き換え規則による再帰的成長。
-// たった数行の文法定義から、植物・雪片・空間充填曲線が現れる。
-
-let lsysPreset = null;
-let lsysSegments = null;
-let lsysDone = 0;
-
-function lsysInit(preset, s) {
-  lsysPreset = preset;
-  seedRng(s);
-  clearArt();
-
-  // ── seed 由来のジッター量 ──
-  // 角度に ±8% のゆらぎ、線長に ±12% のゆらぎを seed から導入する。
-  // 構造の「骨格」はプリセットが決め、seed が「個性」を与える。
-  const angleJitter = 0.08; // ±8% of angle step
-  const lenJitter = 0.12; // ±12% of segment length
-
-  // L-System 文字列を展開
-  let str = preset.axiom;
-  for (let i = 0; i < preset.depth; i++) {
-    let next = "";
-    for (let j = 0; j < str.length; j++) {
-      const ch = str[j];
-      next += preset.rules[ch] !== undefined ? preset.rules[ch] : ch;
-    }
-    str = next;
-  }
-
-  // 共通ヘルパー: ジッター付きタートル1パス
-  const aStepBase = (preset.angle * Math.PI) / 180;
-  function turtlePass(callback) {
-    let x = 0,
-      y = 0,
-      a = (preset.startAngle * Math.PI) / 180;
-    const stack = [];
-    for (let i = 0; i < str.length; i++) {
-      const ch = str[i];
-      if (ch === "F") {
-        const jLen = preset.len * (1 + (rng() * 2 - 1) * lenJitter);
-        const nx = x + Math.cos(a) * jLen,
-          ny = y + Math.sin(a) * jLen;
-        callback(x, y, nx, ny);
-        x = nx;
-        y = ny;
-      } else if (ch === "+") {
-        a += aStepBase * (1 + (rng() * 2 - 1) * angleJitter);
-      } else if (ch === "-") {
-        a -= aStepBase * (1 + (rng() * 2 - 1) * angleJitter);
-      } else if (ch === "[") stack.push({ x, y, a });
-      else if (ch === "]") {
-        const s2 = stack.pop();
-        x = s2.x;
-        y = s2.y;
-        a = s2.a;
-      }
-    }
-  }
-
-  // Pass 1 で bounding box と座標を同時記録
-  // (同じ seed・同じ rng 列を使うため、状態を保存して巻き戻す)
-  const rngState = { s0: _s0, s1: _s1, s2: _s2, s3: _s3 };
-  let minX = Infinity,
-    maxX = -Infinity,
-    minY = Infinity,
-    maxY = -Infinity;
-  turtlePass((x0, y0, x1, y1) => {
-    if (x0 < minX) minX = x0;
-    if (x0 > maxX) maxX = x0;
-    if (y0 < minY) minY = y0;
-    if (y0 > maxY) maxY = y0;
-    if (x1 < minX) minX = x1;
-    if (x1 > maxX) maxX = x1;
-    if (y1 < minY) minY = y1;
-    if (y1 > maxY) maxY = y1;
-  });
-
-  const bw = maxX - minX || 1,
-    bh = maxY - minY || 1;
-  const margin = 8;
-  const sc = Math.min(
-    (artWidth - margin * 2) / bw,
-    (artHeight - margin * 2) / bh,
-  );
-  const ofsX = (artWidth - bw * sc) / 2 - minX * sc;
-  const ofsY = (artHeight - bh * sc) / 2 - minY * sc;
-
-  // Pass 2: 同じ rng 列で再計算し、セグメント座標を確定
-  _s0 = rngState.s0;
-  _s1 = rngState.s1;
-  _s2 = rngState.s2;
-  _s3 = rngState.s3;
-  lsysSegments = [];
-  turtlePass((x0, y0, x1, y1) => {
-    lsysSegments.push([
-      (x0 * sc + ofsX) | 0,
-      (y0 * sc + ofsY) | 0,
-      (x1 * sc + ofsX) | 0,
-      (y1 * sc + ofsY) | 0,
-    ]);
-  });
-
-  lsysDone = 0;
-  generating = true;
-  progress = 0;
-}
-
-function lsysStep() {
-  const total = lsysSegments.length;
-  const batch = Math.max(1, Math.ceil(total / 120));
-
-  for (let i = 0; i < batch && lsysDone < total; i++, lsysDone++) {
-    const seg = lsysSegments[lsysDone];
-    artLine(seg[0], seg[1], seg[2], seg[3]);
-  }
-
-  progress = lsysDone / total;
-  statusText = `SEGS: ${lsysDone}/${total}`;
-  if (lsysDone >= total) {
-    generating = false;
-    progress = 1;
-    statusText = `DONE - DEPTH ${lsysPreset.depth} (${total} segs)`;
   }
 }
 
@@ -1998,253 +1267,6 @@ function waveFill(t) {
   }
   commitField();
   statusText = `WAVE ${waveSources.length} SOURCES`;
-}
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  SPIRAL — 黄金螺旋 / フィボナッチ
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//
-// 黄金角 (≈137.508°) に基づく点配置。
-// ヒマワリの種・松ぼっくり・銀河の腕と同じ数学的構造。
-
-const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
-let spiralPreset = null,
-  spiralDone = 0;
-let spiralSegments = null,
-  spiralSegDone = 0;
-
-/** seed 由来のゆらぎパラメータ (spiralInit で計算) */
-let spiralPosJitter = 0;
-let spiralSizeJitter = 0;
-let spiralAngleOfs = 0;
-let spiralLogTurns = 8;
-let spiralLogB = 0.15;
-let spiralHelixFreq = 4;
-
-function spiralInit(preset, s) {
-  spiralPreset = preset;
-  seedRng(s);
-  clearArt();
-  spiralDone = 0;
-  spiralSegments = null;
-  spiralSegDone = 0;
-
-  // ── seed から各モード共通のゆらぎを導出 ──
-  spiralPosJitter = 1.0 + (rng() * 2 - 1) * 0.15; // 位置スケール ±15%
-  spiralSizeJitter = 1.0 + (rng() * 2 - 1) * 0.25; // ドットサイズ ±25%
-  spiralAngleOfs = (rng() * 2 - 1) * Math.PI * 0.3; // 全体回転 ±54°
-  spiralLogTurns = 6 + rng() * 5; // log: 巻き数 6–11
-  spiralLogB = 0.1 + rng() * 0.12; // log: 成長率
-  spiralHelixFreq = 3 + rng() * 3; // helix: 周波数 3–6
-
-  generating = true;
-  progress = 0;
-}
-
-function spiralStep() {
-  const p = spiralPreset;
-  const cx = artWidth / 2,
-    cy = artHeight / 2;
-  const maxR = Math.min(artWidth, artHeight) * 0.47;
-
-  // ── log モード: 対数螺旋を漸進描画 ──
-  if (p.dotMode === "log") {
-    if (!spiralSegments) {
-      spiralSegments = [];
-      const turns = spiralLogTurns,
-        steps = 2000,
-        a = 2,
-        b = spiralLogB;
-      const scale = maxR / (a * Math.exp(b * turns * Math.PI * 2));
-      let px2 = 0,
-        py2 = 0;
-      for (let i = 0; i < steps; i++) {
-        const theta = (i / steps) * turns * Math.PI * 2 + spiralAngleOfs;
-        const r = a * Math.exp(b * theta);
-        const x = cx + Math.cos(theta) * r * scale,
-          y = cy + Math.sin(theta) * r * scale;
-        if (i > 0) spiralSegments.push([px2, py2, x, y]);
-        px2 = x;
-        py2 = y;
-      }
-      spiralSegDone = 0;
-    }
-    const total = spiralSegments.length;
-    const batch = Math.max(1, Math.ceil(total / 120));
-    for (let i = 0; i < batch && spiralSegDone < total; i++, spiralSegDone++) {
-      const seg = spiralSegments[spiralSegDone];
-      artLine(seg[0], seg[1], seg[2], seg[3]);
-    }
-    progress = spiralSegDone / total;
-    statusText = `SPIRAL: ${spiralSegDone}/${total}`;
-    if (spiralSegDone >= total) {
-      generating = false;
-      progress = 1;
-      statusText = "DONE - LOGARITHMIC SPIRAL";
-      spiralSegments = null;
-    }
-    return;
-  }
-
-  // ── helix モード: 二重螺旋を漸進描画 ──
-  if (p.dotMode === "helix") {
-    if (!spiralSegments) {
-      spiralSegments = [];
-      const steps = 500,
-        amplitude = maxR * 0.8 * spiralPosJitter,
-        freq = spiralHelixFreq;
-      for (let i = 0; i < steps; i++) {
-        const t = i / steps,
-          y2 = artHeight * 0.05 + t * artHeight * 0.9;
-        const phase = t * Math.PI * 2 * freq + spiralAngleOfs;
-        const sinP = Math.sin(phase),
-          absHalf = Math.abs(Math.sin(phase * 0.5));
-        const x1 = cx + sinP * amplitude * (0.15 + 0.85 * absHalf);
-        const x2 = cx - sinP * amplitude * (0.15 + 0.85 * absHalf);
-        spiralSegments.push({ x1, x2, y2, sinP, rung: i % 12 < 2 });
-      }
-      spiralSegDone = 0;
-    }
-    const total = spiralSegments.length;
-    const batch = Math.max(1, Math.ceil(total / 120));
-    for (let i = 0; i < batch && spiralSegDone < total; i++, spiralSegDone++) {
-      const s = spiralSegments[spiralSegDone];
-      const sz = spiralSizeJitter;
-      artFillCircle(s.x1, s.y2, ((1 + (s.sinP + 1) * 1.5) * sz) | 0);
-      artFillCircle(s.x2, s.y2, ((1 + (-s.sinP + 1) * 1.5) * sz) | 0);
-      if (s.rung) artLine(s.x1, s.y2, s.x2, s.y2);
-    }
-    progress = spiralSegDone / total;
-    statusText = `HELIX: ${spiralSegDone}/${total}`;
-    if (spiralSegDone >= total) {
-      generating = false;
-      progress = 1;
-      statusText = "DONE - DOUBLE HELIX";
-      spiralSegments = null;
-    }
-    return;
-  }
-
-  // ── 通常モード (circle/trail/petal/cone): seed ゆらぎ付き ──
-  const batch = Math.max(1, Math.ceil(p.numDots / 120));
-  for (let b = 0; b < batch && spiralDone < p.numDots; b++, spiralDone++) {
-    const i = spiralDone,
-      theta = i * GOLDEN_ANGLE + spiralAngleOfs;
-    const r = Math.sqrt(i / p.numDots) * maxR * p.baseR * spiralPosJitter;
-    const x = cx + Math.cos(theta) * r,
-      y = cy + Math.sin(theta) * r;
-    if (p.dotMode === "circle") {
-      artFillCircle(
-        x,
-        y,
-        Math.max(1, ((r / maxR) * 4 * p.dotScale * spiralSizeJitter) | 0),
-      );
-    } else if (p.dotMode === "trail") {
-      artPset(x, y);
-      if (i > 0) {
-        const pt = (i - 1) * GOLDEN_ANGLE + spiralAngleOfs,
-          pr =
-            Math.sqrt((i - 1) / p.numDots) * maxR * p.baseR * spiralPosJitter;
-        const px = cx + Math.cos(pt) * pr,
-          py = cy + Math.sin(pt) * pr;
-        if ((x - px) * (x - px) + (y - py) * (y - py) < 400)
-          artLine(px, py, x, y);
-      }
-    } else if (p.dotMode === "petal") {
-      const petalR = Math.max(
-        1,
-        ((3 + (r / maxR) * 5) * p.dotScale * spiralSizeJitter) | 0,
-      );
-      for (let a = 0; a < 4; a++) {
-        const pa = theta + (a * Math.PI) / 2;
-        artPset(
-          x + Math.cos(pa) * petalR * 0.5,
-          y + Math.sin(pa) * petalR * 0.5,
-        );
-      }
-      artCircle(x, y, petalR);
-    } else if (p.dotMode === "cone") {
-      artFillCircle(
-        x,
-        y,
-        Math.max(
-          1,
-          ((1 - r / maxR) * 4 * p.dotScale * spiralSizeJitter + 1) | 0,
-        ),
-      );
-    }
-  }
-  progress = spiralDone / p.numDots;
-  statusText = `DOTS: ${spiralDone}/${p.numDots}`;
-  if (spiralDone >= p.numDots) {
-    generating = false;
-    progress = 1;
-    statusText = `DONE - ${p.numDots} DOTS`;
-  }
-}
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  AUTOMATA — 1D セルラーオートマトン → 2D 展開
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//
-// Wolfram の256の規則。Rule 30 (カオス), Rule 90 (フラクタル),
-// Rule 110 (チューリング完全)。時間の矢が空間上に展開される。
-
-let autoPreset = null,
-  autoRow = null,
-  autoScanY = 0;
-
-function automataInit(preset, s) {
-  autoPreset = preset;
-  seedRng(s);
-  clearArt();
-  const w = artWidth; // サイズ変更に追従
-  autoRow = new Uint8Array(w);
-  if (preset.init === "center") {
-    autoRow[w >> 1] = 1;
-    // seed 由来のノイズ: 低確率で追加ビットを混入し、対称性を崩す。
-    // 確率 1–3% — 構造の骨格 (center spike) は保ちつつ、
-    // seed ごとに異なる枝分かれパターンが生まれる。
-    const noiseProb = 0.01 + rng() * 0.02;
-    for (let i = 0; i < w; i++) {
-      if (i !== w >> 1 && rng() < noiseProb) autoRow[i] = 1;
-    }
-  } else {
-    for (let i = 0; i < w; i++) autoRow[i] = rng() < 0.5 ? 1 : 0;
-  }
-  for (let x = 0; x < w && x < artWidth; x++) artBuf[x] = autoRow[x];
-  autoScanY = 1;
-  generating = true;
-  progress = 0;
-}
-
-function automataStep() {
-  const rule = autoPreset.rule,
-    w = autoRow.length,
-    rowsPerFrame = 2;
-  for (
-    let row = 0;
-    row < rowsPerFrame && autoScanY < artHeight;
-    row++, autoScanY++
-  ) {
-    const newRow = new Uint8Array(w);
-    for (let x = 0; x < w; x++) {
-      const left = x > 0 ? autoRow[x - 1] : autoRow[w - 1];
-      const center = autoRow[x],
-        right = x < w - 1 ? autoRow[x + 1] : autoRow[0];
-      newRow[x] = (rule >> ((left << 2) | (center << 1) | right)) & 1;
-    }
-    autoRow = newRow;
-    for (let x = 0; x < w && x < artWidth; x++)
-      artBuf[autoScanY * artWidth + x] = autoRow[x];
-  }
-  progress = autoScanY / artHeight;
-  statusText = `ROW: ${autoScanY}/${artHeight}`;
-  if (autoScanY >= artHeight) {
-    generating = false;
-    progress = 1;
-    statusText = `DONE - RULE ${autoPreset.rule}`;
-  }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2709,32 +1731,14 @@ function startGeneration() {
   generating = false;
   progress = 0;
   switch (algoKey) {
-    case "flow":
-      flowInit(preset, seed);
-      break;
     case "react":
       reactInit(preset, seed);
-      break;
-    case "attract":
-      attractInit(preset, seed);
-      break;
-    case "dla":
-      dlaInit(preset, seed);
-      break;
-    case "lsys":
-      lsysInit(preset, seed);
       break;
     case "voronoi":
       voronoiInit(preset, seed);
       break;
     case "wave":
       waveInit(preset, seed);
-      break;
-    case "spiral":
-      spiralInit(preset, seed);
-      break;
-    case "automata":
-      automataInit(preset, seed);
       break;
     case "plasma":
       plasmaInit(preset, seed);
@@ -2759,29 +1763,11 @@ function startGeneration() {
 function stepGeneration() {
   if (!generating) return;
   switch (ALGO_KEYS[currentAlgoIdx]) {
-    case "flow":
-      flowStep();
-      break;
     case "react":
       reactStep();
       break;
-    case "attract":
-      attractStep();
-      break;
-    case "dla":
-      dlaStep();
-      break;
-    case "lsys":
-      lsysStep();
-      break;
     case "voronoi":
       voronoiStep();
-      break;
-    case "spiral":
-      spiralStep();
-      break;
-    case "automata":
-      automataStep();
       break;
     case "rain":
       aaRainStep();
@@ -3256,13 +2242,8 @@ function onBeforeClose() {
   resizeArt(320, 180); // 既定 16:9 320x180
   fieldBuf = null;
   rdU = rdV = rdNU = rdNV = null;
-  attrDensity = null;
-  dlaGrid = null;
   vorPoints = null;
   waveSources = null;
-  flowDensity = null;
-  lsysSegments = null;
-  spiralSegments = null;
   aaLines = null;
   plasmaLayers = null;
   driftPreset = null;
