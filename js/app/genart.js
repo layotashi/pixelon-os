@@ -693,10 +693,10 @@ const BAYER8 = [
  * 小さいほど格子模様が粗く「レトロ」になる。DOT レンダー専用の表現選択。
  * (x,y) だけで決まる順序ディザなのでフレーム間で安定 = アニメ/ループに安全。
  */
-let ditherSize = 4;
-let ditherMat = BAYER4;
-let ditherMask = 3; // size - 1 (インデックス用ビットマスク)
-let ditherDiv = 16; // size * size (正規化用)
+let ditherSize = 2; // 既定 2x2 (粗い格子が映える)
+let ditherMat = BAYER2;
+let ditherMask = 1; // size - 1 (インデックス用ビットマスク)
+let ditherDiv = 4; // size * size (正規化用)
 
 function setDitherSize(n) {
   ditherSize = n;
@@ -3042,7 +3042,7 @@ function onBeforeClose() {
   renderMode = "dot";
   outerMargin = 1;
   charSpacing = 1;
-  setDitherSize(4);
+  setDitherSize(2);
   edgeMode = "wrap";
   animTime = 0;
   gifRecording = false;
