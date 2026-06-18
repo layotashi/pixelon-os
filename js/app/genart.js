@@ -75,8 +75,10 @@ const ASPECT_RATIOS = [
   { label: "3:4", w: 3, h: 4 },
   { label: "16:9", w: 16, h: 9 },
   { label: "9:16", w: 9, h: 16 },
-  { label: "PHI", w: 1618, h: 1000 }, // 黄金比 ≈ 1.618
-  { label: "SQRT2", w: 1414, h: 1000 }, // 白銀比 ≈ 1.414
+  { label: "PHI", w: 1618, h: 1000 }, // 黄金比 ≈ 1.618 (横長)
+  { label: "PHI V", w: 1000, h: 1618 }, // 黄金比 (縦長)
+  { label: "SQRT2", w: 1414, h: 1000 }, // 白銀比 ≈ 1.414 (横長)
+  { label: "SQRT2 V", w: 1000, h: 1414 }, // 白銀比 (縦長)
   { label: "FREE", w: 0, h: 0 }, // W/H 独立
 ];
 let currentRatioIdx = 3; // 16:9
