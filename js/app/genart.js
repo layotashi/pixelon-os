@@ -767,27 +767,43 @@ function applyArtSize(w, h) {
 }
 
 // ── アスペクト比 → 寸法 ──
-// 比率を選ぶと W/H が連動する。FREE (w=0) は W/H を独立指定。
+// 比率は「総寸法 (アート + 額縁 PAD×2)」に対して適用する。これにより最終的な
+// 書き出し画像 (額縁込み) が指定比率にぴったり揃う。W/H はアート (生成) 解像度を
+// 指す。FREE (w=0) は W/H を独立指定。
 
-/** 比率変更時: 現在の幅を基準に高さを合わせる */
+/** 総寸法 (content + PAD×2) が現在の比率になる content 高さを返す */
+function ratioContentH(contentW) {
+  const r = ASPECT_RATIOS[currentRatioIdx];
+  const p = outerMargin;
+  return Math.round(((contentW + 2 * p) * r.h) / r.w - 2 * p);
+}
+
+/** 総寸法 (content + PAD×2) が現在の比率になる content 幅を返す */
+function ratioContentW(contentH) {
+  const r = ASPECT_RATIOS[currentRatioIdx];
+  const p = outerMargin;
+  return Math.round(((contentH + 2 * p) * r.w) / r.h - 2 * p);
+}
+
+/** 比率変更時: 現在の幅を基準に、総寸法が比率になるよう高さを合わせる */
 function applyRatio() {
   const r = ASPECT_RATIOS[currentRatioIdx];
   if (r.w === 0) return; // FREE: 現状維持
-  applyArtSize(artWidth, Math.round((artWidth * r.h) / r.w));
+  applyArtSize(artWidth, ratioContentH(artWidth));
 }
 
-/** 幅変更時: 比率に従って高さを算出 (FREE なら高さ据え置き) */
+/** 幅変更時: 総寸法が比率になる高さを算出 (FREE なら高さ据え置き) */
 function applyRatioFromWidth(w) {
   const r = ASPECT_RATIOS[currentRatioIdx];
   if (r.w === 0) applyArtSize(w, nbArtH.value);
-  else applyArtSize(w, Math.round((w * r.h) / r.w));
+  else applyArtSize(w, ratioContentH(w));
 }
 
-/** 高さ変更時: 比率に従って幅を算出 (FREE なら幅据え置き) */
+/** 高さ変更時: 総寸法が比率になる幅を算出 (FREE なら幅据え置き) */
 function applyRatioFromHeight(h) {
   const r = ASPECT_RATIOS[currentRatioIdx];
   if (r.w === 0) applyArtSize(nbArtW.value, h);
-  else applyArtSize(Math.round((h * r.w) / r.h), h);
+  else applyArtSize(ratioContentW(h), h);
 }
 
 function artPset(x, y) {
@@ -2776,6 +2792,8 @@ function buildToolbar() {
   // ── 額縁マット (PAD): アートと枠の間の背景余白。DOT/ASCII 共通・書き出し込み ──
   nbPad = new UI.NumberBox(0, 0, MARGIN_MIN, MARGIN_MAX, outerMargin, 1, (v) => {
     outerMargin = v;
+    // PAD は総寸法に含まれるので、比率を保つようアートを取り直す (FREE は据え置き)
+    applyRatio();
   });
   nbPad.tooltip = "Frame matte: background margin around the art (in export too)";
 
