@@ -156,8 +156,17 @@ function currentFormatKey() {
 }
 
 // ── 動画録画 (GIF / MP4 で共有。生成過程 or アニメ 1 周期をフレーム捕捉) ──
-const GIF_FRAME_COUNT = 30; // 生成過程 / 1 周期を約 30 フレームでサンプル
-const GIF_FPS = 12;
+// アニメ算法は周期 2π でループする。録画はプレビューと同じ動き・長さ (≈3秒) を
+// 再現するため、1 周期を十分なフレーム数でサンプルし、duration=3秒 になる fps で
+// 再生する (fps = frames / LOOP_SECONDS)。GIF はセンチ秒量子化・容量・同期エンコード
+// の都合で控えめ (60→20fps)、MP4 は滑らかに (90→30fps)。
+const LOOP_SECONDS = 3;
+const GIF_LOOP_FRAMES = 60; // GIF ループ: 60 フレーム → 20fps (5cs ちょうど)
+const MP4_LOOP_FRAMES = 90; // MP4 ループ: 90 フレーム → 30fps (滑らか)
+const ONESHOT_FRAMES = 36; // 一回生成系の生成過程サンプル数
+const ONESHOT_FPS = 16;
+let gifFrameTotal = GIF_LOOP_FRAMES; // 録画ごとに設定 (フレーム総数)
+let gifLoopFps = 20; // 録画ごとに設定 (再生 fps)
 let videoFormat = "gif"; // 録画中の出力形式 ("gif" | "mp4")
 let videoEncoding = false; // MP4 の非同期エンコード中フラグ
 let gifRecording = false; // フレーム捕捉中フラグ (GIF/MP4 共通)
@@ -1113,11 +1122,16 @@ function startVideoRecording(format) {
   gifFrames = [];
   const tag = format.toUpperCase();
   if (isAnimated()) {
-    // 現在の場パラメータを保ったまま 1 周期をループ撮影 (再生成しない)
+    // 現在の場パラメータを保ったまま 1 周期をループ撮影 (再生成しない)。
+    // プレビューと同じ動き・長さになるよう、形式に応じたフレーム数 + fps を使う。
     gifLoopFrame = 0;
+    gifFrameTotal = format === "mp4" ? MP4_LOOP_FRAMES : GIF_LOOP_FRAMES;
+    gifLoopFps = Math.round(gifFrameTotal / LOOP_SECONDS); // 90→30 / 60→20
     statusText = `RECORDING ${tag} LOOP...`;
   } else {
     gifNextSample = 0;
+    gifFrameTotal = ONESHOT_FRAMES;
+    gifLoopFps = ONESHOT_FPS;
     statusText = `RECORDING ${tag}...`;
     seed = nbSeed.value;
     startGeneration();
@@ -1163,7 +1177,7 @@ function finishVideoRecording() {
       setTimeout(() => reject(new Error("MP4 encode timeout")), 30000),
     );
     Promise.race([
-      encodeMp4(frames, encW, encH, bg, fg, GIF_FPS, encScale),
+      encodeMp4(frames, encW, encH, bg, fg, gifLoopFps, encScale),
       timeout,
     ])
       .then((blob) => {
@@ -1184,7 +1198,7 @@ function finishVideoRecording() {
   statusText = "ENCODING GIF...";
   setTimeout(() => {
     const frames = prepFrames();
-    const blob = encodeGif(frames, encW, encH, bg, fg, GIF_FPS, encScale);
+    const blob = encodeGif(frames, encW, encH, bg, fg, gifLoopFps, encScale);
     downloadVideoBlob(blob, "gif");
     gifFrames = [];
     statusText = "";
@@ -3062,13 +3076,13 @@ function captureFrame() {
 
 function onDraw(contentRect) {
   if (gifRecording && isAnimated()) {
-    // ── ループ GIF: 1 周期 (2π) を GIF_FRAME_COUNT 等分でサンプル → シームレスループ ──
-    animTime = (gifLoopFrame / GIF_FRAME_COUNT) * Math.PI * 2;
+    // ── ループ録画: 1 周期 (2π) を gifFrameTotal 等分でサンプル → シームレスループ ──
+    animTime = (gifLoopFrame / gifFrameTotal) * Math.PI * 2;
     animateFill();
     gifFrames.push(captureFrame());
     gifLoopFrame++;
-    statusText = `RECORDING LOOP ${gifLoopFrame}/${GIF_FRAME_COUNT}`;
-    if (gifLoopFrame >= GIF_FRAME_COUNT) finishVideoRecording();
+    statusText = `RECORDING LOOP ${gifLoopFrame}/${gifFrameTotal}`;
+    if (gifLoopFrame >= gifFrameTotal) finishVideoRecording();
   } else if (isAnimated()) {
     // ── 連続アニメ (常時)。場を毎フレーム再計算し、t をシームレスに周回 ──
     animTime += ANIM_DT;
@@ -3084,7 +3098,7 @@ function onDraw(contentRect) {
       if (generating) {
         if (progress >= gifNextSample) {
           gifFrames.push(captureFrame());
-          gifNextSample += 1 / GIF_FRAME_COUNT;
+          gifNextSample += 1 / gifFrameTotal;
         }
       } else {
         const final = captureFrame();
