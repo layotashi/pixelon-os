@@ -21,9 +21,8 @@
  * 場のパラダイムに統一している。
  *   - 場系 (スカラー場 f(x,y) ∈ [0,1]) … REACT / VORONOI / WAVE /
  *       PLASMA / DRIFT / GRID / LAND
- *       場を fieldBuf に書き、共通レンダラが DOT (Bayer ディザ) か
- *       ASCII (tone ramp) に変換する。両モード対応。
- *   - RAIN … 文字が降り積もるデジタルの雨。文字そのものが主役ゆえ ASCII 専用。
+ *       場を fieldBuf に書き、共通レンダラが DOT (Bayer ディザ) や
+ *       ASCII (tone ramp) 等の方式に変換する。全方式対応。
  *
  * アルゴリズム:
  *   REACT    — 化学反応の自己組織化が生む生命的パターン (Gray-Scott)
@@ -31,7 +30,6 @@
  *   WAVE     — 波動干渉: 複数波源の干渉縞が描くモアレ
  *   PLASMA   — sin/cos 干渉の多重合成が描くサイケデリックな紋様
  *   DRIFT    — パーリンノイズ密度場の漂い (時間で流れる雲)
- *   RAIN     — 文字が降り注ぎ積もっていくデジタルの雨 (ASCII 専用)
  *   GRID     — 数理パターンが決定するタイルのテッセレーション
  *   LAND     — fbm 地形の高さマップが描く風景
  *
@@ -176,7 +174,6 @@ const ALGO_KEYS = [
   "wave",
   "plasma",
   "drift",
-  "rain",
   "grid",
   "land",
   "metaball",
@@ -194,7 +191,6 @@ const ALGO_NAMES = [
   "WAVE",
   "PLASMA",
   "DRIFT",
-  "RAIN",
   "GRID",
   "LAND",
   "METABALL",
@@ -211,7 +207,7 @@ const ALGO_NAMES = [
  * 各アルゴリズムが対応するレンダーモード。
  *   "dot"   — 1bit ピクセル (Bayer ディザ)。GIF 書き出し可。
  *   "ascii" — 文字セル (tone ramp 濃淡)。
- * 場系は両対応、RAIN は ASCII 専用。先頭要素が既定モード。
+ * 全アルゴリズムが場系。先頭要素が既定モード。
  */
 // 場系すべてで使えるレンダーモード (方式)。fieldBuf を消費する点は共通で、
 // ASCII 以外は fieldBuf→artBuf の 1bit レンダラ (合成・書き出し・サイズは DOT と共有)。
@@ -230,7 +226,6 @@ const ALGO_MODES = {
   wave: FIELD_MODES,
   plasma: FIELD_MODES,
   drift: FIELD_MODES,
-  rain: ["ascii"], // 文字を直接書くため ASCII 専用
   grid: FIELD_MODES,
   land: FIELD_MODES,
   metaball: FIELD_MODES,
@@ -243,7 +238,7 @@ const ALGO_MODES = {
   worley: FIELD_MODES,
 };
 
-/** 場 (fieldBuf) パイプラインを使うアルゴリズム (RAIN は文字を直接書くため除外) */
+/** 場 (fieldBuf) パイプラインを使うアルゴリズム (= 全アルゴリズム) */
 const FIELD_ALGOS = new Set([
   "react",
   "voronoi",
@@ -280,7 +275,7 @@ const RENDER_LABELS = {
  * 場を時刻 t∈[0,2π) で毎フレーム再計算し、常に動き続ける「生きたキャンバス」。
  * 位相を進める (plasma/grid/wave) か、ノイズ標本点を円運動させる (drift/land) ことで
  * t が一周すると元に戻る ＝ 周期的 ＝ シームレスにループする (GIF ループの素地)。
- * VORONOI・REACT・RAIN は一回生成 (時間発展しない)。
+ * VORONOI・REACT・BZ は一回生成 (時間発展しない)。
  */
 const ANIM_ALGOS = new Set([
   "plasma",
@@ -410,49 +405,6 @@ const PRESETS = {
     { name: "VEIL", scale: 0.03, octaves: 2, gamma: 1.3, chars: " .:-=+" },
     { name: "DIGITS", scale: 0.1, octaves: 2, gamma: 1.0, chars: "0123456789" },
     { name: "DENSE", scale: 0.06, octaves: 5, gamma: 0.7, chars: "" },
-  ],
-  rain: [
-    {
-      name: "DRIZZLE",
-      density: 0.3,
-      speed: 1,
-      tailLen: 4,
-      chars: "",
-      gamma: 1.0,
-    },
-    { name: "POUR", density: 0.6, speed: 2, tailLen: 6, chars: "", gamma: 0.8 },
-    {
-      name: "DIGITS",
-      density: 0.5,
-      speed: 1,
-      tailLen: 5,
-      chars: "0123456789",
-      gamma: 1.0,
-    },
-    {
-      name: "BINARY",
-      density: 0.4,
-      speed: 1,
-      tailLen: 8,
-      chars: "01",
-      gamma: 1.0,
-    },
-    {
-      name: "STORM",
-      density: 0.8,
-      speed: 3,
-      tailLen: 3,
-      chars: "",
-      gamma: 0.6,
-    },
-    {
-      name: "MIST",
-      density: 0.2,
-      speed: 1,
-      tailLen: 10,
-      chars: " .:+",
-      gamma: 1.4,
-    },
   ],
   grid: [
     { name: "WAVE", patFn: "wave", freq: 0.12, gamma: 1.0, chars: "" },
@@ -1717,128 +1669,6 @@ function driftFill(t) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  AA_RAIN — ASCII レイン (文字の雨)
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//
-// 列ごとに独立した「雨粒」が上から下へ落ちていく。
-// 各雨粒は先頭が最も濃い文字で、尾部に向かって薄くなる。
-// 漸進描画: 毎フレーム雨粒が 1 ステップずつ落下し、
-// 画面全体が文字で覆われたら完了。
-
-/** 雨粒の状態 */
-let rainDrops = null;
-let rainPreset = null;
-let rainRamp = null;
-let rainGrid = null; // 2D 文字グリッド (各セルが文字)
-let rainStep_count = 0;
-let rainMaxSteps = 0;
-
-function aaRainInit(preset, s) {
-  rainPreset = preset;
-  seedRng(s);
-
-  aaCols = calcAACols();
-  aaRows = calcAARows();
-  aaLines = Array.from({ length: aaRows }, () => " ".repeat(aaCols));
-
-  rainRamp = preset.chars
-    ? AsciiArt.buildToneRamp(preset.chars)
-    : AsciiArt.getDefaultRamp();
-
-  // グリッド初期化 (0.0 = 空)
-  rainGrid = new Float32Array(aaCols * aaRows);
-
-  // 各列に雨粒を配置
-  rainDrops = [];
-  for (let c = 0; c < aaCols; c++) {
-    if (rng() < preset.density) {
-      rainDrops.push({
-        col: c,
-        row: -((rng() * aaRows) | 0), // 画面外上方からスタート
-        speed: preset.speed * (0.5 + rng()),
-        tailLen: preset.tailLen + ((rng() * 3) | 0) - 1,
-        chars: _pickRainChars(rainRamp),
-      });
-    }
-  }
-
-  // 画面を埋め尽くすのに十分なステップ数
-  rainMaxSteps = aaRows * 3 + 60;
-  rainStep_count = 0;
-  generating = true;
-  progress = 0;
-}
-
-/** 雨粒用にランダムな文字列を生成する */
-function _pickRainChars(ramp) {
-  const len = 4 + ((rng() * 8) | 0);
-  let s = "";
-  for (let i = 0; i < len; i++) {
-    const idx = (rng() * ramp.length) | 0;
-    s += ramp[idx].ch;
-  }
-  return s;
-}
-
-function aaRainStep() {
-  if (!rainDrops || !rainRamp || !rainGrid) return;
-  const ramp = rainRamp;
-  const p = rainPreset;
-  const invGamma = 1.0 / p.gamma;
-  const stepsPerFrame = 2;
-
-  for (let step = 0; step < stepsPerFrame; step++) {
-    rainStep_count++;
-
-    // 各雨粒を更新
-    for (let di = 0; di < rainDrops.length; di++) {
-      const d = rainDrops[di];
-      d.row += d.speed;
-
-      // 先頭 + テールを書き込み
-      for (let t = 0; t <= d.tailLen; t++) {
-        const r = (d.row - t) | 0;
-        if (r < 0 || r >= aaRows) continue;
-        // 先頭が最も明るく (density=1)、テール端は暗い (density→0)
-        const brightness = 1.0 - t / d.tailLen;
-        const gi = r * aaCols + d.col;
-        if (brightness > rainGrid[gi]) rainGrid[gi] = brightness;
-      }
-
-      // 画面下端を超えたら再生成 (新しい列・速度で)
-      if ((d.row | 0) - d.tailLen > aaRows) {
-        d.col = (rng() * aaCols) | 0;
-        d.row = -((rng() * (aaRows * 0.3)) | 0);
-        d.speed = p.speed * (0.5 + rng());
-        d.tailLen = p.tailLen + ((rng() * 3) | 0) - 1;
-        d.chars = _pickRainChars(ramp);
-      }
-    }
-
-    // rainGrid → aaLines
-    for (let r = 0; r < aaRows; r++) {
-      let line = "";
-      for (let c = 0; c < aaCols; c++) {
-        let v = rainGrid[r * aaCols + c];
-        if (v < 0) v = 0;
-        if (v > 1) v = 1;
-        if (invGamma !== 1.0 && v > 0) v = v ** invGamma;
-        line += AsciiArt.findNearest(ramp, v);
-      }
-      aaLines[r] = line;
-    }
-  }
-
-  progress = Math.min(1, rainStep_count / rainMaxSteps);
-  statusText = `STEP: ${rainStep_count}`;
-  if (rainStep_count >= rainMaxSteps) {
-    generating = false;
-    progress = 1;
-    statusText = `DONE - ${aaCols}x${aaRows} CHARS`;
-  }
-}
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  AA_GRID — ASCII グリッドテッセレーション
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //
@@ -2594,9 +2424,6 @@ function startGeneration() {
     case "drift":
       driftInit(preset, seed);
       break;
-    case "rain":
-      aaRainInit(preset, seed);
-      break;
     case "grid":
       aaGridInit(preset, seed);
       break;
@@ -2640,9 +2467,6 @@ function stepGeneration() {
       break;
     case "voronoi":
       voronoiStep();
-      break;
-    case "rain":
-      aaRainStep();
       break;
     case "bz":
       bzStep();
@@ -3247,10 +3071,6 @@ function onBeforeClose() {
   aaLines = null;
   plasmaLayers = null;
   driftPreset = null;
-  rainDrops = null;
-  rainPreset = null;
-  rainRamp = null;
-  rainGrid = null;
   aaGridPreset = null;
   aaGridParams = null;
   aaLandPreset = null;
