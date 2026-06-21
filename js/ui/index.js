@@ -44,6 +44,7 @@ export { WidgetGroup } from "./WidgetGroup.js";
 
 // ── ウィジェットクラス ──
 export { Label } from "./widgets/Label.js";
+export { SectionLabel } from "./widgets/SectionLabel.js";
 export { HSep } from "./widgets/HSep.js";
 export { VSep } from "./widgets/VSep.js";
 export { ButtonBase } from "./widgets/ButtonBase.js";
