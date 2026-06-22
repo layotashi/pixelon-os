@@ -3,7 +3,7 @@
  *   node lang/smoke.mjs
  * 式の評価・stdlib・エラー位置・場のレンダリング（ASCII プレビュー）を確認する。
  */
-import { compileField } from "./runtime.js";
+import { compileField, compile } from "./runtime.js";
 import { ditherField } from "./surface.js";
 import { LangError } from "./core/lexer.js";
 
@@ -149,6 +149,32 @@ function check(name, cond) {
     out += row + "\n";
   }
   console.log(out);
+}
+
+// 7) 描画モード（Tier1）: draw / repeat / dot / clear / 自動判別
+{
+  const cmds = [];
+  const surf = {
+    width: () => 100,
+    height: () => 100,
+    clear: (l) => cmds.push(["clear", l]),
+    ink: (v) => cmds.push(["ink", v]),
+    pset: (x, y) => cmds.push(["pset", x, y]),
+    line: (...a) => cmds.push(["line", ...a]),
+    present: () => cmds.push(["present"]),
+  };
+  const prog = compile("draw {\n clear\n repeat 3 as i {\n dot(i*0.1, 0.5)\n }\n}");
+  check("compile detects draw shape", prog.kind === "draw");
+  check("bare expression is field shape", compile("sin(x)").kind === "field");
+  prog.render(surf, 0, 0);
+  const psets = cmds.filter((c) => c[0] === "pset");
+  check("draw: clear issued first", cmds[0][0] === "clear");
+  check("draw: repeat ran 3 dots", psets.length === 3);
+  check(
+    "draw: dot maps [0,1]→px",
+    psets[0][1] === 0 && psets[0][2] === 50 && psets[1][1] === 10,
+  );
+  check("draw: present at end", cmds[cmds.length - 1][0] === "present");
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

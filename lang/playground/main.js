@@ -1,9 +1,9 @@
 /**
  * @module lang/playground/main
- * main.js — playground の配線。textarea のソースを compileField し、
- * 毎フレーム場を描く。編集は即反映（ライブリロード）、エラーはインライン表示。
+ * main.js — playground の配線。textarea のソースを compile し（場/描画を自動判別）、
+ * 毎フレーム描く。編集は即反映（ライブリロード）、エラーはインライン表示。
  */
-import { compileField } from "../runtime.js";
+import { compile as compileSource } from "../runtime.js";
 import { makeCanvasSurface } from "./canvas-surface.js";
 
 // 正方形: x,y がともに [0,1] なので、縦横を等スケールにすると式の意味が素直に出る
@@ -24,7 +24,7 @@ let program = null;
 
 function compile() {
   try {
-    program = compileField(editor.value);
+    program = compileSource(editor.value);
     errEl.textContent = "";
     errEl.classList.remove("on");
   } catch (e) {

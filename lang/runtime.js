@@ -9,8 +9,8 @@
  * 設計: 言語本体は surface 契約だけに依存。SYNESTA でも playground でも同一。
  */
 
-import { parse } from "./core/parser.js";
-import { evalNode } from "./core/interp.js";
+import { parse, parseProgram } from "./core/parser.js";
+import { evalNode, execDraw } from "./core/interp.js";
 import { setSeed } from "./stdlib.js";
 
 /**
@@ -48,4 +48,27 @@ export function compileField(src) {
   }
 
   return { sample, render };
+}
+
+/**
+ * プログラムをコンパイルし、形（場/描画）を自動判別した runner を返す。
+ * 両モードとも render(surface, t, seed) を持つ（playground はこれだけ呼ぶ）。
+ *  - 場(field): 全セルに式を評価して 1-bit へ（毎フレーム全面更新）。
+ *  - 描画(draw): draw ブロックを実行し命令を発行（自動クリアなし＝蓄積可）。
+ * @param {string} src
+ * @returns {{ render:(surface:object, t?:number, seed?:number)=>void, kind:string }}
+ */
+export function compile(src) {
+  const prog = parseProgram(src); // 構文エラーはここで投げる
+  if (prog.kind === "draw") {
+    return {
+      kind: "draw",
+      render(surface, t = 0, seed = 0) {
+        setSeed(seed);
+        execDraw(prog.body, surface, t, seed);
+        surface.present();
+      },
+    };
+  }
+  return { kind: "field", ...compileField(src) };
 }

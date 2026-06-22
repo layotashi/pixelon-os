@@ -33,7 +33,14 @@ export function tokenize(src) {
 
   while (i < n) {
     const c = src[i];
-    if (c === " " || c === "\t" || c === "\n" || c === "\r") {
+    if (c === " " || c === "\t" || c === "\r") {
+      i++;
+      continue;
+    }
+    // 文の区切り（改行 / セミコロン）。連続は 1 つに畳む。先頭は無視。
+    if (c === "\n" || c === ";") {
+      if (toks.length && toks[toks.length - 1].type !== "SEP")
+        toks.push({ type: "SEP", pos: i });
       i++;
       continue;
     }
@@ -77,6 +84,16 @@ export function tokenize(src) {
     }
     if (c === ")") {
       toks.push({ type: "RP", pos: start });
+      i++;
+      continue;
+    }
+    if (c === "{") {
+      toks.push({ type: "LBRACE", pos: start });
+      i++;
+      continue;
+    }
+    if (c === "}") {
+      toks.push({ type: "RBRACE", pos: start });
       i++;
       continue;
     }

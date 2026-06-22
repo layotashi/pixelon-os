@@ -60,3 +60,74 @@ export function evalNode(node, env) {
       throw new LangError(`未知のノード '${node.t}'`, 0);
   }
 }
+
+// ━━ 描画モード（Tier1）: 文・コマンドの実行 ━━
+
+/** repeat の暴走防止上限（1フレームの反復総数）。 */
+const REPEAT_CAP = 2_000_000;
+
+/**
+ * draw ブロックを実行し、surface に描画命令を発行する。
+ * 変数は 1 つのスコープ (env.vars) を共有（repeat 本体も同じスコープ）。
+ * @param {object[]} body  文の配列
+ * @param {object} surface サーフェス契約
+ * @param {number} t  時間（秒）
+ * @param {number} seed
+ */
+export function execDraw(body, surface, t = 0, seed = 0) {
+  const env = { vars: { t, seed } };
+  execStmts(body, env, surface);
+}
+
+function execStmts(stmts, env, surface) {
+  for (const s of stmts) execStmt(s, env, surface);
+}
+
+function execStmt(s, env, surface) {
+  switch (s.t) {
+    case "assign":
+      env.vars[s.name] = evalNode(s.expr, env);
+      return;
+    case "repeat": {
+      let n = evalNode(s.count, env) | 0;
+      if (n < 0) n = 0;
+      if (n > REPEAT_CAP) n = REPEAT_CAP;
+      for (let k = 0; k < n; k++) {
+        if (s.idx) env.vars[s.idx] = k;
+        execStmts(s.body, env, surface);
+      }
+      return;
+    }
+    case "cmd":
+      execCmd(s, env, surface);
+      return;
+    default:
+      throw new LangError(`未知の文 '${s.t}'`, s.pos ?? 0);
+  }
+}
+
+function execCmd(s, env, surface) {
+  const a = s.args.map((x) => evalNode(x, env));
+  const W = surface.width();
+  const H = surface.height();
+  const px = (v) => Math.round(v * W); // [0,1] → ピクセル
+  const py = (v) => Math.round(v * H);
+  switch (s.name) {
+    case "clear":
+      surface.clear(a.length ? a[0] : 0);
+      return;
+    case "ink":
+      surface.ink(a.length ? a[0] : 1);
+      return;
+    case "dot":
+      if (a.length < 2) throw new LangError(`dot(x, y) は引数2つ`, s.pos);
+      surface.pset(px(a[0]), py(a[1]));
+      return;
+    case "line":
+      if (a.length < 4) throw new LangError(`line(x0,y0,x1,y1) は引数4つ`, s.pos);
+      surface.line(px(a[0]), py(a[1]), px(a[2]), py(a[3]));
+      return;
+    default:
+      throw new LangError(`未知のコマンド '${s.name}'`, s.pos);
+  }
+}
