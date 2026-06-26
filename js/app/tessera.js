@@ -538,6 +538,11 @@ let errMsg = "";
 let t0 = performance.now();
 let winId = null;
 
+// プレビューを宣言 fps のフレームグリッドに同期（WYSIWYG）。フレームが変わるまで
+// 再レンダーせず直近バッファを再ブリット＝低 fps はカクつき・cells も fps で step。
+let _pvCache = null; // 直近に描いた pv（{buf,w,h}）
+let _pvFrame = -1; // 直近に描いた fps フレーム番号（-1 = 要再描画）
+
 // ── 等倍（1:1）ルーペ・インスペクト ──
 // プレビューをドラッグすると、その瞬間を凍結して出力を等倍（1 アートドット = pixel 画面px
 // ＝書き出しの実寸）で表示し、ドラッグでパンする。fit プレビューは枠に収めるため縮小標本
@@ -567,6 +572,7 @@ let _ready = false;
 let _seeded = false;
 
 function recompile(src) {
+  _pvFrame = -1; // コード変更（fps 含む）は即プレビューへ反映
   try {
     program = compile(src);
     errMsg = "";
@@ -877,7 +883,9 @@ function renderInspectBase(t) {
 
 /** ルーペ開始: いまの瞬間を凍結し、クリック点を中心にクロップを置く。 */
 function enterInspect(px, py) {
-  const frozenT = program.kind === "cells" ? 0 : ((performance.now() - t0) / 1000) % resolvedConfig().loop;
+  // 画面に出ている量子化フレームを凍結（WYSIWYG）。
+  const { loop, fps } = resolvedConfig();
+  const frozenT = program.kind === "cells" ? 0 : (Math.floor(((performance.now() - t0) / 1000) * fps) / fps) % loop;
   const base = renderInspectBase(frozenT);
   if (!base) return;
   inspectBase = base;
@@ -1001,7 +1009,10 @@ function exportArt() {
     if (isCells) for (let i = 0; i <= CELLS_WARMUP; i++) prog.render(sim, i / fps, seed);
 
     if (key === "png") {
-      const t = isCells ? CELLS_WARMUP / fps : (performance.now() - t0) / 1000 % loop;
+      // 画面に出ている量子化フレームと同じ t を捕らえる（WYSIWYG）。
+      const t = isCells
+        ? CELLS_WARMUP / fps
+        : (Math.floor(((performance.now() - t0) / 1000) * fps) / fps) % loop;
       const base = ArtExport.composeMatte(artAt(t, false), artW, artH, baseW, baseH);
       ArtExport.downloadPng(base, baseW, baseH, pixel, false, exportName("png"));
     } else {
@@ -1073,18 +1084,25 @@ function onDraw(cr) {
     activeParams = eff.params;
     // ASCII は場(field/cells)専用。draw では無効化（線画なので不適）。
     asciiActive = activeMode === "ascii" && program.kind !== "draw";
-    const { seed, loop } = resolvedConfig();
+    const { seed, loop, fps } = resolvedConfig();
+    // WYSIWYG: プレビューを宣言 fps のフレームグリッドへ量子化（書き出しと同じ間引き・速度）。
+    // フレーム番号が変わったときだけ再レンダー（cells はこのとき 1 step 進む）。
+    const frameIdx = Math.floor(((performance.now() - t0) / 1000) * fps);
+    let t = frameIdx / fps;
     // field/draw は t を [0,loop) で周回＝プレビューが実際にループ（見た目＝書き出し）。
     // cells は状態を持ち周期がないので周回させない（loop 対象外）。
-    let t = (performance.now() - t0) / 1000;
     if (program.kind !== "cells") t %= loop;
-    let pv = null;
-    try {
-      pv = renderPreview(t, seed, activeMode, activeParams, asciiActive, program.kind === "cells");
-    } catch (e) {
-      program = null;
-      errMsg = e.message + (e.pos != null ? ` (pos ${e.pos})` : "");
+    if (frameIdx !== _pvFrame || _pvCache === null) {
+      try {
+        _pvCache = renderPreview(t, seed, activeMode, activeParams, asciiActive, program.kind === "cells");
+        _pvFrame = frameIdx;
+      } catch (e) {
+        program = null;
+        errMsg = e.message + (e.pos != null ? ` (pos ${e.pos})` : "");
+        _pvCache = null;
+      }
     }
+    const pv = _pvCache;
     if (pv) {
       GPU.fillRect(pvX, pvY, pv.w, pv.h, 0); // 背景 (未描画セルの下地)
       GPU.drawRect(pvX - 1, pvY - 1, pv.w + 1, pv.h + 1, 1); // 枠線
