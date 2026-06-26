@@ -11,8 +11,40 @@
  */
 
 import { tokenize, LangError } from "./lexer.js";
+import { CONSTS } from "../stdlib.js";
 
 const PREC = { "+": 1, "-": 1, "*": 2, "/": 2, "%": 2, "^": 3 };
+
+/**
+ * ディレクティブ値の定数式を畳む（数値・定数 pi/tau・四則）。変数/関数は不可。
+ * `loop: tau` `loop: 2*pi` `pad: 0` 等を 1 つの数値へ解決する。
+ */
+function evalConstExpr(node, pos) {
+  switch (node.t) {
+    case "num":
+      return node.v;
+    case "var":
+      if (node.name in CONSTS) return CONSTS[node.name];
+      throw new LangError(`'${node.name}' は定数ではありません（pi/tau か数値）`, node.pos ?? pos);
+    case "unary":
+      return -evalConstExpr(node.a, pos);
+    case "bin": {
+      const a = evalConstExpr(node.a, pos),
+        b = evalConstExpr(node.b, pos);
+      switch (node.op) {
+        case "+": return a + b;
+        case "-": return a - b;
+        case "*": return a * b;
+        case "/": return a / b;
+        case "%": return ((a % b) + b) % b;
+        case "^": return Math.pow(a, b);
+      }
+    }
+    // eslint-disable-next-line no-fallthrough
+    default:
+      throw new LangError(`ディレクティブ値に使えない式です`, pos);
+  }
+}
 
 /** 装飾ヘッダ `name(args) =` を検出し直後の index を返す（無ければ 0）。 */
 function skipOptionalHeader(toks) {
@@ -492,12 +524,28 @@ function extractDirectives(toks) {
       }
       config.size = { w: w.value, h };
     } else {
-      // pixel / pad / fps / seed / loop: スカラー数値
-      const nt = toks[j];
-      if (!nt || nt.type !== "NUM")
-        throw new LangError(`${name}: は数値です`, colonPos);
-      j++;
-      config[name] = nt.value;
+      // pixel / pad / fps / seed / loop: 定数式（数値 / pi / tau / 2*pi 等）。
+      // SEP までを式とみなし、本体へ食い込まないよう EOF 付きスライスで解析→定数評価。
+      let m = j;
+      const valToks = [];
+      while (toks[m] && toks[m].type !== "SEP" && toks[m].type !== "EOF") {
+        valToks.push(toks[m]);
+        m++;
+      }
+      if (valToks.length === 0)
+        throw new LangError(`${name}: の値が必要です`, colonPos);
+      valToks.push({ type: "EOF", pos: valToks[valToks.length - 1].pos });
+      const sp = makeParser(valToks, 0);
+      let node;
+      try {
+        node = sp.parseExpr(0);
+      } catch {
+        throw new LangError(`${name}: の値が不正です`, colonPos);
+      }
+      if (sp.peek().type !== "EOF")
+        throw new LangError(`${name}: の値が不正です`, sp.peek().pos);
+      config[name] = evalConstExpr(node, colonPos);
+      j = m;
     }
 
     for (let k = i; k < j; k++) consumed.add(k);

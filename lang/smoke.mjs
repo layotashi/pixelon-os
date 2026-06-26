@@ -420,6 +420,16 @@ function check(name, cond) {
   check("pixel/pad/fps/seed 解釈", c3.pixel === 4 && c3.pad === 32 && c3.fps === 25 && c3.seed === 7);
   const cl = cfg("loop: 5\nsin(x - t)");
   check("loop: 秒 解釈", cl.loop === 5);
+  // 定数式（pi/tau・四則）も受ける
+  check("loop: tau 解釈", Math.abs(cfg("loop: tau\nsin(x - t)").loop - Math.PI * 2) < 1e-9);
+  check("loop: 2*pi 解釈", Math.abs(cfg("loop: 2*pi\nsin(x - t)").loop - Math.PI * 2) < 1e-9);
+  check("loop: pi/2 解釈", Math.abs(cfg("loop: pi/2\nsin(x - t)").loop - Math.PI / 2) < 1e-9);
+  // 変数や関数は定数でないのでエラー
+  {
+    let caught = null;
+    try { cfg("loop: x\nsin(x)"); } catch (e) { caught = e; }
+    check("loop: 変数はエラー", caught instanceof LangError);
+  }
 
   // 未指定は null
   const c4 = cfg("sin(x)");
