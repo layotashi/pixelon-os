@@ -17,7 +17,7 @@ const PREC = { "+": 1, "-": 1, "*": 2, "/": 2, "%": 2, "^": 3 };
 
 /**
  * ディレクティブ値の定数式を畳む（数値・定数 pi/tau・四則）。変数/関数は不可。
- * `loop: tau` `loop: 2*pi` `pad: 0` 等を 1 つの数値へ解決する。
+ * `period: tau` `period: 2*pi` `pad: 0` 等を 1 つの数値へ解決する。
  */
 function evalConstExpr(node, pos) {
   switch (node.t) {
@@ -452,22 +452,22 @@ export function parse(src) {
 }
 
 /** トップレベル・ディレクティブ名（`name: value` 形式。本体の前後どこでも・各1個）。 */
-const DIRECTIVE_NAMES = new Set(["view", "canvas", "pixel", "pad", "fps", "seed", "loop"]);
+const DIRECTIVE_NAMES = new Set(["view", "canvas", "pixel", "pad", "fps", "seed", "period"]);
 
 /**
  * トップレベル（brace 深さ 0）の設定ディレクティブを抽出する。
  * Tessera は 1-bit 表示・出力サイズ・乱数まで**コードで宣言**できる（recipe 自己完結）。
  *   - `view: <mode>(<numbers>)` … 表示方式と数値パラメータ
  *   - `canvas: <W>x<H>`（または `<W> <H>`） … 出力解像度（外寸px）
- *   - `pixel: <N>` / `pad: <N>` / `fps: <N>` / `seed: <N>` / `loop: <秒>` … スカラー設定
+ *   - `pixel: <N>` / `pad: <N>` / `fps: <N>` / `seed: <N>` / `period: <秒>` … スカラー設定
  *     （`pixel` = 1 アートピクセルの物理px ＝ 粗さ。`view: dither(...)` の DITHER 方式とは別物。
- *      `loop` = アニメの周期秒。プレビューは t を [0,loop) で周回し GIF/MP4 もシームレスループ）
+ *      `period` = アニメの周期秒。プレビューは t を [0,period) で周回し GIF/MP4 もシームレスループ）
  * コアはこれらを**不透明なデータ**として持つだけ（既定値・範囲クランプ・適用はホスト責務）。
  * `field{}` の channel 構文（`u: {…}`）はブレース内（depth>0）なので衝突しない。
- * @returns {{ config: object, rest: object[] }} config={view,canvas,pixel,pad,fps,seed,loop}（未指定は null）
+ * @returns {{ config: object, rest: object[] }} config={view,canvas,pixel,pad,fps,seed,period}（未指定は null）
  */
 function extractDirectives(toks) {
-  const config = { view: null, canvas: null, pixel: null, pad: null, fps: null, seed: null, loop: null };
+  const config = { view: null, canvas: null, pixel: null, pad: null, fps: null, seed: null, period: null };
   const consumed = new Set();
   let depth = 0;
   for (let i = 0; i < toks.length; i++) {
@@ -524,7 +524,7 @@ function extractDirectives(toks) {
       }
       config.canvas = { w: w.value, h };
     } else {
-      // pixel / pad / fps / seed / loop: 定数式（数値 / pi / tau / 2*pi 等）。
+      // pixel / pad / fps / seed / period: 定数式（数値 / pi / tau / 2*pi 等）。
       // SEP までを式とみなし、本体へ食い込まないよう EOF 付きスライスで解析→定数評価。
       let m = j;
       const valToks = [];
