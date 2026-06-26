@@ -73,15 +73,18 @@ let _flushPopups = null;
 let _hasOpenPopup = null;
 /** @type {(() => boolean) | null} */
 let _hasTextInputFocus = null;
+/** @type {((sx:number, sy:number, ev:object) => boolean) | null} */
+let _dispatchPopupInput = null;
 
 /**
  * UI モジュールからのコールバックを注入する。kernel.js が初期化時に呼ぶ。
- * @param {{ flushPopups: function, hasOpenPopup: function, hasTextInputFocus: function }} cbs
+ * @param {{ flushPopups: function, hasOpenPopup: function, hasTextInputFocus: function, dispatchPopupInput: function }} cbs
  */
 export function wmSetUiCallbacks(cbs) {
   _flushPopups = cbs.flushPopups;
   _hasOpenPopup = cbs.hasOpenPopup;
   _hasTextInputFocus = cbs.hasTextInputFocus;
+  _dispatchPopupInput = cbs.dispatchPopupInput;
 }
 
 // ── SFX コールバック ──
@@ -104,6 +107,13 @@ function flushPopups() {
 /** ポップアップが開いているか (コールバック経由) */
 function hasOpenPopup() {
   return _hasOpenPopup ? _hasOpenPopup() : false;
+}
+/**
+ * 展開中ポップアップの所有グループへ画面座標イベントを直接配信 (コールバック経由)。
+ * @returns {boolean} 配信したら true (所有グループ未登録なら false)
+ */
+function dispatchPopupInput(sx, sy, ev) {
+  return _dispatchPopupInput ? _dispatchPopupInput(sx, sy, ev) : false;
 }
 /** テキスト入力にフォーカスがあるか (コールバック経由) */
 function hasTextInputFocus() {
@@ -2014,18 +2024,21 @@ function handleLeftClick(mx, my) {
   // Desktop.desktopHandleInput に到達した場合はそこで再設定される。
   Desktop.desktopBlur();
 
-  // ポップアップが開いている場合: 最前面ウィンドウに伝播
+  // ポップアップが開いている場合: 所有グループへ直接配信 (領域分岐を介さない)。
+  // ポップアップは全面オーバーレイ描画なので、入力も全面で受ける (描画と対称)。
   if (hasOpenPopup() && windows.length > 0) {
-    const front = windows[windows.length - 1];
-    if (front && front.onInput) {
-      const { lx, ly } = toLocalCoords(front, mx, my);
-      safeOnInput(front, {
-        localX: lx,
-        localY: ly,
-        type: "down",
-        ctrl: Input.mouseHasCtrl(),
-        shift: Input.mouseHasShift(),
-      });
+    const evBase = {
+      type: "down",
+      ctrl: Input.mouseHasCtrl(),
+      shift: Input.mouseHasShift(),
+    };
+    if (!dispatchPopupInput(mx, my, evBase)) {
+      // フォールバック: 所有グループ未登録時は従来どおり最前面 onInput へ
+      const front = windows[windows.length - 1];
+      if (front && front.onInput) {
+        const { lx, ly } = toLocalCoords(front, mx, my);
+        safeOnInput(front, { ...evBase, localX: lx, localY: ly });
+      }
     }
     return;
   }
@@ -2289,9 +2302,59 @@ function handleDrag(mx, my) {
   }
 }
 
+/**
+ * ポップアップ展開中の継続イベント (wheel / hover / held / up) を、所有グループへ
+ * 直接配信する。ポップアップは全面オーバーレイ描画なので、入力もアプリの領域
+ * ルーティングを介さず全面で受ける (描画と入力の対称化)。これにより、ポップアップが
+ * ウィジェット領域外 (例: TESSERA の PREVIEW) へ張り出しても、はみ出した項目を
+ * 確実にホバー/クリックできる。down は handleLeftClick で配信する。
+ * @returns {boolean} 所有グループへ配信したら true
+ */
+function dispatchPopupBodyEvents(mx, my) {
+  let dispatched = false;
+  const wy = Input.wheelY();
+  const wx = Input.wheelX();
+  if (wy !== 0 || wx !== 0) {
+    dispatched =
+      dispatchPopupInput(mx, my, {
+        type: "wheel",
+        deltaX: wx,
+        deltaY: wy,
+        ctrl: Input.wheelHasCtrl(),
+        alt: Input.wheelHasAlt(),
+        shift: Input.wheelHasShift(),
+        consumed: false,
+      }) || dispatched;
+  }
+  if (Input.mouseButtonHeld(0)) {
+    dispatched =
+      dispatchPopupInput(mx, my, {
+        type: "held",
+        ctrl: Input.mouseHasCtrl(),
+        shift: Input.mouseHasShift(),
+      }) || dispatched;
+  } else if (!Input.mouseButtonDown(0)) {
+    // 静止フレームでも毎フレーム hover を流す (展開中のキーボード操作も update 内で拾う)
+    dispatched = dispatchPopupInput(mx, my, { type: "hover" }) || dispatched;
+  }
+  if (Input.mouseButtonUp(0)) {
+    dispatched =
+      dispatchPopupInput(mx, my, {
+        type: "up",
+        ctrl: Input.mouseHasCtrl(),
+        shift: Input.mouseHasShift(),
+      }) || dispatched;
+  }
+  return dispatched;
+}
+
 /** ボディへのイベント伝播 (wheel / hover / held / up / rheld / rup) */
 function propagateBodyEvents(mx, my) {
   if (mode !== "none" || windows.length === 0) return;
+
+  // ポップアップ展開中: 全入力を所有グループへ直接配信して終了 (領域分岐を介さない)。
+  // 所有グループ未登録 (フォールバック) のときのみ従来の onInput 伝播へ落ちる。
+  if (hasOpenPopup() && dispatchPopupBodyEvents(mx, my)) return;
 
   let front = windows[windows.length - 1];
 
@@ -2418,11 +2481,11 @@ function propagateBodyEvents(mx, my) {
           ctrl: Input.mouseHasCtrl(),
           shift: Input.mouseHasShift(),
         });
-      } else if (
-        !Input.mouseButtonDown(0) &&
-        !Input.mouseButtonHeld(0) &&
-        (onBody || popupOpen || tbFocus)
-      ) {
+      } else if (!Input.mouseButtonDown(0) && !Input.mouseButtonHeld(0)) {
+        // hover は前面ウィンドウへ毎フレーム送る（マウス位置に依らない）。これにより
+        // onInput でキーボードをポーリングするアプリ（ダイアログの OK/CANCEL 選択、
+        // 矢印移動・Enter 確定など）がマウスを乗せなくても動作する。lx/ly が枠外でも
+        // 各ウィジェットは hitTest で弾くので hover ハイライトは出ない。
         safeOnInput(front, { localX: lx, localY: ly, type: "hover" });
       }
       if (Input.mouseButtonUp(0) && (onBody || popupOpen || tbFocus)) {
@@ -2613,6 +2676,46 @@ function updateCursorShape(mx, my) {
   contentCursorOverride = null;
 }
 
+/** ツールチップ 1 行の最大文字数 (これを超える行は折り返す) */
+const TOOLTIP_MAX_CHARS = 38;
+
+/**
+ * ツールチップ文字列を読みやすい複数行に折り返す。
+ * 明示的な \n は尊重し、長すぎる行は語境界 (スペース) で max 文字以内に畳む。
+ * 1 語が max を超える場合は強制分割する。狭い VRAM ではさらに詰める。
+ * @param {string} text
+ * @returns {string[]} 折り返し済みの行配列
+ */
+function wrapTooltip(text) {
+  const vramCap = Math.floor(
+    (Config.VRAM_WIDTH - TOOLTIP_PADDING * 2 - 8) / (GLYPH_W + 1),
+  );
+  const max = Math.max(8, Math.min(TOOLTIP_MAX_CHARS, vramCap));
+  const out = [];
+  for (const seg of text.split("\n")) {
+    let line = "";
+    for (let word of seg.split(" ")) {
+      // 1 語が長すぎる場合は強制分割
+      while (word.length > max) {
+        if (line) {
+          out.push(line);
+          line = "";
+        }
+        out.push(word.slice(0, max));
+        word = word.slice(max);
+      }
+      if (!line) line = word;
+      else if (line.length + 1 + word.length <= max) line += " " + word;
+      else {
+        out.push(line);
+        line = word;
+      }
+    }
+    out.push(line);
+  }
+  return out;
+}
+
 /** ツールチップを描画する。ディレイ後にカーソル付近にボックスを表示。 */
 function drawTooltip() {
   // ディレイカウンタ更新
@@ -2626,7 +2729,7 @@ function drawTooltip() {
 
   const mx = Input.mouseX();
   const my = Input.mouseY();
-  const lines = tooltipText.split("\n");
+  const lines = wrapTooltip(tooltipText);
   const maxChars = Math.max(...lines.map((l) => l.length));
   const tw = maxChars * (GLYPH_W + 1) - 1;
   const lineH = GLYPH_H + 2;

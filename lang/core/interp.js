@@ -51,11 +51,18 @@ export function evalNode(node, env) {
         node.pos,
       );
     case "call": {
-      const fn = FUNCS[node.name];
+      // env.funcs（場の近傍プリミティブ lap/nbr/sum8 等、現在セルに束縛）を
+      // stdlib より優先して解決する。stdlib は純関数のまま保つ。
+      const fn = (env.funcs && env.funcs[node.name]) || FUNCS[node.name];
       if (!fn) throw new LangError(`未知の関数 '${node.name}'`, node.pos);
       const args = node.args.map((a) => evalNode(a, env));
       return fn(...args);
     }
+    case "fieldblock":
+      // Tier0 値ブロック: 代入/repeat の文を実行（cmd は無い＝surface 不要）してから
+      // 最終の値式を返す。セル毎の反復・総和（julia / quasic / metaball 等）に使う。
+      execStmts(node.stmts, env, null);
+      return evalNode(node.value, env);
     default:
       throw new LangError(`未知のノード '${node.t}'`, 0);
   }

@@ -103,7 +103,8 @@ export class VfsBrowser extends FocusableWidget {
       );
       if (initIdx >= 0) {
         this._treeView.selectedIndex = initIdx;
-        this._treeView.ensureVisible(initIdx);
+        // 初期フォルダはツリー最上部に置く（見栄え。例: OPEN 時の /TESSERA）。
+        this._treeView.scrollToIndex(initIdx);
       }
     }
   }

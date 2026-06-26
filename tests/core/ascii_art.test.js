@@ -12,6 +12,7 @@ import {
   findNearest,
   asciiRGBA,
   getRampString,
+  renderAsciiLines,
   CELL_W,
   CELL_H,
 } from "@/core/ascii_art.js";
@@ -88,6 +89,35 @@ describe("findNearest", () => {
     const single = [{ ch: "X", density: 0.5 }];
     expect(findNearest(single, 0.0)).toBe("X");
     expect(findNearest(single, 1.0)).toBe("X");
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  renderAsciiLines（共有: 場 → 文字グリッド）
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe("renderAsciiLines", () => {
+  const ramp = [
+    { ch: " ", density: 0 },
+    { ch: "+", density: 0.5 },
+    { ch: "@", density: 1 },
+  ];
+
+  it("場 (0..1) を ramp で文字グリッドへ", () => {
+    const field = new Float32Array([0, 0.5, 1]); // 3x1
+    expect(renderAsciiLines(field, 3, 1, ramp)).toEqual([" +@"]);
+  });
+
+  it("行数・各行の文字数が rows/cols に一致", () => {
+    const field = new Float32Array(6).fill(1);
+    const lines = renderAsciiLines(field, 3, 2, ramp);
+    expect(lines).toHaveLength(2);
+    expect(lines.every((l) => l.length === 3 && l === "@@@")).toBe(true);
+  });
+
+  it("範囲外の値はクランプ", () => {
+    const field = new Float32Array([-5, 5]); // 2x1
+    expect(renderAsciiLines(field, 2, 1, ramp)).toEqual([" @"]);
   });
 });
 

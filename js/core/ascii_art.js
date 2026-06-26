@@ -277,6 +277,33 @@ export function findNearest(ramp, targetDensity) {
   return ramp[lo].ch;
 }
 
+/**
+ * スカラー場 (0..1, cols×rows) を tone ramp で文字グリッドへ変換する（共有コア）。
+ * 場を文字濃淡に落とす「決定」はこの 1 関数に集約する（プレビューも書き出しも同一）。
+ * グリフのラスタライズ（文字→ピクセル）はホスト側の責務（レイアウトが異なるため）。
+ *
+ * @param {Float32Array|number[]} field  長さ cols*rows、各 0..1
+ * @param {number} cols  文字グリッド列数
+ * @param {number} rows  文字グリッド行数
+ * @param {{ ch: string, density: number }[]} ramp  density 昇順ソート済み
+ * @returns {string[]}  行ごとの文字列（length=rows、各 length=cols）
+ */
+export function renderAsciiLines(field, cols, rows, ramp) {
+  const lines = [];
+  for (let r = 0; r < rows; r++) {
+    let line = "";
+    const base = r * cols;
+    for (let c = 0; c < cols; c++) {
+      let v = field[base + c];
+      if (v < 0) v = 0;
+      else if (v > 1) v = 1;
+      line += findNearest(ramp, v);
+    }
+    lines.push(line);
+  }
+  return lines;
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  変換 API
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

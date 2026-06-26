@@ -165,7 +165,10 @@ export class WidgetGroup {
       _drawFocusBrackets(focused, contentRect);
     }
 
-    // パス 3: 展開中ドロップダウンのポップアップをキューに登録
+    // パス 3: 展開中ドロップダウンのポップアップをキューに登録し、
+    // 所有グループ + 描画原点 (絶対座標) を登録する。後者は WM が
+    // ポップアップ入力を領域分岐を介さず直接ルーティングするために使う
+    // (描画が全面オーバーレイなのに対し、入力も全面で受けるための対称化)。
     for (const w of this.widgets) {
       if (w.hasPopup && w.open) {
         Helpers.pushPopup({
@@ -173,6 +176,7 @@ export class WidgetGroup {
           ax: contentRect.x + w.x,
           ay: contentRect.y + w.y + w.h + 1,
         });
+        Helpers.setPopupOwner(this, contentRect.x, contentRect.y);
       }
     }
   }
@@ -348,6 +352,19 @@ export class WidgetGroup {
    */
   static hasOpenPopup() {
     return Helpers.hasOpenPopup();
+  }
+
+  /**
+   * 展開中ポップアップの所有グループへ、画面座標のイベントを直接配信する。
+   * wm.js が、ポップアップ展開中の入力を (アプリの領域ルーティングを介さず)
+   * 描画と対称に全面ルーティングするために使う。
+   * @param {number} screenX 画面 (VRAM) 絶対 X
+   * @param {number} screenY 画面 (VRAM) 絶対 Y
+   * @param {object} evBase  type 等を含むイベントの素
+   * @returns {boolean} 配信したら true (所有グループ未登録なら false)
+   */
+  static dispatchPopupInput(screenX, screenY, evBase) {
+    return Helpers.dispatchPopupInput(screenX, screenY, evBase);
   }
 
   /** テキスト入力系ウィジェットにフォーカスがあるかを返す */

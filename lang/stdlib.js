@@ -13,10 +13,10 @@ export function setSeed(s) {
   _seed = s | 0;
 }
 
-/** 定数 */
+/** 定数（言語は大小文字を区別しないため、レキサが畳む小文字キーで持つ） */
 export const CONSTS = {
-  PI: Math.PI,
-  TAU: Math.PI * 2,
+  pi: Math.PI,
+  tau: Math.PI * 2,
 };
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -65,6 +65,32 @@ function fbm2(x, y, oct = 4) {
   return f / sum;
 }
 
+/**
+ * Worley（セルラー）ノイズ → 最近傍の特徴点までの距離（おおむね [0,1]）。
+ * 各セルに seed 連動の特徴点を 1 つ置き、3x3 近傍で最近傍距離を取る。
+ * voronoi / stone / crack 風の細胞模様。GLSL の cellular noise 慣習。
+ */
+function worley2(x, y) {
+  const xi = Math.floor(x),
+    yi = Math.floor(y);
+  const fx0 = x - xi,
+    fy0 = y - yi;
+  let minD = 8;
+  for (let gy = -1; gy <= 1; gy++) {
+    for (let gx = -1; gx <= 1; gx++) {
+      const cx = xi + gx,
+        cy = yi + gy;
+      const px = gx + hash21(cx, cy); // 近傍セル内の特徴点 x
+      const py = gy + hash21(cx + 71.3, cy + 9.1); // 〃 y（別ハッシュ）
+      const dx = px - fx0,
+        dy = py - fy0;
+      const d = dx * dx + dy * dy;
+      if (d < minD) minD = d;
+    }
+  }
+  return Math.min(1, Math.sqrt(minD));
+}
+
 /** 関数表（最小コア。すべて数値 → 数値） */
 export const FUNCS = {
   // 三角（角度はラジアン。座標の数学に使う）
@@ -88,5 +114,6 @@ export const FUNCS = {
   dist: (x0, y0, x1, y1) => Math.hypot(x1 - x0, y1 - y0),
   noise: noise2,
   fbm: fbm2,
+  worley: worley2,
   rnd: hash21,
 };

@@ -11,6 +11,11 @@ import * as Ports from "../ports.js";
 import * as Helpers from "../ui_helpers.js";
 import * as Scroll from "../scrollbar.js";
 
+/** Undo 履歴の最大段数 */
+const UNDO_MAX = 200;
+/** 連続入力を 1 undo にまとめる時間窓 (ms) */
+const UNDO_COALESCE_MS = 600;
+
 export class TextArea extends FocusableWidget {
   /**
    * @param {number} x  コンテンツ領域内の X
@@ -56,6 +61,94 @@ export class TextArea extends FocusableWidget {
     this.onChange = onChange || null;
     /** @private */
     this._blinkTimer = 0;
+    // ── Undo / Redo（行スナップショット方式。連続入力はコアレスして 1 ステップに） ──
+    /** @private @type {Array<{lines:string[],cursorRow:number,cursorCol:number}>} */
+    this._undoStack = [];
+    /** @private */
+    this._redoStack = [];
+    /** @private 直近編集の種別（"type" は連続入力をまとめる） */
+    this._undoKind = null;
+    /** @private 直近編集の時刻（コアレス判定用） */
+    this._undoTime = 0;
+    /** 空白/改行マーカー（・/↓）を表示するか。コード編集では消すと読みやすい。 */
+    this.showWhitespace = true;
+    /** 入力を大文字へ畳むか（SYNESTA は大文字表示が前提。表示＝保存を一致させる）。 */
+    this.uppercaseInput = true;
+  }
+
+  /** @private 現在状態のスナップショット */
+  _snapshot() {
+    return {
+      lines: this.lines.slice(),
+      cursorRow: this.cursorRow,
+      cursorCol: this.cursorCol,
+    };
+  }
+
+  /** @private スナップショットを復元（範囲はクランプ）して onChange を発火 */
+  _applySnapshot(s) {
+    this.lines = s.lines.slice();
+    this.cursorRow = Math.max(0, Math.min(s.cursorRow, this.lines.length - 1));
+    this.cursorCol = Math.max(
+      0,
+      Math.min(s.cursorCol, this.lines[this.cursorRow].length),
+    );
+    this._clearSelection();
+    this.boxSelection = null;
+    Scroll.scrollSetContent(this._vScroll, this.lines.length);
+    this._ensureCursorVisible();
+    this._blinkTimer = 0;
+    if (this.onChange) this.onChange(this.getText());
+  }
+
+  /** @private Undo（直前の編集を取り消す） */
+  _undo() {
+    if (!this._undoStack.length) return;
+    this._redoStack.push(this._snapshot());
+    this._applySnapshot(this._undoStack.pop());
+    this._undoKind = null; // 次の編集は必ず新規エントリ
+  }
+
+  /** @private Redo（取り消した編集をやり直す） */
+  _redo() {
+    if (!this._redoStack.length) return;
+    this._undoStack.push(this._snapshot());
+    this._applySnapshot(this._redoStack.pop());
+    this._undoKind = null;
+  }
+
+  /** 履歴をクリアする（ファイルを開く/新規など、編集の連続性が切れるとき）。 */
+  clearHistory() {
+    this._undoStack.length = 0;
+    this._redoStack.length = 0;
+    this._undoKind = null;
+  }
+
+  /**
+   * 外部からの一括変更（整形・seed 振り直し等）を 1 ステップとして undo 可能にする。
+   * lines を書き換える「前」に呼ぶと、その直前状態が undo に積まれる。
+   */
+  snapshotForUndo() {
+    this._undoStack.push(this._snapshot());
+    if (this._undoStack.length > UNDO_MAX) this._undoStack.shift();
+    this._redoStack.length = 0;
+    this._undoKind = null;
+  }
+
+  /** @private 編集後に呼び、undo に積む（"type" は時間窓内でコアレス）。 */
+  _recordEdit(before, kind) {
+    const now = Ports.now ? Ports.now() : Date.now();
+    const coalesce =
+      kind === "type" &&
+      this._undoKind === "type" &&
+      now - this._undoTime < UNDO_COALESCE_MS;
+    if (!coalesce) {
+      this._undoStack.push(before);
+      if (this._undoStack.length > UNDO_MAX) this._undoStack.shift();
+      this._redoStack.length = 0; // 新規編集で redo を破棄
+    }
+    this._undoKind = kind;
+    this._undoTime = now;
   }
 
   /** @override */
@@ -408,7 +501,8 @@ export class TextArea extends FocusableWidget {
     for (let i = 0; i < visible.length; i++) {
       const charX = innerX + i * charW;
       if (visible[i] === " ") {
-        Ports.drawTextIcon("space-dot", charX, lineY, 1);
+        // 空白は中点で可視化（showWhitespace=false なら何も描かない＝素の空白）。
+        if (this.showWhitespace) Ports.drawTextIcon("space-dot", charX, lineY, 1);
       } else {
         Ports.drawText(charX, lineY, visible[i], 1);
       }
@@ -417,6 +511,7 @@ export class TextArea extends FocusableWidget {
 
   /** 行末改行アイコンを描画する (private) */
   _drawNewlineIcon(line, lineIdx, innerX, lineY, charW) {
+    if (!this.showWhitespace) return; // 改行マーカー（↓）を消す
     if (lineIdx < this.lines.length - 1) {
       const nlScreenCol = line.length - this.scrollX;
       if (nlScreenCol >= 0 && nlScreenCol < this.widthChars) {
@@ -629,14 +724,27 @@ export class TextArea extends FocusableWidget {
 
   /** @override */
   handleKey() {
+    // ── Undo / Redo（他の編集より先に処理）──
+    if (Ports.ctrlDown("KeyZ")) {
+      if (Helpers.shiftHeld()) this._redo();
+      else this._undo();
+      return true;
+    }
+    if (Ports.ctrlDown("KeyY")) {
+      this._redo();
+      return true;
+    }
+
     let changed = false;
+    const before = this._snapshot(); // 変更があればこの直前状態を undo に積む
     const chars = Ports.getCharQueue();
     const shift = Helpers.shiftHeld();
     const prevRow = this.cursorRow;
     const prevCol = this.cursorCol;
 
     // ── 文字入力 ──
-    for (const ch of chars) {
+    for (const raw of chars) {
+      const ch = this.uppercaseInput ? raw.toUpperCase() : raw;
       if (this.boxSelection) {
         this._deleteBoxSelection();
         changed = true;
@@ -951,7 +1059,8 @@ export class TextArea extends FocusableWidget {
 
     // Ctrl+V
     if (Ports.ctrlDown("KeyV")) {
-      const paste = Ports.getPasteText();
+      let paste = Ports.getPasteText();
+      if (this.uppercaseInput && paste) paste = paste.toUpperCase();
       if (paste) {
         if (this.boxSelection) {
           this._deleteBoxSelection();
@@ -990,6 +1099,7 @@ export class TextArea extends FocusableWidget {
     }
 
     if (changed) {
+      this._recordEdit(before, chars.length > 0 ? "type" : "struct");
       Scroll.scrollSetContent(this._vScroll, this.lines.length);
     }
     if (this.cursorRow !== prevRow || this.cursorCol !== prevCol || changed) {

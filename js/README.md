@@ -36,7 +36,7 @@ app/  →  wm/  →  ui/  →  core/
 
 | 注入関数                           | 注入先        | 注入される機能                                     |
 | ---------------------------------- | ------------- | -------------------------------------------------- |
-| `wmSetUiCallbacks()`               | wm → ui       | `flushPopups`, `hasOpenPopup`, `hasTextInputFocus` |
+| `wmSetUiCallbacks()`               | wm → ui       | `flushPopups`, `hasOpenPopup`, `hasTextInputFocus`, `dispatchPopupInput` |
 | `uiSetWmCallbacks()`               | ui → wm       | `wmSetTooltip`, `wmRequestCursor`                  |
 | `transportSetPianoRollCallbacks()` | audio → app   | `getTracks`, `setPlayheadPos`                      |
 | `transportSetIsHostFocused()`      | audio → wm    | `wmIsFocused("STUDIO")` (Space キー制御)           |
@@ -111,7 +111,7 @@ app/  →  wm/  →  ui/  →  core/
 | `breakout.js`           | ~1140 | BREAKOUT ウィンドウ (ブロック崩し)                   |
 | `capture.js`            | ~530  | CAPTURE ウィンドウ (スクリーンキャプチャ + 動画撮影) |
 | `game_utils.js`         | ~256  | ゲームアプリ共通ユーティリティ                       |
-| `genart.js`             | ~1890 | GENART ウィンドウ (生成的アート)                     |
+| `tessera.js`            | ~900  | TESSERA ウィンドウ (1-bit 生成的アート言語＋出力)    |
 | `graze.js`              | ~840  | GRAZE ウィンドウ (弾幕サバイバル)                    |
 | `notepad.js`            | ~145  | メモ帳ウィンドウ                                     |
 | `settings.js`           | ~400  | 設定ウィンドウ (パレット/壁紙/解像度)                |

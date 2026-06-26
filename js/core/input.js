@@ -96,6 +96,7 @@ const altKeyPressed = new Map();
 /** Alt+キー のインターセプト対象キーコード */
 const ALT_INTERCEPT = new Set([
   "KeyN",
+  "KeyF", // Shift+Alt+F = フォーマット (SKETCH)。横取りして文字挿入を防ぐ
 ]);
 
 /** Ctrl+キー のインターセプト対象キーコード */
@@ -104,6 +105,7 @@ const CTRL_INTERCEPT = new Set([
   "KeyC",
   "KeyV",
   "KeyD",
+  "KeyE",
   "KeyX",
   "KeyZ",
   "KeyY",
@@ -113,6 +115,7 @@ const CTRL_INTERCEPT = new Set([
   "KeyN",
   "KeyO",
   "KeyP",
+  "KeyR",
   "KeyS",
   "KeyW",
   "F6",
@@ -366,7 +369,7 @@ export function initInput() {
       // Alt+key: ブラウザメニュー起動を抑止
       e.preventDefault();
       if (ALT_INTERCEPT.has(code)) {
-        altKeyPressed.set(code, true);
+        altKeyPressed.set(code, { shift: e.shiftKey });
       }
     } else {
       // 通常キー: F5/F12 等は通す
@@ -727,9 +730,16 @@ export function ctrlShiftDown(code) {
   return !!entry && entry.shift;
 }
 
-/** Alt+キー が押された瞬間だけ true (1フレーム) */
+/** Alt+キー (かつ Shift なし) が押された瞬間だけ true (1フレーム) */
 export function altDown(code) {
-  return altKeyPressed.has(code);
+  const entry = altKeyPressed.get(code);
+  return !!entry && !entry.shift;
+}
+
+/** Shift+Alt+キー が押された瞬間だけ true (1フレーム) */
+export function altShiftDown(code) {
+  const entry = altKeyPressed.get(code);
+  return !!entry && !!entry.shift;
 }
 
 /** そのフレームに入力された文字の配列を返す (消費はしない。resetInput で消える) */

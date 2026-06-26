@@ -97,6 +97,14 @@ export class TreeView extends FocusableWidget {
     Scroll.scrollEnsureVisible(this._vScroll, index);
   }
 
+  /**
+   * 指定インデックスを表示領域の最上部に置く（末尾付近はクランプ）。
+   * @param {number} index 最上部に出したいアイテムのインデックス
+   */
+  scrollToIndex(index) {
+    Scroll.scrollTo(this._vScroll, index);
+  }
+
   /** @override */
   resetDragState() {
     Scroll.scrollDragReset(this._vScroll);

@@ -37,7 +37,7 @@ import { Label } from "./widgets/Label.js";
 import { WidgetGroup } from "./WidgetGroup.js";
 import { HBox, VBox } from "./layout.js";
 import { FOCUS_MARGIN } from "./ui_constants.js";
-import { textWidth, setFocused } from "./ui_helpers.js";
+import { textWidth, setFocused, getFocused, clearFocus } from "./ui_helpers.js";
 import { keyDown } from "./ports.js";
 
 // ── 定数 ──
@@ -83,6 +83,7 @@ function _closeDialog() {
   if (_dialogWinId !== null) {
     wmClose(_dialogWinId);
     _dialogWinId = null;
+    clearFocus(); // ダイアログのボタンへの参照を残さない
   }
 }
 
@@ -110,9 +111,29 @@ function _openDialogWindow(title, root, group, opts) {
   }
 
   function onInput(ev) {
+    // ── アクションボタン間のキーボード移動（左右）。ボタンにフォーカスがある時のみ ──
+    const buttons = opts.buttons;
+    const cur = getFocused();
+    if (
+      buttons &&
+      buttons.length > 1 &&
+      buttons.includes(cur) &&
+      (keyDown("ArrowLeft") || keyDown("ArrowRight"))
+    ) {
+      let i = buttons.indexOf(cur) + (keyDown("ArrowRight") ? 1 : -1);
+      i = Math.max(0, Math.min(buttons.length - 1, i));
+      setFocused(buttons[i]);
+    }
+
     group.update(ev);
-    if (opts.onEnter && keyDown("Enter")) {
-      opts.onEnter();
+
+    // Enter: フォーカスがアクションボタンなら、その「選択中＝[ ]」のボタンを即確定。
+    // それ以外（TextBox 等）の時だけダイアログ既定の Enter（onEnter）。
+    const focused = getFocused();
+    const onButton = buttons && buttons.includes(focused);
+    if (keyDown("Enter")) {
+      if (onButton && typeof focused.onClick === "function") focused.onClick();
+      else if (opts.onEnter) opts.onEnter();
     }
     if (opts.onEscape && keyDown("Escape")) {
       opts.onEscape();
@@ -145,6 +166,9 @@ function _openDialogWindow(title, root, group, opts) {
       },
     },
   );
+
+  // 初期フォーカス（[ ] 表示＋Enter で確定される既定ボタン / 入力欄）。
+  if (opts.defaultFocus) setFocused(opts.defaultFocus);
 
   // SFX フック
   if (opts.onOpen) opts.onOpen(variant);
@@ -191,10 +215,6 @@ export function openConfirmDialog(message, opts = {}) {
     onCancel();
   });
 
-  // danger バリアント: OK ボタンを反転表示
-  if (variant === "danger") {
-    btnOk.value = true;
-  }
 
   // ── レイアウト ──
   const btnRow = HBox([btnCancel, btnOk]);
@@ -213,12 +233,11 @@ export function openConfirmDialog(message, opts = {}) {
   const group = new WidgetGroup(root.leaves());
 
   // ── ダイアログを開く ──
+  // 既定フォーカス: danger（破壊的）は安全側の CANCEL、通常は OK。左右で切替→Enter 確定。
   _openDialogWindow(title, root, group, {
     variant,
-    onEnter: () => {
-      _closeDialog();
-      onOk();
-    },
+    buttons: [btnCancel, btnOk],
+    defaultFocus: variant === "danger" ? btnCancel : btnOk,
     onEscape: () => {
       _closeDialog();
       if (opts.onClose) opts.onClose();
@@ -317,8 +336,12 @@ export function openPromptDialog(label, opts = {}) {
   setFocused(txtInput);
 
   // ── ダイアログを開く ──
+  // 既定フォーカスは入力欄（すぐ打てる）。Enter で確定、Escape で取消。Tab/クリックで
+  // ボタンへ移ると左右移動＋Enter 確定が効く。
   _openDialogWindow(title, root, group, {
     variant,
+    buttons: [btnCancel, btnOk],
+    defaultFocus: txtInput,
     onEnter: doConfirm,
     onEscape: doCancel,
     onOpen: opts.onOpen,
@@ -374,10 +397,8 @@ export function openAlertDialog(message, opts = {}) {
   // ── ダイアログを開く ──
   _openDialogWindow(title, root, group, {
     variant,
-    onEnter: () => {
-      _closeDialog();
-      onOk();
-    },
+    buttons: [btnOk],
+    defaultFocus: btnOk,
     onEscape: () => {
       _closeDialog();
       onOk();

@@ -21,9 +21,13 @@ export class LangError extends Error {
 /**
  * ソース文字列をトークン列へ。
  * @param {string} src
+ * @param {object} [opts]
+ * @param {boolean} [opts.comments=false] true でコメントを COMMENT トークンとして
+ *   保持する（フォーマッタ用）。既定 false（パーサはコメントを見ない＝従来どおり）。
  * @returns {Token[]}
  */
-export function tokenize(src) {
+export function tokenize(src, opts = {}) {
+  const keepComments = !!opts.comments;
   const toks = [];
   let i = 0;
   const n = src.length;
@@ -38,9 +42,15 @@ export function tokenize(src) {
       continue;
     }
     // 文の区切り（改行 / セミコロン）。連続は 1 つに畳む。先頭は無視。
+    // format モード（keepComments）では「行区切り済みのさらなる改行」= 空行を
+    // BLANK として 1 個だけ保持する（連続空行は畳む。整形が空行を消さないため）。
     if (c === "\n" || c === ";") {
-      if (toks.length && toks[toks.length - 1].type !== "SEP")
+      const last = toks.length ? toks[toks.length - 1].type : null;
+      if (toks.length && last !== "SEP" && last !== "BLANK") {
         toks.push({ type: "SEP", pos: i });
+      } else if (keepComments && c === "\n" && last === "SEP") {
+        toks.push({ type: "BLANK", pos: i });
+      }
       i++;
       continue;
     }
@@ -49,6 +59,8 @@ export function tokenize(src) {
     if (c === "/" && src[i + 1] === "/") {
       i += 2;
       while (i < n && src[i] !== "\n") i++;
+      if (keepComments)
+        toks.push({ type: "COMMENT", value: src.slice(start, i), pos: start });
       continue;
     }
     if (c === "/" && src[i + 1] === "*") {
@@ -56,6 +68,8 @@ export function tokenize(src) {
       while (i < n && !(src[i] === "*" && src[i + 1] === "/")) i++;
       if (i >= n) throw new LangError("ブロックコメント /* が閉じていません", start);
       i += 2;
+      if (keepComments)
+        toks.push({ type: "COMMENT", value: src.slice(start, i), pos: start });
       continue;
     }
     if (isDigit(c) || (c === "." && isDigit(src[i + 1]))) {
@@ -63,13 +77,17 @@ export function tokenize(src) {
       while (i < n && (isDigit(src[i]) || src[i] === ".")) s += src[i++];
       if ((s.match(/\./g) || []).length > 1)
         throw new LangError(`不正な数値 '${s}'`, start);
-      toks.push({ type: "NUM", value: parseFloat(s), pos: start });
+      // raw（元の字面）も保持: フォーマッタが 1.0 や .5 を変えずに出すため。
+      toks.push({ type: "NUM", value: parseFloat(s), raw: s, pos: start });
       continue;
     }
     if (isIdStart(c)) {
       let s = "";
       while (i < n && isIdPart(src[i])) s += src[i++];
-      toks.push({ type: "ID", value: s, pos: start });
+      // 言語は大小文字を区別しない（SYNESTA は大文字表示が前提＝`PIXEL` と `pixel` が
+      // 同じ見た目になるため、識別子は小文字へ畳んで一致させる）。整形(keepComments)では
+      // 元の字面を保つ（保存テキストの大小を変えない＝表示と一致）。
+      toks.push({ type: "ID", value: keepComments ? s : s.toLowerCase(), pos: start });
       continue;
     }
     if (OPS.has(c)) {
@@ -104,6 +122,11 @@ export function tokenize(src) {
     }
     if (c === "=") {
       toks.push({ type: "EQ", pos: start });
+      i++;
+      continue;
+    }
+    if (c === ":") {
+      toks.push({ type: "COLON", pos: start });
       i++;
       continue;
     }

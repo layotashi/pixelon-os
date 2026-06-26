@@ -14,7 +14,7 @@ app/
   easing_demo.js      ← EASING_DEMO ウィンドウ (イージングカーブ デモ)
   explorer.js         ← EXPLORER ウィンドウ (ファイルマネージャ)
   game_utils.js       ← ゲームアプリ共通ユーティリティ
-  genart.js           ← GENART ウィンドウ (生成的アート)
+  tessera.js          ← TESSERA ウィンドウ (1-bit 生成的アート言語＋出力。旧 GENART を統合)
   gradient_demo.js    ← GRAD_DEMO ウィンドウ (bayerGradRect デモ)
   ascii_art_demo.js   ← AA_DEMO ウィンドウ (ASCII Art 変換デモ)
   graze.js            ← GRAZE ウィンドウ (弾幕サバイバル)
@@ -40,7 +40,7 @@ app/
 ```
 app.js → config, core/, wm/, wallpaper, capture, input_overlay, vram_dump, audio/transport
          + 副作用 import: settings, notepad, lifegame, paint, gradient_demo, easing_demo,
-                          ascii_art_demo, about, breakout, graze, genart, explorer, studio/studio
+                          ascii_art_demo, about, breakout, graze, tessera, explorer, studio/studio
 
 studio/studio.js → audio/transport, studio/synth_panel, studio/piano_roll, wm/, ui/
 
@@ -328,21 +328,23 @@ Catch & Aim・スマッシュ・パワーアップ・コンボチェイン・ブ
 - フォーカスモード — 弾が近いと当たり判定 (1×1) を可視化
 - 残像・シェイク・反転エフェクト
 
-### genart.js — GENART ウィンドウ (~1890 行)
+### tessera.js — TESSERA ウィンドウ
 
-9 種の生成的アートアルゴリズムを 1-bit キャンバス (256×192) にリアルタイム漸進描画するアプリです。
+SYNESTA 唯一の generative-art アプリ。1-bit 前提の小言語 **Tessera**（`lang/`、拡張子 `.tess`）で
+コードを書き、右でライブプレビューしながら作品を作る。旧 GENART（プリセット＋ノブのノーコード）は
+廃止し、その算法を `.tess` サンプル（学習用 `/TESSERA/LEARN` ＋ 作例 `/TESSERA/GALLERY`）へ、
+出力パイプラインを本アプリへ移設・一本化した。
 
-**アルゴリズム:**
+**できること:**
 
-- FLOW — ノイズ場パーティクル
-- REACT — Gray-Scott 反応拡散
-- ATTRACT — カオス力学系アトラクタ (Clifford / De Jong)
-- DLA — 拡散律速凝集
-- LSYS — L-System 植物フラクタル
-- VORONOI — ボロノイテッセレーション
-- WAVE — 波動干渉モアレ
-- SPIRAL — 黄金螺旋
-- AUTOMATA — Wolfram 1D→2D セルラーオートマトン
+- Tier0 場 `f(x,y,t)` / 値ブロック、Tier1 `draw{}`、Tier2 状態場 `field{}`（反応拡散・CA）。
+- **設定はすべてコードの設定ディレクティブ**で宣言: `size:` `pixel:` `pad:` `fps:` `seed:` `view:`。
+  表示方式（dither/ascii/hatch/halftone/braille ＝ 1-bit で映える「面」系）は `view:` で指定。画面のコントロールは
+  「書き出し形式 + DL」のみ＝最小。プレビューは `size:` のアスペクト比を反映。
+- 出力: コード宣言の `size` ちょうどに PNG・GIF・MP4 を書き出し（Ctrl+E / DL）。合成・符号化は共有
+  `core/art_export.js`、場 → 1-bit は `core/field_render.js` / `core/ascii_art.js`。
+- ショートカット: Ctrl+E 書き出し / Ctrl+R シード振り直し（`seed:` をコード内で更新）/ Shift+Alt+F 整形 /
+  Ctrl+S 保存。VFS 連携（`.tess` 保存/読込、EXPLORER から開く）。
 
 ### easing_demo.js — イージングデモウィンドウ (~290 行)
 

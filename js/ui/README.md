@@ -99,6 +99,7 @@ WidgetGroup — Widget 配列の描画・入力・フォーカス管理を一括
 - `WidgetGroup.setWmCallbacks({ setTooltip, requestCursor })` — WM コールバック注入
 - `WidgetGroup.getFocused()` / `WidgetGroup.clearFocus()` — フォーカス管理
 - `WidgetGroup.flushPopups()` / `WidgetGroup.hasOpenPopup()` — ポップアップ管理
+- `WidgetGroup.dispatchPopupInput(screenX, screenY, ev)` — 展開中ポップアップの所有グループへ画面座標イベントを直接配信 (描画と対称の全面入力ルーティング)
 - `WidgetGroup.hasTextInputFocus()` — テキスト入力フォーカス判定
 
 ### widgets/ — ウィジェットクラス群
@@ -194,7 +195,7 @@ UI が必要とする外部機能 (gpu / font / icon / input / textIcon / dither
 
 Save / Open モードのファイル選択モーダルダイアログです。  
 VfsBrowser + TextBox + PushButton を組み合わせ、WM のモーダルウィンドウとして表示されます。  
-Explorer / GENART / Settings 等から共通で利用されます。
+Explorer / TESSERA / Settings 等から共通で利用されます。
 
 **主要 API:**
 

@@ -102,6 +102,8 @@ async function boot() {
       flushPopups: () => WidgetGroup.flushPopups(),
       hasOpenPopup: () => WidgetGroup.hasOpenPopup(),
       hasTextInputFocus: () => WidgetGroup.hasTextInputFocus(),
+      dispatchPopupInput: (sx, sy, ev) =>
+        WidgetGroup.dispatchPopupInput(sx, sy, ev),
     });
     WidgetGroup.setWmCallbacks({
       setTooltip: WM.wmSetTooltip,

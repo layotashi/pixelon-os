@@ -241,6 +241,58 @@ export function setPopupActive(val) {
   _popupActive = val;
 }
 
+// ── ポップアップ所有グループ (全面オーバーレイ入力ルーティング用) ──
+//
+// ポップアップは flushPopups() でウィンドウ/ウィジェット領域の外まで全面に
+// オーバーレイ描画される。一方アプリの入力は領域ごとにルーティングされうる
+// (例: TESSERA の出力パネル vs PREVIEW)。この非対称があると、ポップアップが
+// ウィジェット領域外へ張り出した部分の項目をホバー/クリックできない。
+//
+// それを根本から解くため、ポップアップを開いている WidgetGroup と、その最終
+// 描画原点 (絶対座標) を登録しておき、WM が画面座標のイベントを「描画と対称に」
+// 所有グループへ直接配信する (dispatchPopupInput)。アプリの領域分岐は介さない。
+
+/** @type {{ update: function } | null} ポップアップを開いている WidgetGroup */
+let _popupOwner = null;
+/** @private 所有グループの最終描画原点 (絶対座標) */
+let _popupOriginX = 0;
+let _popupOriginY = 0;
+
+/**
+ * ポップアップ所有グループとその描画原点 (絶対座標) を登録する。
+ * WidgetGroup.draw() が、開いているポップアップを検出したときに呼ぶ。
+ * @param {{ update: function }} group  所有 WidgetGroup
+ * @param {number} originX  最終描画原点 X (絶対座標)
+ * @param {number} originY  最終描画原点 Y (絶対座標)
+ */
+export function setPopupOwner(group, originX, originY) {
+  _popupOwner = group;
+  _popupOriginX = originX;
+  _popupOriginY = originY;
+}
+
+/**
+ * 展開中ポップアップの所有グループへ、画面座標のイベントを直接配信する。
+ *
+ * グループが update() で期待するローカル座標は「画面座標 − 描画原点」に一致する
+ * (draw の原点と update のローカル座標原点は常に同一)。よって描画原点さえ
+ * 覚えておけば、領域ルーティングを経由せず正しい座標で配信できる。
+ *
+ * @param {number} screenX  画面 (VRAM) 絶対 X
+ * @param {number} screenY  画面 (VRAM) 絶対 Y
+ * @param {object} evBase  type 等を含むイベントの素
+ * @returns {boolean}  所有グループへ配信したら true (未登録なら false)
+ */
+export function dispatchPopupInput(screenX, screenY, evBase) {
+  if (!_popupOwner) return false;
+  _popupOwner.update({
+    ...evBase,
+    localX: screenX - _popupOriginX,
+    localY: screenY - _popupOriginY,
+  });
+  return true;
+}
+
 /** テキスト入力系ウィジェットにフォーカスがあるかを返す */
 export function hasTextInputFocus() {
   return _focusedWidget !== null && _focusedWidget.isTextInput;

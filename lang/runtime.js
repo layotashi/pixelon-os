@@ -20,7 +20,11 @@ import { setSeed } from "./stdlib.js";
  * @throws {LangError} 構文/評価エラー（message, pos を持つ）
  */
 export function compileField(src) {
-  const ast = parse(src); // 構文エラーはここで投げる
+  return compileFieldAst(parse(src)); // 構文エラーは parse で投げる
+}
+
+/** 既に解析済みの式 AST から場 runner を作る（compile が view 抽出後に使う）。 */
+function compileFieldAst(ast) {
   const env = { vars: { x: 0, y: 0, t: 0, seed: 0 } };
 
   function sample(x, y, t = 0, seed = 0) {
@@ -51,18 +55,162 @@ export function compileField(src) {
 }
 
 /**
- * プログラムをコンパイルし、形（場/描画）を自動判別した runner を返す。
- * 両モードとも render(surface, t, seed) を持つ（playground はこれだけ呼ぶ）。
+ * Tier2: 状態を持つ場 `field { … }` を runner にする（単一/多チャンネル）。
+ *
+ * 各セルがチャンネルごとにスカラー状態を持ち、毎フレーム step で更新する
+ * （ping-pong バッファ・同期更新：全チャンネルの next を旧 curr から計算→一括 swap）。
+ *   - 定数 (consts): フレーム単位で 1 回評価（env は {t, seed}。x,y 不可＝パラメータ）。
+ *   - init: (定数, x, y, seed) → 各チャンネルの初期状態。
+ *   - step: (定数, 全チャンネルの現在値, x, y, t) ＋近傍 lap()/nbr()/sum8()。
+ *           近傍は「いま評価中のチャンネル」の旧バッファを wrap（トーラス）参照する。
+ *   - show: (定数, 全チャンネルの現在値, x, y, t) → 表示 level。
+ * 単一チャンネル(v1)は channels=[{name:"s",…}] として同じ経路で動く。
+ * @param {{consts:Array, channels:Array, show:object}} prog
+ * @returns {{ render:(surface:object, t?:number, seed?:number)=>void, kind:string }}
+ */
+function compileCells(prog) {
+  const chans = prog.channels; // [{ name, init, step }]
+  const consts = prog.consts || [];
+  const N = chans.length;
+
+  let W = 0,
+    H = 0,
+    curr = null, // Float32Array[N]
+    next = null, // Float32Array[N]
+    inited = false,
+    lastSeed = null;
+
+  function alloc(w, h) {
+    W = w;
+    H = h;
+    curr = chans.map(() => new Float32Array(w * h));
+    next = chans.map(() => new Float32Array(w * h));
+  }
+
+  /** 定数をフレーム単位で評価（後の定数は前の定数を参照可）→ env.vars へマージ用 */
+  function evalConsts(vars) {
+    for (const c of consts) vars[c.name] = evalNode(c.expr, { vars });
+    return vars;
+  }
+
+  function initState(seed) {
+    setSeed(seed);
+    const env = { vars: evalConsts({ t: 0, seed }) };
+    for (let yy = 0; yy < H; yy++) {
+      const ny = H > 1 ? yy / (H - 1) : 0;
+      for (let xx = 0; xx < W; xx++) {
+        const idx = yy * W + xx;
+        env.vars.x = W > 1 ? xx / (W - 1) : 0;
+        env.vars.y = ny;
+        for (let ci = 0; ci < N; ci++)
+          curr[ci][idx] = evalNode(chans[ci].init, env);
+      }
+    }
+    inited = true;
+    lastSeed = seed;
+  }
+
+  function step(t, seed) {
+    setSeed(seed);
+    let xx = 0,
+      yy = 0,
+      curBuf = null, // いま評価中チャンネルの旧バッファ
+      curS = 0; // いま評価中チャンネルの現在セル値
+    const at = (gx, gy) => {
+      gx = ((gx % W) + W) % W;
+      gy = ((gy % H) + H) % H;
+      return curBuf[gy * W + gx];
+    };
+    // funcs は 1 度だけ作り、curBuf/curS/xx/yy の現在値をクロージャで参照（割当ゼロ）。
+    // 近傍は「いま評価中のチャンネル」の旧バッファを wrap（トーラス）参照する。
+    const funcs = {
+      nbr: (dx, dy) => at(xx + Math.round(dx), yy + Math.round(dy)),
+      lap: () =>
+        at(xx - 1, yy) + at(xx + 1, yy) + at(xx, yy - 1) + at(xx, yy + 1) -
+        4 * curS,
+      sum8: () =>
+        at(xx - 1, yy - 1) +
+        at(xx, yy - 1) +
+        at(xx + 1, yy - 1) +
+        at(xx - 1, yy) +
+        at(xx + 1, yy) +
+        at(xx - 1, yy + 1) +
+        at(xx, yy + 1) +
+        at(xx + 1, yy + 1),
+    };
+    const env = { vars: evalConsts({ t, seed }), funcs };
+    for (yy = 0; yy < H; yy++) {
+      const ny = H > 1 ? yy / (H - 1) : 0;
+      for (xx = 0; xx < W; xx++) {
+        const idx = yy * W + xx;
+        env.vars.x = W > 1 ? xx / (W - 1) : 0;
+        env.vars.y = ny;
+        // 全チャンネルの現在値を env へ（同期更新：step は旧 curr のみ参照）
+        for (let ci = 0; ci < N; ci++) env.vars[chans[ci].name] = curr[ci][idx];
+        for (let ci = 0; ci < N; ci++) {
+          curBuf = curr[ci];
+          curS = curBuf[idx];
+          next[ci][idx] = evalNode(chans[ci].step, env);
+        }
+      }
+    }
+    for (let ci = 0; ci < N; ci++) {
+      const tmp = curr[ci];
+      curr[ci] = next[ci];
+      next[ci] = tmp;
+    }
+  }
+
+  function render(surface, t = 0, seed = 0) {
+    const w = surface.width();
+    const h = surface.height();
+    if (!inited || w !== W || h !== H || seed !== lastSeed) {
+      alloc(w, h);
+      initState(seed);
+    }
+    step(t, seed);
+    // show: 現在状態 → 表示 level
+    setSeed(seed);
+    const out = new Float32Array(W * H);
+    const env = { vars: evalConsts({ t, seed }) };
+    for (let yy = 0; yy < H; yy++) {
+      const ny = H > 1 ? yy / (H - 1) : 0;
+      for (let xx = 0; xx < W; xx++) {
+        const idx = yy * W + xx;
+        env.vars.x = W > 1 ? xx / (W - 1) : 0;
+        env.vars.y = ny;
+        for (let ci = 0; ci < N; ci++) env.vars[chans[ci].name] = curr[ci][idx];
+        out[idx] = evalNode(prog.show, env);
+      }
+    }
+    surface.blitField(out, W, H);
+    surface.present();
+  }
+
+  return { kind: "cells", render };
+}
+
+/**
+ * プログラムをコンパイルし、形（場/描画/状態場）を自動判別した runner を返す。
+ * 全モードとも render(surface, t, seed) を持つ（playground はこれだけ呼ぶ）。
  *  - 場(field): 全セルに式を評価して 1-bit へ（毎フレーム全面更新）。
  *  - 描画(draw): draw ブロックを実行し命令を発行（自動クリアなし＝蓄積可）。
+ *  - 状態場(cells): field{init/step/show}。状態を保持し毎フレーム step（反応拡散/CA/成長）。
+ * 返り値には設定ディレクティブ `config`（{ view, size, pixel, pad, fps, seed }。未指定は null）が
+ * 付く。`view` も後方互換で別途公開（= config.view）。いずれもコアはラスタライズ・適用せず、
+ * ホスト（surface / 出力）が既定値・範囲とともに解釈する＝表示・出力はホストの責務のまま。
  * @param {string} src
- * @returns {{ render:(surface:object, t?:number, seed?:number)=>void, kind:string }}
+ * @returns {{ render:Function, kind:string, view:object|null, config:object }}
  */
 export function compile(src) {
   const prog = parseProgram(src); // 構文エラーはここで投げる
+  const view = prog.view || null;
+  const config = prog.config;
   if (prog.kind === "draw") {
     return {
       kind: "draw",
+      view,
+      config,
       render(surface, t = 0, seed = 0) {
         setSeed(seed);
         execDraw(prog.body, surface, t, seed);
@@ -70,5 +218,6 @@ export function compile(src) {
       },
     };
   }
-  return { kind: "field", ...compileField(src) };
+  if (prog.kind === "cells") return { ...compileCells(prog), view, config };
+  return { kind: "field", view, config, ...compileFieldAst(prog.expr) };
 }

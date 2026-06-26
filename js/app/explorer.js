@@ -29,6 +29,7 @@ import { drawText, GLYPH_W, GLYPH_H } from "../core/font.js";
 import { keyDown } from "../core/input.js";
 import * as VFS from "../core/vfs.js";
 import { notepadOpenFile } from "./notepad.js";
+import { tesseraOpenFile } from "./tessera.js";
 import { paintOpenFile } from "./paint.js";
 
 const APP_NAME = "EXPLORER";
@@ -50,12 +51,14 @@ const FILE_ASSOC = {
   ".md": "NOTEPAD",
   ".log": "NOTEPAD",
   ".pbm": "PAINT",
+  ".tess": "TESSERA",
 };
 
 /** 拡張子に応じたオープンハンドラ */
 const FILE_HANDLERS = {
   NOTEPAD: notepadOpenFile,
   PAINT: paintOpenFile,
+  TESSERA: tesseraOpenFile,
 };
 
 /** ファイル名から拡張子を取得 (小文字, 例: ".txt") */
