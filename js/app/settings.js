@@ -10,7 +10,7 @@ import * as Config from "../config.js";
 import * as Wallpaper from "../wallpaper.js";
 import { setSystemSfxEnabled } from "../core/sfx.js";
 import { copyDefaultsToClipboard } from "../core/defaults.js";
-import { basename, readDir, parentPath, joinPath } from "../core/vfs.js";
+import { basename, readDir, parentPath, joinPath, readFile } from "../core/vfs.js";
 import { wmOpen, wmRegister, wmSetContentSize } from "../wm/index.js";
 import {
   Label,
@@ -71,6 +71,8 @@ let lblImagePath, lblImagePathValue, btnBrowse;
 let lblImageFile, ddImageFile;
 let lblImageFill, ddImageFill;
 let imageDir = "/Pictures/Wallpapers";
+let lblTessPath, lblTessPathValue, btnTessBrowse;
+let tessDir = "/Sketches";
 
 // ── EFFECTS (旧 TUNING) ウィジェット ──
 let lblVignette, tglVignette;
@@ -86,8 +88,8 @@ let vigRows, diagRows;
 let maxLabelWidth = 0;
 /** @type {import("../ui/index.js").Label[]} */
 let allLabels = [];
-let customWidgets, solidWidgets, imageWidgets;
-let bgRow, fgRow, bayerRow, levelRow, imagePathRow, imageFileRow, imageFillRow;
+let customWidgets, solidWidgets, imageWidgets, tesseraWidgets;
+let bgRow, fgRow, bayerRow, levelRow, imagePathRow, imageFileRow, imageFillRow, tessPathRow;
 let sep1, sep2, sep3;
 
 // ── タブ ──
@@ -326,8 +328,8 @@ function _initWidgets() {
 
   // ── Background mode ──
   lblBackground = new Label(0, 0, "Background:");
-  ddBackground = new DropDown(0, 0, ["Solid", "Image"], 0, (i) => {
-    const modes = ["solid", "image"];
+  ddBackground = new DropDown(0, 0, ["Solid", "Image", "Tessera"], 0, (i) => {
+    const modes = ["solid", "image", "tessera"];
     Wallpaper.setBackgroundMode(modes[i]);
     refreshBackground();
   });
@@ -389,6 +391,26 @@ function _initWidgets() {
       Wallpaper.setImagePath(path);
     }
   });
+
+  // ── Tessera sketch (.tess を背景に live-render) ──
+  lblTessPath = new Label(0, 0, "Sketch:");
+  lblTessPathValue = new Label(0, 0, tessDir);
+  btnTessBrowse = new PushButton(0, 0, "...", () => {
+    openFileDialog("open", {
+      title: "SELECT WALLPAPER SKETCH",
+      defaultPath: tessDir,
+      filter: [".tess"],
+      onResult: (path) => {
+        if (!path) return;
+        const src = readFile(path);
+        if (src != null && Wallpaper.setTessSource(src)) {
+          tessDir = parentPath(path);
+          lblTessPathValue.text = basename(path);
+        }
+      },
+    });
+  });
+  btnTessBrowse.tooltip = "Browse VFS for a .tess sketch";
 
   lblImageFill = new Label(0, 0, "Fill:");
   ddImageFill = new DropDown(
@@ -492,6 +514,7 @@ function _initWidgets() {
     lblLevel,
     lblImagePath,
     lblImageFile,
+    lblTessPath,
     lblImageFill,
     lblVignette,
     lblVigStrength,
@@ -525,6 +548,7 @@ function _initWidgets() {
   levelRow = HBox([lblLevel, bayerPickerSolid]);
   imagePathRow = HBox([lblImagePath, lblImagePathValue, btnBrowse]);
   imageFileRow = HBox([lblImageFile, ddImageFile]);
+  tessPathRow = HBox([lblTessPath, lblTessPathValue, btnTessBrowse]);
   imageFillRow = HBox([lblImageFill, ddImageFill]);
 
   // 現在の全設定 (SETTINGS + TUNING) を出荷時デフォルト用にクリップボードへ書き出す。
@@ -577,6 +601,7 @@ function _initWidgets() {
     levelRow,
     imagePathRow,
     imageFileRow,
+    tessPathRow,
     imageFillRow,
   ]);
   const systemPage = VBox([
@@ -590,7 +615,8 @@ function _initWidgets() {
   // ── セクション可視制御の対象 ──
   customWidgets = [bgRow, fgRow];
   solidWidgets = [bayerRow, levelRow];
-  imageWidgets = [imagePathRow, imageFileRow, imageFillRow];
+  imageWidgets = [imagePathRow, imageFileRow];
+  tesseraWidgets = [tessPathRow];
 
   // ── タブバー + 現在タブのルートを構築 ──
   tabBar = new TabBar(0, 0, TAB_LABELS, (i) => {
@@ -623,6 +649,9 @@ function refreshBackground() {
   const mode = Wallpaper.getBackgroundMode();
   for (const row of solidWidgets) row.visible = mode === "solid";
   for (const row of imageWidgets) row.visible = mode === "image";
+  for (const row of tesseraWidgets) row.visible = mode === "tessera";
+  // Fill（マット）は image / tessera 共通
+  imageFillRow.visible = mode === "image" || mode === "tessera";
 }
 
 /** 背景関連ウィジェットを壁紙設定と同期する (initWallpaper 後に 1 回)。 */
@@ -634,7 +663,7 @@ function syncBgWidgets() {
 
   // Background ドロップダウン
   const curMode = Wallpaper.getBackgroundMode();
-  ddBackground.selectedIndex = curMode === "image" ? 1 : 0;
+  ddBackground.selectedIndex = curMode === "image" ? 1 : curMode === "tessera" ? 2 : 0;
   ddImageFill.selectedIndex = Wallpaper.getImageFillBit();
 
   // Appearance ウィジェット同期

@@ -116,10 +116,21 @@ export function saveResolution(w, h) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 const K_BG_MODE = "bgMode";
+const K_BG_TESS_SRC = "bgTessSource";
 
-/** 背景モードを保存する ("solid" | "image") */
+/** 背景モードを保存する ("solid" | "image" | "tessera") */
 export function saveBgMode(mode) {
   save(K_BG_MODE, mode);
+}
+
+/** tessera 壁紙の .tess ソース（スナップショット）を保存する */
+export function saveBgTessSource(src) {
+  save(K_BG_TESS_SRC, src);
+}
+
+/** 保存された tessera 壁紙の .tess ソースを読み出す */
+export function loadBgTessSource(def) {
+  return load(K_BG_TESS_SRC, def);
 }
 
 /** 保存された背景モードを読み出す */

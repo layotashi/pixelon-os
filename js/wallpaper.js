@@ -2,9 +2,10 @@
  * @module wallpaper
  * wallpaper.js — 壁紙管理モジュール
  *
- * 2 モード:
- *   "solid" — Bayer ディザ階調 (4×4 / 8×8)
- *   "image" — VFS 上の PBM ファイルを 1-bit バッファとして表示
+ * 3 モード:
+ *   "solid"   — Bayer ディザ階調 (4×4 / 8×8)
+ *   "image"   — VFS 上の PBM ファイルを 1-bit バッファとして表示
+ *   "tessera" — TESSERA の場 f(x,y,t) をデスクトップに live-render（静止/アニメ自動判別）
  *
  * 毎フレーム drawWallpaper() で VRAM にコピーする。
  */
@@ -14,6 +15,8 @@ import { vram } from "./core/gpu.js";
 import { BAYER_4x4, BAYER_8x8 } from "./core/dither.js";
 import { readFile } from "./core/vfs.js";
 import { decodePBM } from "./core/pbm.js";
+import { renderField } from "./core/field_render.js";
+import { compile } from "../lang/runtime.js";
 
 import * as Storage from "./core/storage.js";
 
@@ -39,6 +42,15 @@ let imageFillBit = 1;
 /** デコード済み 1-bit バッファ (VRAM_WIDTH × VRAM_HEIGHT に中央配置) */
 let imageBits = null;
 
+// ── "tessera" モード（.tess を live-render）──
+let tessSource = null; // 現在の .tess ソース（スナップショット）
+let tessProgram = null; // compile 結果（render/config）
+let tessConfig = null; // 解決済み { seed, period, fps, aspect, viewMode, viewParams }
+let tessBits = null; // 直近に描いた 1-bit（VRAM サイズ）
+let tessFrame = -1; // 直近に描いた fps フレーム番号
+let tessT0 = 0; // アニメ開始 wall-clock(ms)
+let tessStatic = false; // t 非依存＝静止画（1 回描いてキャッシュ）
+
 /** initWallpaper 完了フラグ */
 let wallpaperReady = false;
 
@@ -54,6 +66,11 @@ onResize(() => {
   cachedSolidMode = "";
   // PBM を新解像度で再配置
   if (imagePath) loadImageFromVfs(imagePath);
+  // tessera は新 VRAM サイズで再描画（領域寸法が変わる）
+  if (wallpaperMode === "tessera" && tessProgram) {
+    tessFrame = -1;
+    tessBits = renderTessFrame(0);
+  }
 });
 
 /** solidLevel に応じてタイル行を再生成する。 */
@@ -115,6 +132,108 @@ function loadImageFromVfs(path) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  Tessera 場 live-render (VFS の .tess を背景に)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const TESS_FPS_OPTIONS = [5, 10, 20, 25, 50, 100];
+const TESS_TAU = Math.PI * 2;
+// view: 方式 → field_render パラメータ名（dither/braille は ditherSize を使う）。
+const TESS_VIEW_PARAM = {
+  dither: "ditherSize",
+  braille: "ditherSize",
+  hatch: "hatchPitch",
+  halftone: "halftoneCell",
+};
+const TESS_MODE_PARAMS = { ditherSize: 2, hatchPitch: 4, halftoneCell: 6 };
+
+/** compile 済み config（不透明データ）を壁紙用の実効設定へ解決する。 */
+function resolveTessConfig(cfg) {
+  const seed = (cfg.seed != null ? cfg.seed : 0) | 0;
+  const period = cfg.period != null && cfg.period > 0 ? cfg.period : TESS_TAU;
+  let fps = cfg.fps != null ? cfg.fps : 20;
+  fps = TESS_FPS_OPTIONS.reduce((a, b) =>
+    Math.abs(b - fps) < Math.abs(a - fps) ? b : a,
+  );
+  const aspect = cfg.canvas && cfg.canvas.h ? cfg.canvas.w / cfg.canvas.h : 1;
+  // dither/hatch/halftone/braille は field_render。ascii 等は dither へフォールバック。
+  let viewMode = "dither";
+  let viewParams = TESS_MODE_PARAMS;
+  if (cfg.view && TESS_VIEW_PARAM[cfg.view.mode]) {
+    viewMode = cfg.view.mode;
+    viewParams = { ...TESS_MODE_PARAMS };
+    if (cfg.view.args && cfg.view.args.length) {
+      viewParams[TESS_VIEW_PARAM[viewMode]] = cfg.view.args[0];
+    }
+  }
+  return { seed, period, fps, aspect, viewMode, viewParams };
+}
+
+/**
+ * 場を時刻 t で 1 フレーム描く。canvas アスペクトを VRAM 内に最大内接（中央）させ、
+ * その領域を画面解像度で評価（チャンキー化しない）→ 余白は imageFillBit で埋める。
+ * @returns {Uint8Array} VRAM サイズの 1-bit
+ */
+function renderTessFrame(t) {
+  const { seed, aspect, viewMode, viewParams } = tessConfig;
+  let rw, rh;
+  if (aspect >= VRAM_WIDTH / VRAM_HEIGHT) {
+    rw = VRAM_WIDTH;
+    rh = Math.max(1, Math.round(rw / aspect));
+  } else {
+    rh = VRAM_HEIGHT;
+    rw = Math.max(1, Math.round(rh * aspect));
+  }
+  const region = new Uint8Array(rw * rh);
+  const surf = {
+    width: () => rw,
+    height: () => rh,
+    blitField: (fbuf, w, h) => renderField(fbuf, w, h, region, viewMode, viewParams),
+    present: () => {},
+  };
+  tessProgram.render(surf, t, seed);
+
+  const bits = new Uint8Array(VRAM_WIDTH * VRAM_HEIGHT);
+  bits.fill(imageFillBit);
+  const ox = (VRAM_WIDTH - rw) >> 1;
+  const oy = (VRAM_HEIGHT - rh) >> 1;
+  for (let y = 0; y < rh; y++) {
+    const dy = oy + y;
+    if (dy < 0 || dy >= VRAM_HEIGHT) continue;
+    bits.set(region.subarray(y * rw, y * rw + rw), dy * VRAM_WIDTH + ox);
+  }
+  return bits;
+}
+
+const eqBits = (a, b) => {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+};
+
+/**
+ * ソースを compile して tessera 描画状態を準備する（モード切替・保存はしない）。
+ * t=0 と t=period*0.37 が一致すれば静止画と判定し 1 回描いてキャッシュする。
+ * @returns {boolean} compile 成功なら true
+ */
+function prepTess(src) {
+  let prog;
+  try {
+    prog = compile(src);
+  } catch {
+    return false;
+  }
+  tessProgram = prog;
+  tessConfig = resolveTessConfig(prog.config || {});
+  tessT0 = performance.now();
+  tessFrame = -1;
+  const a = renderTessFrame(0);
+  const b = renderTessFrame(tessConfig.period * 0.37);
+  tessStatic = eqBits(a, b);
+  tessBits = a;
+  return true;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  公開 API
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -150,6 +269,13 @@ export async function initWallpaper() {
       imagePath = savedPath;
     }
     // 読み込み失敗時は solid にフォールバック
+  } else if (savedMode === "tessera") {
+    const savedSrc = Storage.loadBgTessSource(null);
+    if (savedSrc && prepTess(savedSrc)) {
+      wallpaperMode = "tessera";
+      tessSource = savedSrc;
+    }
+    // compile 失敗時は solid にフォールバック
   }
 
   wallpaperReady = true;
@@ -175,6 +301,24 @@ export function drawWallpaper() {
     }
     return;
   }
+  // ── tessera: 場 f(x,y,t) を live-render ──
+  if (wallpaperMode === "tessera") {
+    if (tessProgram) {
+      if (!tessStatic) {
+        const { fps, period } = tessConfig;
+        const frameIdx = Math.floor(((performance.now() - tessT0) / 1000) * fps);
+        if (frameIdx !== tessFrame || tessBits === null) {
+          tessBits = renderTessFrame((frameIdx / fps) % period);
+          tessFrame = frameIdx;
+        }
+      }
+      if (tessBits) vram.set(tessBits);
+      else vram.fill(imageFillBit);
+    } else {
+      vram.fill(imageFillBit);
+    }
+    return;
+  }
   // ── image: VFS 上の PBM ──
   if (imageBits) {
     vram.set(imageBits);
@@ -188,17 +332,17 @@ export function isWallpaperReady() {
   return wallpaperReady;
 }
 
-/** 現在の背景モードを返す ("solid" | "image") */
+/** 現在の背景モードを返す ("solid" | "image" | "tessera") */
 export function getBackgroundMode() {
   return wallpaperMode;
 }
 
 /**
  * 背景モードを切り替える。
- * @param {"solid"|"image"} mode
+ * @param {"solid"|"image"|"tessera"} mode
  */
 export function setBackgroundMode(mode) {
-  if (mode !== "solid" && mode !== "image") return;
+  if (mode !== "solid" && mode !== "image" && mode !== "tessera") return;
   if (mode === wallpaperMode) return;
 
   wallpaperMode = mode;
@@ -206,12 +350,32 @@ export function setBackgroundMode(mode) {
 
   if (mode === "solid") return;
 
-  // image: 保存済みパスがあればロード
-  if (imagePath) {
-    loadImageFromVfs(imagePath);
-  } else {
-    imageBits = null;
+  if (mode === "image") {
+    // 保存済みパスがあればロード
+    if (imagePath) loadImageFromVfs(imagePath);
+    else imageBits = null;
+    return;
   }
+
+  // tessera: 既存ソース（無ければ保存済み）を compile し直す
+  const src = tessSource || Storage.loadBgTessSource(null);
+  if (src && prepTess(src)) tessSource = src;
+  else tessProgram = null;
+}
+
+/**
+ * .tess ソースを壁紙に設定する（TESSERA「Set as wallpaper」/ SETTINGS から）。
+ * ソースはスナップショット保存し、デスクトップで f(x,y,t) を live-render する。
+ * @param {string} src  .tess ソース
+ * @returns {boolean} compile 成功なら true
+ */
+export function setTessSource(src) {
+  if (!prepTess(src)) return false;
+  tessSource = src;
+  wallpaperMode = "tessera";
+  Storage.saveBgMode("tessera");
+  Storage.saveBgTessSource(src);
+  return true;
 }
 
 /** Solid 背景の Bayer 階調を設定する (4x4: 0–16, 8x8: 0–64) */
@@ -261,14 +425,16 @@ export function getImagePath() {
   return imagePath;
 }
 
-/** Image 背景の未カバー領域を埋めるビットを設定する (0 | 1) */
+/** Image / Tessera 背景の未カバー領域（マット）を埋めるビットを設定する (0 | 1) */
 export function setImageFillBit(bit) {
   const nextBit = bit ? 1 : 0;
   if (nextBit === imageFillBit) return;
   imageFillBit = nextBit;
   Storage.saveBgImageFillBit(imageFillBit);
-  if (imagePath) {
-    loadImageFromVfs(imagePath);
+  if (imagePath) loadImageFromVfs(imagePath);
+  // 静止 tessera はキャッシュなのでマット変更を即反映（アニメは次フレームで反映）
+  if (wallpaperMode === "tessera" && tessProgram && tessStatic) {
+    tessBits = renderTessFrame(0);
   }
 }
 

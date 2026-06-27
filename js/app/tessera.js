@@ -49,6 +49,7 @@ import * as ArtExport from "../core/art_export.js";
 import { compile } from "../../lang/runtime.js";
 import { makeBufferSurface } from "../../lang/surface.js";
 import { format } from "../../lang/format.js";
+import * as Wallpaper from "../wallpaper.js";
 
 const APP_NAME = "TESSERA";
 const EXT = ".tess";
@@ -913,8 +914,20 @@ function exportArt() {
   }
 }
 
+/** ALT+W: 現在の場をデスクトップ背景に設定（ソースをスナップショット保存 → live-render）。 */
+function setWallpaper() {
+  if (!program) return; // コンパイル不能なソースは無視
+  const ok = Wallpaper.setTessSource(editor.getText());
+  statusText = ok ? "WALLPAPER SET" : "WALLPAPER: ERROR";
+  setTimeout(() => {
+    if (statusText === "WALLPAPER SET" || statusText === "WALLPAPER: ERROR") {
+      statusText = "";
+    }
+  }, 1500);
+}
+
 // 常時表示の凡例（ショートカットの発見性。パラメータはコードで指定する設計のため重要）。
-const LEGEND = "^E EXPORT  ^R RESEED  ^S SAVE  ^O OPEN  ALT+N NEW  ALT+SHIFT+F FORMAT";
+const LEGEND = "^E EXPORT  ^R RESEED  ^S SAVE  ^O OPEN  ALT+N NEW  ALT+W WALLPAPER  ALT+SHIFT+F FORMAT";
 const LEGEND_H = GLYPH_H + 4;
 
 function onDraw(cr) {
@@ -925,6 +938,7 @@ function onDraw(cr) {
     else if (ctrlDown("KeyO")) openFile();
     else if (ctrlDown("KeyE")) exportArt(); // 書き出し（コード宣言の size）
     else if (ctrlDown("KeyR")) rerollSeed(); // seed: をコード内で振り直す
+    else if (altDown("KeyW")) setWallpaper(); // 現在の場をデスクトップ背景に
     else if (altDown("KeyN")) newFile();
     else if (altShiftDown("KeyF")) formatEditor();
   }
@@ -1053,7 +1067,8 @@ WM.wmRegister(
         "Learn from /Sketches/Learn (numbered tutorial), browse /Sketches/Gallery. " +
         "Shortcuts: Alt+N new, Ctrl+O " +
         "open, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+E / DL export " +
-        "(PNG/GIF/MP4 at the declared size), Ctrl+R reseed, Shift+Alt+F format.",
+        "(PNG/GIF/MP4 at the declared size), Ctrl+R reseed, Alt+W set as " +
+        "desktop wallpaper (live-rendered), Shift+Alt+F format.",
       onRelayout: relayout,
     });
     refreshTitle();
