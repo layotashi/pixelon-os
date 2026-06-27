@@ -842,6 +842,18 @@ function setWallpaper() {
   }, 1500);
 }
 
+/**
+ * ツールバーを「エディタ左端〜プレビュー右端」の全幅に均等配分する（最初=エディタ左、
+ * 最後=プレビュー右）。トップバー右端を下のコンテンツと揃え、宙に浮く右端を無くす。
+ */
+function fitToolbar() {
+  if (!ctrlRow) return;
+  const target = editor.w + GAP + previewScale(asciiActive).w; // エディタ左〜プレビュー右
+  const btns = [ddFormat, btnExport, btnReseed, btnSave, btnOpen, btnNew, btnWallpaper];
+  const sumW = btns.reduce((s, b) => s + b.w, 0);
+  // ceil で target 以上に（端数はエディタ⇄プレビューの間隔へ回す＝右端ぴったり）。
+  ctrlRow.gap = Math.max(UI.FOCUS_MARGIN * 2, Math.ceil((target - sumW) / (btns.length - 1)));
+}
 
 function onDraw(cr) {
   // ── キーボードショートカット (フォーカス時のみ) ──
@@ -858,14 +870,16 @@ function onDraw(cr) {
 
   GPU.fillRect(cr.x, cr.y, cr.w, cr.h, 0); // 背景クリア
 
-  // ── トップツールバー + エディタ（左カラム）──
+  // ── トップツールバー（全幅に均等配分）+ エディタ（左カラム）──
+  fitToolbar();
   group.draw(cr);
 
-  // ── 右: ライブプレビュー（エディタの右・ツールバーの下。size アスペクト比を反映）──
-  // プレビュー枠は内容の 1px 外側に描く（drawRect(pvX-1,pvY-1,…)）。エディタ枠は
-  // drawRoundRect(editor.x,editor.y,…) で枠が widget 上端そのもの。枠ボーダー同士を
-  // 揃えるため pvY を +1（→ 枠上端 pvY-1 = editor.y）。
-  const pvX = cr.x + editor.x + editor.w + GAP;
+  // ── 右: ライブプレビュー（ツールバーの下。**右端をツールバー右端へ揃える**）──
+  // 枠は内容の 1px 外側に描く（drawRect(pvX-1,pvY-1,…)）ので、エディタ枠（drawRoundRect）と
+  // 上端を揃えるため pvY を +1。右端は ctrlRow.w に合わせ、エディタ⇄プレビュー間隔で吸収。
+  const pvW = previewScale(asciiActive).w;
+  const contentW = Math.max(ctrlRow.w, editor.w + GAP + pvW);
+  const pvX = cr.x + editor.x + contentW - pvW;
   const pvY = cr.y + editor.y + 1;
 
   if (program) {
@@ -918,13 +932,13 @@ function onInput(ev) {
 }
 
 function onMeasure() {
-  // トップツールバーが全幅に渡り、その下に [エディタ | プレビュー]。ウィンドウは
-  // 「ツールバー幅」と「エディタ + 実プレビュー幅」の広い方ちょうど（PV_BOX 予約で
-  // 余白を作らない＝プレビューが右下端に揃う）。
+  // トップツールバーは全幅に均等配分し、その下に [エディタ | プレビュー]。ウィンドウは
+  // エディタ + 実プレビュー幅ちょうど（プレビューが右下端に揃う）。
+  fitToolbar();
   const pv = previewScale(asciiActive);
   const contentW = Math.max(ctrlRow ? ctrlRow.w : 0, editor.w + GAP + pv.w);
   const w = editor.x + contentW + UI.FOCUS_MARGIN;
-  const bodyH = editor.y + Math.max(editor.h, pv.h); // プレビューはエディタと同じ上端
+  const bodyH = editor.y + Math.max(editor.h, pv.h); // プレビューはエディタと同じ上端で右寄せ
   const h = bodyH + UI.FOCUS_MARGIN;
   return { w, h };
 }
