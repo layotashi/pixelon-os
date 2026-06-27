@@ -33,7 +33,7 @@
  *   - Alt+N 新規 / Ctrl+O 開く / Ctrl+S 保存 / Ctrl+Shift+S 名前を付けて保存
  *   - Ctrl+E / DL で size ちょうどに PNG/GIF/MP4 書き出し。Ctrl+R で seed: を振り直す。
  *   - Shift+Alt+F で整形。未保存変更は破棄確認。サンプルは /Sketches/Learn（番号順
- *     チュートリアル）と /Sketches/Gallery（作例）に種まき。
+ *     チュートリアル）と /Sketches/Gallery/{Field,Draw,Cells}（形別の作例）に種まき。
  *   - EXPLORER から .tess をダブルクリックで開く（tesseraOpenFile）。
  */
 
@@ -79,7 +79,8 @@ sin(x*8 - t) * cos(y*8 + t*2) * 0.5 + 0.5`;
 
 /**
  * サンプルは 2 層: LEARN（番号順・1 概念ずつ・解説コメント付き＝見て文法を学ぶ）と
- * GALLERY（ショーケース＝高 ceiling の作例）。種まき先は LEARN_DIR / GALLERY_DIR。
+ * GALLERY（ショーケース＝高 ceiling の作例）。LEARN は LEARN_DIR、GALLERY は形別に
+ * GALLERY_DIR/{Field,Draw,Cells} へ種まきする（どの算法がどの形かを EXPLORER で一覧）。
  * コメント・空行は整形で保持されるので、コメントが学習ガイドとして機能する。
  * 座標は x,y ∈ [0,1]、t は経過秒。
  *
@@ -230,7 +231,11 @@ seed: 0
 
 `;
 
-const GALLERY_SAMPLES = [
+// GALLERY はパラダイム別にサブフォルダへ種まきする＝どのアルゴリズムがどの形になるかを
+// EXPLORER で一覧できる。将来 pure-field へ一本化するなら DRAW/CELLS 配列ごと消すだけ。
+
+// field: 純粋関数 f(x,y,t)→level（状態なし・任意の x,y,t を直接サンプル可）
+const GALLERY_FIELD = [
   {
     // WAVE: 複数点源の同心波の干渉。seed で点源位置と周波数が変わる
     file: "wave" + EXT,
@@ -338,6 +343,10 @@ w = fbm(x*3 + qx*2, y*3 + qy*2, 4)
     file: "worley" + EXT,
     src: HEADER + `1 - worley(x*6 + cos(t)*0.4, y*6 + sin(t)*0.4)`,
   },
+];
+
+// draw: point/line を発行する命令型（全ピクセルではなく疎な点/線＝アトラクタ系）
+const GALLERY_DRAW = [
   {
     // ATTRACT: de Jong カオス力学系。seed でガチャ・ノイズ場でごく僅かに揺らぐ点描。
     // params は seed で固定（t で morph させると非カオス領域を通過して構造が一瞬潰れ
@@ -371,7 +380,10 @@ draw {
   }
 }`,
   },
+];
 
+// cells: field{init/step/show} 状態を持つ漸化（前フレーム＋近傍＝反応拡散/CA）
+const GALLERY_CELLS = [
   {
     // GIERER-MEINHARDT: 活性 a / 抑制 h。斑点状チューリングパターン
     file: "gierer" + EXT,
@@ -696,7 +708,12 @@ function seedSamples() {
     }
   };
   seedInto(LEARN_DIR, LEARN_SAMPLES); // 番号順チュートリアル
-  seedInto(GALLERY_DIR, GALLERY_SAMPLES); // 作例ショーケース
+  // GALLERY は形(field/draw/cells)別にサブフォルダへ＝どの算法がどの形かを一覧できる
+  // （mkdir は非再帰なので親 GALLERY_DIR を先に作る）
+  VFS.mkdir(GALLERY_DIR);
+  seedInto(GALLERY_DIR + "/Field", GALLERY_FIELD);
+  seedInto(GALLERY_DIR + "/Draw", GALLERY_DRAW);
+  seedInto(GALLERY_DIR + "/Cells", GALLERY_CELLS);
 }
 
 // ── タイトル ──
@@ -1252,7 +1269,7 @@ WM.wmRegister(
         "field (init/step/show). All settings live in code as directives: " +
         "canvas: WxH, pad: N, fps: N, seed: N, period: sec, view: mode(args) " +
         "(pixel is fixed at 8 = chunky 1-bit). " +
-        "Learn from /Sketches/Learn (numbered tutorial), browse /Sketches/Gallery. " +
+        "Learn from /Sketches/Learn (numbered tutorial), browse /Sketches/Gallery/{Field,Draw,Cells}. " +
         "Shortcuts: Alt+N new, Ctrl+O " +
         "open, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+E / DL export " +
         "(PNG/GIF/MP4 at the declared size), Ctrl+R reseed, Shift+Alt+F format.",
