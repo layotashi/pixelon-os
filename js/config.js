@@ -210,12 +210,6 @@ export function onScaleChange(cb) {
   _scaleCallbacks.push(cb);
 }
 
-/**
- * 後方互換: 既存の `SCALE` 参照を維持するための読み取り専用エイリアス。
- * @deprecated getScale() を使うこと。
- */
-export { _scale as SCALE };
-
 // ── 製品情報 ──
 
 /** 製品名 */

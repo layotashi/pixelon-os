@@ -131,43 +131,6 @@ export function initVfs() {
   const stored = load(VFS_KEY, null);
   root = stored || createDefaultTree();
   if (!stored) persist();
-
-  // マイグレーション: 内容カテゴリ統一への改名（旧フォルダがあり新が無ければ rename）。
-  // SAMPLE の二重化を避けるため、追加ではなく移動でゴーストを残さない。
-  const rename = (from, to) => {
-    if (exists(from) && !exists(to)) move(from, to);
-  };
-  rename("/Images", "/Pictures"); // 画像カテゴリを Pictures へ
-  rename("/TESSERA", "/Sketches"); // .tess は Sketches へ
-  rename("/Sketches/LEARN", "/Sketches/Learn"); // 付属コンテンツを Title-case に
-  rename("/Sketches/GALLERY", "/Sketches/Gallery");
-
-  // /Pictures/Wallpapers を補完（fresh / 移行後とも）
-  ensureDir("/Pictures");
-  ensureDir("/Pictures/Wallpapers");
-}
-
-/**
- * ディレクトリが存在しなければ作成する (マイグレーション用)。
- * persist は呼ばない ― initVfs 末尾でまとめて保存される。
- * @param {string} path
- */
-function ensureDir(path) {
-  if (resolveNode(path)) return;
-  const name = path.split("/").filter(Boolean).pop();
-  const parentSeg = path.split("/").filter(Boolean).slice(0, -1);
-  const parentNode =
-    parentSeg.length === 0 ? root : resolveNode("/" + parentSeg.join("/"));
-  if (!parentNode || parentNode.type !== "dir") return;
-  const now = Date.now();
-  parentNode.children.push({
-    type: "dir",
-    name,
-    children: [],
-    createdAt: now,
-    modifiedAt: now,
-  });
-  persist();
 }
 
 /** ツリーを localStorage に永続化する */

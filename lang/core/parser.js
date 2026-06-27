@@ -558,7 +558,6 @@ function extractDirectives(toks) {
 /** プログラム全体を解析し形を判別して返す（設定ディレクティブ付き）。 */
 export function parseProgram(src) {
   const { config, rest } = extractDirectives(tokenize(src));
-  const view = config.view; // 後方互換（既存は prog.view を参照）
   const hasBlock = (kw) =>
     rest.some(
       (t, i) =>
@@ -567,7 +566,7 @@ export function parseProgram(src) {
         rest[i + 1] &&
         rest[i + 1].type === "LBRACE",
     );
-  if (hasBlock("draw")) return { kind: "draw", body: parseDraw(rest), view, config };
-  if (hasBlock("field")) return { kind: "cells", ...parseCells(rest), view, config };
-  return { kind: "field", expr: parseExprTokens(rest), view, config };
+  if (hasBlock("draw")) return { kind: "draw", body: parseDraw(rest), config };
+  if (hasBlock("field")) return { kind: "cells", ...parseCells(rest), config };
+  return { kind: "field", expr: parseExprTokens(rest), config };
 }

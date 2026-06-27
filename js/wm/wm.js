@@ -1442,7 +1442,6 @@ function recalcLayout(win) {
 /**
  * コンテンツサイズからウィンドウの外寸 (w, h) を算出する。
  * wmOpen / border ダブルクリック等で共通使用。
- * 外部からは wmCalcWindowSize としてもアクセス可能。
  *
  * 計算式 (recalcLayout の逆演算):
  *   w = cw + BORDER*2 + CONTENT_PADDING*2 + sbReserve
@@ -1470,9 +1469,6 @@ export function calcWindowSize(cw, ch, footer = false, scrollable = false) {
     ),
   };
 }
-
-/** @deprecated wmCalcWindowSize として re-export するためのエイリアス */
-export { calcWindowSize as wmCalcWindowSize };
 
 /**
  * ウィンドウのボディ内側 (コンテンツ描画可能領域) を返す。

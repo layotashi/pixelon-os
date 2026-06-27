@@ -126,7 +126,7 @@ export function calcShake(shakeT, currentState, suppressStates) {
   };
 }
 
-// ── SFX ヘルパー (実体は core/audio.js — 後方互換 re-export) ──
+// ── SFX ヘルパー (実体は core/audio.js。ゲームは game_utils 1 本で済むよう re-export) ──
 export { createSfxChannels, playSfx };
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

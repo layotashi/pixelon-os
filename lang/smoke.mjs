@@ -378,18 +378,18 @@ function check(name, cond) {
     v.args.every((a, i) => a === args[i]);
 
   const p1 = compile("view: dither(2)\nsin(x)");
-  check("view: field 形に付く", p1.kind === "field" && isView(p1.view, "dither", [2]));
+  check("view: field 形に付く", p1.kind === "field" && isView(p1.config.view, "dither", [2]));
   check("view: 本体の式は通る", approx(p1.sample(0, 0, 0), 0)); // sin(0)=0
 
   const p2 = compile("view: contour(7)\nfield{init:0\nstep:s\nshow:s}");
-  check("view: cells 形に付く", p2.kind === "cells" && isView(p2.view, "contour", [7]));
+  check("view: cells 形に付く", p2.kind === "cells" && isView(p2.config.view, "contour", [7]));
 
   const p3 = compile("view: dither(4)\ndraw{clear}");
-  check("view: draw 形に付く", p3.kind === "draw" && isView(p3.view, "dither", [4]));
+  check("view: draw 形に付く", p3.kind === "draw" && isView(p3.config.view, "dither", [4]));
 
-  check("view: 無いと null", compile("sin(x)").view === null);
-  check("view: 本体の後ろでも可", isView(compile("sin(x)\nview: dither(3)").view, "dither", [3]));
-  check("view: 複数引数", isView(compile("view: halftone(2, 8)\nsin(x)").view, "halftone", [2, 8]));
+  check("view: 無いと null", compile("sin(x)").config.view === null);
+  check("view: 本体の後ろでも可", isView(compile("sin(x)\nview: dither(3)").config.view, "dither", [3]));
+  check("view: 複数引数", isView(compile("view: halftone(2, 8)\nsin(x)").config.view, "halftone", [2, 8]));
 
   for (const [src, label] of [
     ["view: dither\nsin(x)", "no parens"],

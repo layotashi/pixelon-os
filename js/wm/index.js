@@ -20,7 +20,6 @@ export {
 
   // レイアウト
   wmSetWorkAreaTop,
-  wmCalcWindowSize,
 
   // ウィンドウ登録・操作
   wmRegister,

@@ -204,20 +204,18 @@ function compileCells(prog) {
  *  - 描画(draw): draw ブロックを実行し命令を発行（自動クリアなし＝蓄積可）。
  *  - 状態場(cells): field{init/step/show}。状態を保持し毎フレーム step（反応拡散/CA/成長）。
  * 返り値には設定ディレクティブ `config`（{ view, canvas, pad, fps, seed, period }。未指定は null）が
- * 付く。`view` も別途公開（= config.view）。いずれもコアはラスタライズ・適用せず、
- * ホスト（surface / 出力）が既定値・範囲とともに解釈する＝表示・出力はホストの責務のまま。
+ * 付く。コアはラスタライズ・適用せず、ホスト（surface / 出力）が既定値・範囲とともに
+ * 解釈する＝表示・出力はホストの責務のまま。
  * @param {string} src
- * @returns {{ render:Function, kind:string, view:object|null, config:object }}
+ * @returns {{ render:Function, kind:string, config:object }}
  */
 export function compile(src) {
   const prog = parseProgram(src); // 構文エラーはここで投げる
-  const view = prog.view || null;
   const config = prog.config;
   if (prog.kind === "draw") {
     const run = compileDraw(prog.body); // AST を 1 度だけクロージャ化
     return {
       kind: "draw",
-      view,
       config,
       render(surface, t = 0, seed = 0) {
         setSeed(seed);
@@ -226,6 +224,6 @@ export function compile(src) {
       },
     };
   }
-  if (prog.kind === "cells") return { ...compileCells(prog), view, config };
-  return { kind: "field", view, config, ...compileFieldAst(prog.expr) };
+  if (prog.kind === "cells") return { ...compileCells(prog), config };
+  return { kind: "field", config, ...compileFieldAst(prog.expr) };
 }
