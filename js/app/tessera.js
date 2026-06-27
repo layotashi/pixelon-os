@@ -449,23 +449,6 @@ let winId = null;
 let _pvCache = null; // 直近に描いた pv（{buf,w,h}）
 let _pvFrame = -1; // 直近に描いた fps フレーム番号（-1 = 要再描画）
 
-// ── 等倍（1:1）ルーペ・インスペクト ──
-// プレビューをドラッグすると、その瞬間を凍結して出力を等倍（1 アートドット = pixel 画面px
-// ＝書き出しの実寸）で表示し、ドラッグでパンする。fit プレビューは枠に収めるため縮小標本
-// 化するが、ルーペは base を素の解像度で描いて拡大するので「実際の見え方」を確認できる。
-// ボタンを増やさない設計に合わせ、ホールド中だけ有効（離すとライブ fit へ戻る）。
-let inspecting = false;
-let inspectBase = null; // 凍結した base 解像度 1-bit バッファ
-let inspectBW = 0,
-  inspectBH = 0,
-  inspectPixel = 1;
-let panDotX = 0, // 表示クロップ左上（base-dot 座標）
-  panDotY = 0;
-let dragDownX = 0, // ドラッグ開始の preview ローカル座標 + その時点の pan
-  dragDownY = 0,
-  panStartX = 0,
-  panStartY = 0;
-let pvHit = null; // 直近 fit 描画のプレビュー矩形（body ローカル。当たり判定用）
 /** 現在編集中のファイル VFS パス (null = 無題) */
 let currentFilePath = null;
 let isDirty = false;
@@ -500,8 +483,6 @@ function setCode(src) {
   editor.setContentLength(editor.lines.length);
   editor.scrollToTop();
   editor.clearHistory(); // 別ファイル/新規へ undo で戻れないようにする
-  inspecting = false; // ルーペは凍結フレーム依存＝コード差替えで解除
-  inspectBase = null;
   recompile(src);
   t0 = performance.now();
 }
@@ -737,88 +718,6 @@ function renderPreview(t, seed, mode, params, ascii) {
   return { buf: out, w: dw, h: dh };
 }
 
-// ── 等倍ルーペ ──
-
-/** ルーペで一度に見える base-dot 数（画面 PV_BOX を pixel で割った数。base 全体が上限）。 */
-function inspectCropDots() {
-  return Math.max(1, Math.ceil(PV_BOX / inspectPixel));
-}
-const clampDot = (v, total, crop) => Math.max(0, Math.min(v, Math.max(0, total - crop)));
-
-/**
- * 現在のソースを別実体でコンパイルし、出力 base 解像度の 1-bit を凍結生成する。
- * art 解像度で凍結する（プレビューより高精細）。
- * @returns {Uint8Array|null} baseW×baseH の 1-bit（コンパイル不能なら null）
- */
-function renderInspectBase(t) {
-  const { baseW, baseH, artW, artH } = outputDims();
-  inspectBW = baseW;
-  inspectBH = baseH;
-  inspectPixel = resolvedConfig().pixel;
-  let prog;
-  try {
-    prog = compile(editor.getText());
-  } catch {
-    return null;
-  }
-  const eff = effectiveRender();
-  const ascii = eff.mode === "ascii";
-  const seed = resolvedConfig().seed;
-  const surf = makeExportSurface(artW, artH, ascii, eff.mode, eff.params);
-  prog.render(surf, t, seed);
-  return ArtExport.composeMatte(surf.buf, artW, artH, baseW, baseH);
-}
-
-/** ルーペ開始: いまの瞬間を凍結し、クリック点を中心にクロップを置く。 */
-function enterInspect(px, py) {
-  // 画面に出ている量子化フレームを凍結（WYSIWYG）。
-  const { period, fps } = resolvedConfig();
-  const frozenT = (Math.floor(((performance.now() - t0) / 1000) * fps) / fps) % period;
-  const base = renderInspectBase(frozenT);
-  if (!base) return;
-  inspectBase = base;
-  inspecting = true;
-  // クリック点（fit 座標 [0,pvHit.w)）を base-dot へ写し、その周りをクロップ中央に。
-  const cd = inspectCropDots();
-  const cx = Math.floor((px / pvHit.w) * inspectBW);
-  const cy = Math.floor((py / pvHit.h) * inspectBH);
-  panDotX = clampDot(Math.round(cx - cd / 2), inspectBW, cd);
-  panDotY = clampDot(Math.round(cy - cd / 2), inspectBH, cd);
-  dragDownX = px;
-  dragDownY = py;
-  panStartX = panDotX;
-  panStartY = panDotY;
-}
-
-/** ルーペ中のドラッグでパン（内容がカーソルに追従。1 base-dot = pixel 画面px）。 */
-function panInspect(px, py) {
-  const cd = inspectCropDots();
-  panDotX = clampDot(panStartX - Math.round((px - dragDownX) / inspectPixel), inspectBW, cd);
-  panDotY = clampDot(panStartY - Math.round((py - dragDownY) / inspectPixel), inspectBH, cd);
-}
-
-/** ルーペ表示を pvX,pvY へ描く（クロップを ×pixel の NN 拡大、枠と 1:1 タグ付き）。 */
-function blitInspect(pvX, pvY) {
-  const P = inspectPixel,
-    BW = inspectBW,
-    BH = inspectBH;
-  const dispW = Math.min(PV_BOX, (BW - panDotX) * P);
-  const dispH = Math.min(PV_BOX, (BH - panDotY) * P);
-  const out = new Uint8Array(dispW * dispH);
-  for (let sy = 0; sy < dispH; sy++) {
-    const brow = (panDotY + ((sy / P) | 0)) * BW;
-    const orow = sy * dispW;
-    for (let sx = 0; sx < dispW; sx++) out[orow + sx] = inspectBase[brow + (panDotX + ((sx / P) | 0))];
-  }
-  GPU.fillRect(pvX, pvY, dispW, dispH, 0);
-  GPU.drawRect(pvX - 1, pvY - 1, dispW + 1, dispH + 1, 1);
-  GPU.blit(out, dispW, dispH, pvX, pvY, 1);
-  // 1:1 タグ（読みやすさのため背景を塗ってから反転文字）。
-  const tagW = 3 * GLYPH_W + 2;
-  GPU.fillRect(pvX, pvY, tagW, GLYPH_H + 2, 1);
-  drawText(pvX + 1, pvY + 1, "1:1", 0);
-}
-
 // ── 書き出し（PNG / GIF / MP4）──
 // プレビューと独立した surface・プログラム実体でオフスクリーン描画する（書き出し時は
 // ソースを別途 compile する）。場を art 解像度で直接描く。合成・符号化は core/art_export.js。
@@ -953,10 +852,7 @@ function onDraw(cr) {
   const pvX = cr.x + editor.x + leftW + GAP;
   const pvY = cr.y + UI.FOCUS_MARGIN;
 
-  if (inspecting && inspectBase) {
-    // 等倍ルーペ: 凍結フレームを実寸で表示（fit レンダーはスキップ）。pvHit は流用。
-    blitInspect(pvX, pvY);
-  } else if (program) {
+  if (program) {
     // 実効方式（view: があればコードが決める。無ければ既定 dither）。
     const eff = effectiveRender();
     activeMode = eff.mode;
@@ -983,8 +879,6 @@ function onDraw(cr) {
       GPU.fillRect(pvX, pvY, pv.w, pv.h, 0); // 背景 (未描画セルの下地)
       GPU.drawRect(pvX - 1, pvY - 1, pv.w + 1, pv.h + 1, 1); // 枠線
       GPU.blit(pv.buf, pv.w, pv.h, pvX, pvY, 1);
-      // ルーペのドラッグ当たり判定用に矩形（body ローカル）を記録。
-      pvHit = { x: editor.x + leftW + GAP, y: UI.FOCUS_MARGIN, w: pv.w, h: pv.h };
     }
   }
 
@@ -1008,19 +902,6 @@ function onDrawFooter(fr) {
 
 function onInput(ev) {
   group.update(ev);
-  // プレビューをドラッグ＝等倍ルーペ（ホールド中のみ。離すとライブ fit へ戻る）。
-  if (ev.type === "up") {
-    inspecting = false;
-    return;
-  }
-  if (!pvHit || !program) return;
-  const inPv =
-    ev.localX >= pvHit.x &&
-    ev.localX < pvHit.x + pvHit.w &&
-    ev.localY >= pvHit.y &&
-    ev.localY < pvHit.y + pvHit.h;
-  if (ev.type === "down" && inPv) enterInspect(ev.localX - pvHit.x, ev.localY - pvHit.y);
-  else if (ev.type === "held" && inspecting) panInspect(ev.localX - pvHit.x, ev.localY - pvHit.y);
 }
 
 function onMeasure() {
