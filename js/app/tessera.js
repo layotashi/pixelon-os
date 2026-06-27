@@ -826,7 +826,8 @@ function setWallpaper() {
 }
 
 // 常時表示の凡例（ショートカットの発見性。パラメータはコードで指定する設計のため重要）。
-const LEGEND = "^E EXPORT  ^R RESEED  ^S SAVE  ^O OPEN  ALT+N NEW  ALT+W WALLPAPER  ALT+SHIFT+F FORMAT";
+// 画面幅(480px)に収まる範囲で発見性を確保。FORMAT(⇧Alt+F)は About に記載。
+const LEGEND = "^E EXPORT  ^R RESEED  ^S SAVE  ^O OPEN  ALT+N NEW  ALT+W WALLPAPER";
 const LEGEND_H = GLYPH_H + 4;
 
 function onDraw(cr) {
@@ -907,7 +908,11 @@ function onInput(ev) {
 function onMeasure() {
   // 左カラム右端 = 最も広い行（コントロール or エディタ）。プレビューは最大 PV_BOX 角。
   const leftRight = editor.x + Math.max(editor.w, ctrlRow ? ctrlRow.w : 0);
-  const w = leftRight + GAP + PV_BOX + UI.FOCUS_MARGIN;
+  // 本体幅 と 凡例幅 の広い方（凡例が見切れないようウィンドウ幅を確保）。
+  const w = Math.max(
+    leftRight + GAP + PV_BOX + UI.FOCUS_MARGIN,
+    UI.FOCUS_MARGIN + textWidth(LEGEND) + UI.FOCUS_MARGIN,
+  );
   const bodyH = Math.max(editor.y + editor.h, UI.FOCUS_MARGIN + PV_BOX);
   const h = bodyH + LEGEND_H + UI.FOCUS_MARGIN; // 最下部に凡例行を確保
   return { w, h };
