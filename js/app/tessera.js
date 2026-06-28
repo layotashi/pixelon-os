@@ -23,7 +23,8 @@
  * ウィジェットは廃止した（旧 GENART/初期 TESSERA の名残）。プレビューは size のアスペクト比を反映。
  *
  * 構成:
- *   - トップツールバー(1 行): 形式(PNG/GIF/MP4) + EXPORT/RESEED/SAVE/OPEN/NEW/WALLPAPER。
+ *   - トップツールバー(1 行): 形式(PNG/GIF/MP4) + EXPORT/CODE/RESEED/SAVE/OPEN/NEW/WALLPAPER。
+ *     EXPORT=作品 / CODE=ソースを 1080² カード化（作品＋ハイライトコード）。共通フォーマット。
  *     ショートカットは各ボタンの hover ツールチップに表示する。
  *   - 左: コードエディタ (TextArea)。編集で即 compile。
  *   - 右: ライブプレビュー（ツールバーの下・size のアスペクト比、surface.buf を整数倍 blit）
@@ -31,7 +32,8 @@
  *
  * VFS / 操作:
  *   - Alt+N 新規 / Ctrl+O 開く / Ctrl+S 保存 / Ctrl+Shift+S 名前を付けて保存
- *   - Ctrl+E / EXPORT で size ちょうどに PNG/GIF/MP4 書き出し。Ctrl+R で seed: を振り直す。
+ *   - Ctrl+E / EXPORT で作品を size ちょうどに PNG/GIF/MP4 書き出し。CODE はソースを
+ *     1080² の SYNESTA カード（作品背景＋ハイライトコード）として書き出す。Ctrl+R で seed: 振り直し。
  *   - Alt+W で現在の場をデスクトップ背景に。Shift+Alt+F で整形。未保存変更は破棄確認。
  *     サンプルは /Sketches/Learn（番号順チュートリアル）と /Sketches/Gallery（作例）に種まき。
  *   - EXPLORER から .tess をダブルクリックで開く（tesseraOpenFile）。
@@ -456,7 +458,7 @@ let isDirty = false;
 // ── ウィジェット (遅延初期化) ──
 // パラメータ（seed/方式/出力/dot/pad/fps）はすべてコードの設定ディレクティブで指定する。
 // 画面に残すコントロールは「書き出し形式 + DOWNLOAD」のみ（最小コントロール）。
-let editor, ddFormat, btnExport, btnReseed, btnSave, btnOpen, btnNew, btnWallpaper, ctrlRow, root, group;
+let editor, ddFormat, btnExport, btnCode, btnReseed, btnSave, btnOpen, btnNew, btnWallpaper, ctrlRow, root, group;
 let _ready = false;
 let _seeded = false;
 
@@ -511,14 +513,15 @@ function _initWidgets() {
     return b;
   };
   // DL と EXPORT は同一アクション（コード宣言の size に書き出し）＝1 ボタンに統合。
-  btnExport = mkBtn("EXPORT", "Export at the declared size — Ctrl+E (PNG/GIF/MP4)", exportArt);
+  btnExport = mkBtn("EXPORT", "Export the artwork at the declared size — Ctrl+E (PNG/GIF/MP4)", exportArt);
+  btnCode = mkBtn("CODE", "Export the source as a 1080² SYNESTA card (PNG/GIF/MP4): art + highlighted code", exportCode);
   btnReseed = mkBtn("RESEED", "Randomize the seed: directive — Ctrl+R", rerollSeed);
   btnSave = mkBtn("SAVE", "Save — Ctrl+S   (Save As — Ctrl+Shift+S)", saveFile);
   btnOpen = mkBtn("OPEN", "Open a .tess sketch — Ctrl+O", openFile);
   btnNew = mkBtn("NEW", "New sketch — Alt+N", newFile);
   btnWallpaper = mkBtn("WALLPAPER", "Set as desktop wallpaper, live-rendered — Alt+W", setWallpaper);
 
-  ctrlRow = UI.HBox([ddFormat, btnExport, btnReseed, btnSave, btnOpen, btnNew, btnWallpaper]);
+  ctrlRow = UI.HBox([ddFormat, btnExport, btnCode, btnReseed, btnSave, btnOpen, btnNew, btnWallpaper]);
 
   // エディタは HBox で包む。VBox は直下のリーフ幅を最大子（=幅広ツールバー）へ引き伸ばす
   // が、Box 子は引き伸ばさない。これで枠が 40 桁テキストと一致する（枠だけ広くならない）。
@@ -830,6 +833,135 @@ function exportArt() {
   }
 }
 
+// ── コードカード書き出し（ソースを 1080² の画像/動画に。SNS で世界観を伝える）──
+// 3 段重ね: 作品(field@135→upscale ＝ 8px チャンキー dither) → 行ごとの黒バー(ラギッド) →
+// 大文字グリフ。テーマ配色・1bit は art_export 任せ。base 270(×4)/540(×2) で encode 効率化。
+const CARD_OUT = 1080;
+const CARD_ART_BASE = 135; // 作品の評価解像度（×8 = 1080 ＝ 8px チャンキー）
+const CARD_MARGIN = 12; // base 内の最小余白（中央寄せ＝上下左右均等）
+const CARD_BAR_PADX = 3; // バー内の左右パディング（glyph-px）
+const CARD_BAR_PADY = 2; // バー内の上下パディング（glyph-px）
+const CARD_LINE_GAP = 3; // バー間の隙間＝作品が覗く（glyph-px）
+
+/** ソース行（rstrip 済み）の素のブロック寸法（glyph-px, G=1）と行送り・字送り。 */
+function cardBlockSize(lines) {
+  const adv = GLYPH_W + 1;
+  const pitch = GLYPH_H + 2 * CARD_BAR_PADY + CARD_LINE_GAP;
+  let maxBar = 0;
+  for (const ln of lines) {
+    if (ln.length === 0) continue;
+    maxBar = Math.max(maxBar, ln.length * adv + 2 * CARD_BAR_PADX);
+  }
+  return {
+    w: Math.max(adv, maxBar),
+    h: Math.max(pitch, lines.length * pitch - CARD_LINE_GAP),
+    pitch,
+    adv,
+  };
+}
+
+/** base と glyph-scale G を選ぶ（typical=270/×4、長い code=540/×2）。 */
+function pickCard(lines) {
+  const { w, h } = cardBlockSize(lines);
+  for (const base of [270, 540]) {
+    const avail = base - 2 * CARD_MARGIN;
+    const g = Math.min(Math.floor(avail / w), Math.floor(avail / h));
+    if (g >= 1) return { base, scale: CARD_OUT / base, g };
+  }
+  return { base: 540, scale: 2, g: 1 }; // 巨大 code: G=1（はみ出しは許容）
+}
+
+/** バー/インクのマスク（base² の 0/1）を一度だけ作る（全フレーム共通）。 */
+function buildCardMasks(lines, base, g) {
+  const { w, h, pitch, adv } = cardBlockSize(lines);
+  const ox = Math.floor((base - w * g) / 2);
+  const oy = Math.floor((base - h * g) / 2);
+  const barMask = new Uint8Array(base * base);
+  const inkMask = new Uint8Array(base * base);
+  const set = (m, x, y) => {
+    if (x >= 0 && x < base && y >= 0 && y < base) m[y * base + x] = 1;
+  };
+  const barH = (GLYPH_H + 2 * CARD_BAR_PADY) * g;
+  for (let i = 0; i < lines.length; i++) {
+    const ln = lines[i];
+    if (ln.length === 0) continue; // 空行はバー無し＝作品が覗く
+    const barTop = oy + i * pitch * g;
+    const barW = (ln.length * adv + 2 * CARD_BAR_PADX) * g;
+    for (let y = 0; y < barH; y++)
+      for (let x = 0; x < barW; x++) set(barMask, ox + x, barTop + y);
+    const tx = ox + CARD_BAR_PADX * g;
+    const ty = barTop + CARD_BAR_PADY * g;
+    for (let j = 0; j < ln.length; j++) {
+      const gl = getGlyph(ln[j].toUpperCase());
+      if (!gl) continue;
+      const gx0 = tx + j * adv * g;
+      for (let gy = 0; gy < GLYPH_H; gy++)
+        for (let gx = 0; gx < GLYPH_W; gx++) {
+          if (!gl[gy * GLYPH_W + gx]) continue;
+          for (let sy = 0; sy < g; sy++)
+            for (let sx = 0; sx < g; sx++)
+              set(inkMask, gx0 + gx * g + sx, ty + gy * g + sy);
+        }
+    }
+  }
+  return { barMask, inkMask };
+}
+
+/** 1 フレーム合成: 作品(t) → 黒バー(0) → 文字(1)。 */
+function renderCodeCard(prog, t, seed, mode, params, base, masks) {
+  const surf = makeExportSurface(CARD_ART_BASE, CARD_ART_BASE, false, mode, params);
+  prog.render(surf, t, seed);
+  const art = ArtExport.resampleNN(surf.buf, CARD_ART_BASE, CARD_ART_BASE, base, base);
+  const { barMask, inkMask } = masks;
+  const out = new Uint8Array(base * base);
+  for (let i = 0; i < out.length; i++)
+    out[i] = inkMask[i] ? 1 : barMask[i] ? 0 : art[i];
+  return out;
+}
+
+/** CODE: ソースカードを選択フォーマットで書き出す（PNG=1枚 / GIF・MP4=ループ）。 */
+function exportCode() {
+  if (!program || statusText) return;
+  let prog;
+  try {
+    prog = compile(editor.getText());
+  } catch {
+    return;
+  }
+  const key = currentFormatKey();
+  const eff = effectiveRender();
+  const mode = eff.mode === "ascii" ? "dither" : eff.mode; // 背景は面系ディザに固定
+  const params = eff.params;
+  const { seed, period } = resolvedConfig();
+  const fps = outputDims().fps;
+  const lines = editor
+    .getText()
+    .replace(/\s+$/g, "")
+    .split("\n")
+    .map((l) => l.replace(/\s+$/, ""));
+  const { base, scale, g } = pickCard(lines);
+  const masks = buildCardMasks(lines, base, g);
+  const frameAt = (t) => renderCodeCard(prog, t, seed, mode, params, base, masks);
+  const name = (ext) => exportName(ext).replace(/\.(\w+)$/, "_code.$1");
+  try {
+    if (key === "png") {
+      const t = (Math.floor(((performance.now() - t0) / 1000) * fps) / fps) % period;
+      ArtExport.downloadPng(frameAt(t), base, base, scale, false, name("png"));
+    } else {
+      const loopFrames = clampI(period * fps, 2, PERIOD_CAP_S * fps);
+      const frames = [];
+      for (let i = 0; i < loopFrames; i++) frames.push(frameAt((i / loopFrames) * period));
+      statusText = `ENCODING ${key.toUpperCase()}...`;
+      ArtExport.exportVideo(frames, base, base, scale, false, fps, key, name(key), (s) => {
+        statusText = s;
+      });
+    }
+  } catch (e) {
+    errMsg = e.message + (e.pos != null ? ` (pos ${e.pos})` : "");
+    statusText = "";
+  }
+}
+
 /** ALT+W: 現在の場をデスクトップ背景に設定（ソースをスナップショット保存 → live-render）。 */
 function setWallpaper() {
   if (!program) return; // コンパイル不能なソースは無視
@@ -849,7 +981,7 @@ function setWallpaper() {
 function fitToolbar() {
   if (!ctrlRow) return;
   const target = editor.w + GAP + previewScale(asciiActive).w; // エディタ左〜プレビュー右
-  const btns = [ddFormat, btnExport, btnReseed, btnSave, btnOpen, btnNew, btnWallpaper];
+  const btns = [ddFormat, btnExport, btnCode, btnReseed, btnSave, btnOpen, btnNew, btnWallpaper];
   const sumW = btns.reduce((s, b) => s + b.w, 0);
   // ceil で target 以上に（端数はエディタ⇄プレビューの間隔へ回す＝右端ぴったり）。
   ctrlRow.gap = Math.max(UI.FOCUS_MARGIN * 2, Math.ceil((target - sumW) / (btns.length - 1)));
@@ -977,9 +1109,10 @@ WM.wmRegister(
         "(pixel is fixed at 8 = chunky 1-bit). " +
         "Learn from /Sketches/Learn (numbered tutorial), browse /Sketches/Gallery. " +
         "Shortcuts: Alt+N new, Ctrl+O " +
-        "open, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+E / DL export " +
-        "(PNG/GIF/MP4 at the declared size), Ctrl+R reseed, Alt+W set as " +
-        "desktop wallpaper (live-rendered), Shift+Alt+F format.",
+        "open, Ctrl+S save, Ctrl+Shift+S save as, Ctrl+E / EXPORT artwork " +
+        "(PNG/GIF/MP4 at the declared size), CODE = export the source as a " +
+        "1080 square SYNESTA card (art + highlighted code), Ctrl+R reseed, " +
+        "Alt+W set as desktop wallpaper (live-rendered), Shift+Alt+F format.",
       onRelayout: relayout,
     });
     refreshTitle();
