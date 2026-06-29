@@ -280,7 +280,10 @@ function check(name, cond) {
   check("fmt: call & comma", f("mix( a,b )") === "mix(a, b)");
   check("fmt: unary tight", f("sin(-1.4*y)") === "sin(-1.4*y)");
   check("fmt: parens & tight", f("(a+b)*c") === "(a + b)*c");
-  check("fmt: number字面 preserved", f("1.0 + .5") === "1.0 + .5");
+  // 数値正準化: 先頭/末尾ゼロを落とす（GLSL/tixy 慣習・40桁節約・意味不変）。
+  check("fmt: number canon (.5 / 1.0->1)", f("0.5 + 1.0") === ".5 + 1");
+  check("fmt: number canon (trailing zeros)", f("2.00 + 1.50 + .250") === "2 + 1.5 + .25");
+  check("fmt: number canon (int kept)", f("30 + 0 + 8") === "30 + 0 + 8");
   check(
     "fmt: repeat block indents + 1文1行",
     f("repeat 2 as i{x=0;y=0}\ns") === "repeat 2 as i {\n  x = 0\n  y = 0\n}\ns",

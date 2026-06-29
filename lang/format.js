@@ -16,6 +16,7 @@
  *     （canvas→pad→fps→period→seed→view）へ並べ替え、コロンを揃える（設定盤化）。
  *   - **(C) 代入整列**: 同深度で連続する `name = …` の `=` を揃える（40桁を超えない範囲でのみ）。
  *   - **(E) コメント正規化**: `//x` → `// x`（先頭 1 スペース）。本文・ブロックコメントは不変。
+ *   - **(N) 数値正準化**: `0.5`→`.5`、`1.0`→`1`、末尾ゼロ除去（GLSL/tixy 慣習・40桁節約・意味不変）。
  *
  * トークン再出力なので数値字面（`1.0` `.5`）とコメントは保持。A2 のみ括弧を追加するため
  * 「同一トークン」ではなく「同一**値**」を保証する（折り返しに必要な最小限の括弧）。
@@ -45,6 +46,21 @@ function operandExpected(prev) {
   );
 }
 
+/**
+ * 数値字面の正準化（GLSL/tixy 慣習＋40桁節約）。意味は不変（同じ値）。
+ *   先頭の 0 を落とす: `0.5` → `.5` / `0.012` → `.012`
+ *   末尾の 0 を落とす: `1.50` → `1.5` / `2.00` → `2` / `1.0` → `1`
+ *   整数・`0`・`.5` はそのまま。
+ */
+function canonNum(raw) {
+  if (!raw.includes(".")) return raw; // 整数はそのまま
+  let [intPart, frac] = raw.split(".");
+  frac = frac.replace(/0+$/, ""); // 末尾ゼロ除去
+  intPart = intPart.replace(/^0+(?=\d)/, ""); // 先頭ゼロ除去（1 桁は残す）
+  if (frac === "") return intPart === "" || intPart === "0" ? "0" : intPart;
+  return intPart === "" || intPart === "0" ? "." + frac : intPart + "." + frac;
+}
+
 // ── トークン列 → 1 行（インデント無し）。優先順位ベースの空白規則 ──────────────
 function renderInline(toks) {
   let line = "";
@@ -70,7 +86,7 @@ function renderInline(toks) {
     let text;
     switch (ty) {
       case "NUM":
-        text = tk.raw;
+        text = canonNum(tk.raw);
         break;
       case "LP":
         text = "(";

@@ -79,7 +79,7 @@ period: tau
 seed:   0
 view:   dither(2)
 
-sin(x*8 - t)*cos(y*8 + t*2)*0.5 + 0.5`;
+sin(x*8 - t)*cos(y*8 + t*2)*.5 + .5`;
 
 /**
  * サンプルは 2 層: LEARN（番号順・1 概念ずつ・解説コメント付き＝見て文法を学ぶ）と
@@ -104,23 +104,24 @@ x`,
   {
     file: "02_waves" + EXT,
     src: `// math becomes pattern. sin is -1..1,
-// so *0.5 + 0.5 maps it to 0..1.
+// so *.5 + .5 maps it to 0..1.
 // x*8 = 8 cycles. change the 8.
-sin(x*8) * 0.5 + 0.5`,
+sin(x*8)*.5 + .5`,
   },
   {
     file: "03_time" + EXT,
     src: `// t is elapsed seconds; use it to
 // animate. subtracting t scrolls the
 // wave sideways.
-sin(x*8 - t) * 0.5 + 0.5`,
+sin(x*8 - t)*.5 + .5`,
   },
   {
     file: "04_shapes" + EXT,
     src: `// dist() = distance to a point.
-// smoothstep makes a soft edge.
-// together: a filled circle.
-1 - smoothstep(0.24, 0.26, dist(x, y, 0.5, 0.5))`,
+// name the distance d, then shape it:
+// smoothstep makes a soft circle edge.
+d = dist(x, y, .5, .5)
+1 - smoothstep(.24, .26, d)`,
   },
   {
     file: "05_noise" + EXT,
@@ -135,7 +136,7 @@ fbm(x*4, y*4, 4)`,
 // try dither / hatch / halftone /
 // braille / ascii on the same field.
 view: halftone(8)
-1 - dist(x, y, 0.5, 0.5)`,
+1 - dist(x, y, .5, .5)`,
   },
   {
     file: "07_output" + EXT,
@@ -146,24 +147,26 @@ view: halftone(8)
 // 100 (5/10/20/25/50/100) so GIF frame
 // timing is exact. footer shows fps.
 canvas: 1080x1080
-fps: 20
-seed: 0
+fps:    20
+seed:   0
 fbm(x*3, y*3, 5)`,
   },
   {
     file: "08_repeat" + EXT,
     src: `// a value block runs statements, then
 // returns the final expression.
-// repeat N as k loops k=0..N-1.
-// here: sum N orbiting blobs.
+// name repeated parts (dx, dy) for
+// readability. here: sum N blobs.
 view: dither(2)
 s = 0
 repeat 4 as k {
-  cx = 0.5 + 0.28 * cos(t + k*1.7)
-  cy = 0.5 + 0.28 * sin(t + k*1.7)
-  s = s + 0.012 / ((x - cx)*(x - cx) + (y - cy)*(y - cy) + 0.001)
+  cx = .5 + .28*cos(t + k*1.7)
+  cy = .5 + .28*sin(t + k*1.7)
+  dx = x - cx
+  dy = y - cy
+  s  = s + .012/(dx*dx + dy*dy + .001)
 }
-s / (s + 1)`,
+s/(s + 1)`,
   },
 ];
 
@@ -171,11 +174,11 @@ s / (s + 1)`,
 // お決まり順 = キャンバス(canvas/pad) → 時間(fps/period) → seed → view。値は既定どおり
 // なので見た目は不変＝「全ノブが見えて編集できる」状態にするだけ。
 const HEADER = `canvas: 1080x1080
-pad: 80
-fps: 20
+pad:    80
+fps:    20
 period: tau
-seed: 0
-view: dither(2)
+seed:   0
+view:   dither(2)
 
 `;
 
@@ -183,13 +186,16 @@ const GALLERY_SAMPLES = [
   {
     // WAVE: 複数点源の同心波の干渉。seed で点源位置と周波数が変わる
     file: "wave" + EXT,
-    src: HEADER + `cx0 = 0.2 + rnd(1, 0)*0.6
-cy0 = 0.2 + rnd(2, 0)*0.6
-cx1 = 0.2 + rnd(3, 0)*0.6
-cy1 = 0.2 + rnd(4, 0)*0.6
-f = 30 + rnd(5, 0)*24
-(sin(dist(x, y, cx0, cy0)*f - t*2)
- + sin(dist(x, y, cx1, cy1)*f - t*2)) * 0.25 + 0.5`,
+    src: HEADER + `cx0 = .2 + rnd(1, 0)*.6
+cy0 = .2 + rnd(2, 0)*.6
+cx1 = .2 + rnd(3, 0)*.6
+cy1 = .2 + rnd(4, 0)*.6
+f   = 30 + rnd(5, 0)*24
+d0  = dist(x, y, cx0, cy0)
+d1  = dist(x, y, cx1, cy1)
+( sin(d0*f - t*2)
++ sin(d1*f - t*2)
+)*.25 + .5`,
   },
   {
     // PLASMA: sin/cos 多重干渉プラズマ。seed で位相・周波数・源が変わる
@@ -197,35 +203,44 @@ f = 30 + rnd(5, 0)*24
     src: HEADER + `p1 = rnd(1, 0)*TAU
 p2 = rnd(2, 0)*TAU
 p3 = rnd(3, 0)*TAU
-cx = 0.3 + rnd(4, 0)*0.4
-cy = 0.3 + rnd(5, 0)*0.4
+cx = .3 + rnd(4, 0)*.4
+cy = .3 + rnd(5, 0)*.4
 fa = 6 + rnd(6, 0)*6
-(sin(x*fa + t + p1) + sin(y*fa - t + p2)
- + sin((x + y)*6 + t + p3)
- + sin(dist(x, y, cx, cy)*12 - t)) * 0.125 + 0.5`,
+w0 = sin(x*fa + t + p1)
+w1 = sin(y*fa - t + p2)
+w2 = sin((x + y)*6 + t + p3)
+w3 = sin(dist(x, y, cx, cy)*12 - t)
+(w0 + w1 + w2 + w3)*.125 + .5`,
   },
   {
     // DRIFT: fbm 密度場。標本点が円運動し雲のように漂う
     file: "drift" + EXT,
-    src: HEADER + `fbm(x*4 + sin(t)*0.3, y*4 + cos(t)*0.3, 4)`,
+    src: HEADER + `u = x*4 + sin(t)*.3
+v = y*4 + cos(t)*.3
+fbm(u, v, 4)`,
   },
   {
     // GRID: 市松テッセレーション（ゆっくり漂う）。seed で格子数とずれが変わる
     file: "grid" + EXT,
-    src: HEADER + `n = 4 + floor(rnd(1, 0)*9)
+    src: HEADER + `n  = 4 + floor(rnd(1, 0)*9)
 ox = rnd(2, 0)*4
 oy = rnd(3, 0)*4
-step(0.5, mod(floor(x*n + ox + sin(t)*2) + floor(y*n + oy + cos(t)*2), 2))`,
+gx = floor(x*n + ox + sin(t)*2)
+gy = floor(y*n + oy + cos(t)*2)
+step(.5, mod(gx + gy, 2))`,
   },
   {
     // MOIRE: わずかに角度のずれた 2 枚の同周波グレーティングの積（うなり）。
     // seed で周波数・基準角・ずれ角が変わる
     file: "moire" + EXT,
-    src: HEADER + `f = 14 + rnd(1, 0)*14
+    src: HEADER + `f  = 14 + rnd(1, 0)*14
 a0 = rnd(2, 0)*TAU
-da = 0.1 + rnd(3, 0)*0.22
-sin((x*cos(t + a0) + y*sin(t + a0))*f)
- * sin((x*cos(t + a0 + da) + y*sin(t + a0 + da))*f) * 0.5 + 0.5`,
+da = .1 + rnd(3, 0)*.22
+p  = t + a0
+q  = t + a0 + da
+g0 = sin((x*cos(p) + y*sin(p))*f)
+g1 = sin((x*cos(q) + y*sin(q))*f)
+g0*g1*.5 + .5`,
   },
   {
     // CAUSTIC: 進行波の和を尾根化し鋭く累乗 → 水面の光の網目。
@@ -237,55 +252,65 @@ f3 = 12 + rnd(3, 0)*10
 p1 = rnd(4, 0)*TAU
 p2 = rnd(5, 0)*TAU
 p3 = rnd(6, 0)*TAU
-s = (sin(x*f1 + t*2 + p1) + sin(y*f2 - t*2 + p2) + sin((x + y)*f3 + t + p3)) / 3
-(1 - abs(s)) ^ 4`,
+w1 = sin(x*f1 + t*2 + p1)
+w2 = sin(y*f2 - t*2 + p2)
+w3 = sin((x + y)*f3 + t + p3)
+s  = (w1 + w2 + w3)/3
+(1 - abs(s))^4`,
   },
   {
     // QUASIC: 等角に並べた N 枚平面波の和 → 準結晶。
     // seed で対称数 N(5..8)・回転・周波数が変わる
     file: "quasic" + EXT,
-    src: HEADER + `n = 5 + floor(rnd(1, 0)*4)
-r = rnd(2, 0)*TAU
-f = 22 + rnd(3, 0)*18
-s = 0
+    src: HEADER + `n  = 5 + floor(rnd(1, 0)*4)
+r  = rnd(2, 0)*TAU
+f  = 22 + rnd(3, 0)*18
+cx = x - .5
+cy = y - .5
+s  = 0
 repeat n as k {
-  a = k * (TAU / n) + r
-  s = s + cos(((x - 0.5)*cos(a) + (y - 0.5)*sin(a))*f + t)
+  a = k*(TAU/n) + r
+  u = cx*cos(a) + cy*sin(a)
+  s = s + cos(u*f + t)
 }
-s / n * 0.5 + 0.5`,
+s/n*.5 + .5`,
   },
   {
     // JULIA: z <- z*z + c の脱出時間（値ブロックで反復）。c が円運動し形態変化。
     // seed で c の中心と円運動半径が変わる＝別の Julia 集合（樹枝/兎/渦…）が出る
     file: "julia" + EXT,
-    src: HEADER + `ccx = -0.75 + rnd(1, 0)*0.7
-ccy = -0.3 + rnd(2, 0)*0.6
-rad = 0.12 + rnd(3, 0)*0.16
-zr = (x - 0.5)*3
-zi = (y - 0.5)*3
-cr = cos(t)*rad + ccx
-ci = sin(t)*rad + ccy
-m = 0
+    src: HEADER + `ccx = -.75 + rnd(1, 0)*.7
+ccy = -.3 + rnd(2, 0)*.6
+rad = .12 + rnd(3, 0)*.16
+zr  = (x - .5)*3
+zi  = (y - .5)*3
+cr  = cos(t)*rad + ccx
+ci  = sin(t)*rad + ccy
+m   = 0
 repeat 24 {
   zt = clamp(zr*zr - zi*zi + cr, -4, 4)
   zi = clamp(2*zr*zi + ci, -4, 4)
   zr = zt
-  m = m + (zr*zr + zi*zi)
+  m  = m + (zr*zr + zi*zi)
 }
 clamp(1 - m/120, 0, 1)`,
   },
   {
     // CURL: fbm でドメインワープした正弦の縞 → 大理石 / 墨流し
     file: "curl" + EXT,
-    src: HEADER + `qx = fbm(x*3 + cos(t)*0.3, y*3 + sin(t)*0.3, 4)
+    src: HEADER + `ox = cos(t)*.3
+oy = sin(t)*.3
+qx = fbm(x*3 + ox, y*3 + oy, 4)
 qy = fbm(x*3 + 4.2, y*3 + 1.7, 4)
-w = fbm(x*3 + qx*2, y*3 + qy*2, 4)
-0.5 + 0.5 * sin(x*20 + w*8 + t)`,
+w  = fbm(x*3 + qx*2, y*3 + qy*2, 4)
+.5 + .5*sin(x*20 + w*8 + t)`,
   },
   {
     // WORLEY: セルラーノイズ（最近傍距離）。細胞 / 石畳模様
     file: "worley" + EXT,
-    src: HEADER + `1 - worley(x*6 + cos(t)*0.4, y*6 + sin(t)*0.4)`,
+    src: HEADER + `u = x*6 + cos(t)*.4
+v = y*6 + sin(t)*.4
+1 - worley(u, v)`,
   },
 ];
 
