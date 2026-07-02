@@ -1,20 +1,21 @@
 /**
  * @module core/mp4
- * mp4.js — 1bit フレーム列を H.264/MP4 として書き出す。
+ * mp4.js — 1bit フレーム列 (+任意の PCM 音声) を H.264(+AAC)/MP4 として書き出す。
  *
- * ブラウザの WebCodecs `VideoEncoder` で各フレームを H.264 にエンコードし、
- * その出力 (AVCC 形式のアクセスユニット + avcC コンフィグ) を、この場で
- * 組み立てる最小限の MP4 コンテナ (ISO BMFF) に詰める。
- * GIF を自前エンコーダ (gif.js) で書いているのと同じ思想で、コンテナ部分は
- * 外部依存なしに自作する (エンコーダだけはブラウザ API を借りる)。
+ * ブラウザの WebCodecs `VideoEncoder` で各フレームを H.264 に、`AudioEncoder` で
+ * PCM を AAC にエンコードし、その出力を、この場で組み立てる最小限の MP4 コンテナ
+ * (ISO BMFF) に詰める。GIF を自前エンコーダ (gif.js) で書いているのと同じ思想で、
+ * コンテナ部分は外部依存なしに自作する (エンコーダだけはブラウザ API を借りる)。
  *
  * 注意:
  *   - WebCodecs 非対応ブラウザでは使えない (isMp4Supported() で判定)。
+ *   - AAC エンコードはプラットフォーム依存 (isMp4AudioSupported() で判定)。
+ *     非対応環境では音声を落として映像のみで書き出す (書き出し自体は失敗させない)。
  *   - H.264 は非可逆。1bit のシャープなディザは高ビットレートでも僅かに滲む。
  *     画質忠実が要るなら GIF/PNG が向く。MP4 の利点は滑らか・長尺・SNS ネイティブ。
  *
- * 構成 (単一ビデオトラック・音声なし):
- *   ftyp / moov(mvhd, trak(tkhd, mdia(mdhd, hdlr, minf(vmhd, dinf, stbl)))) / mdat
+ * 構成 (ビデオトラック + 任意のオーディオトラック):
+ *   ftyp / moov(mvhd, trak(video), [trak(audio)]) / mdat(映像チャンク + 音声チャンク)
  */
 
 /** WebCodecs による H.264/MP4 書き出しが使えるか */
@@ -24,6 +25,29 @@ export function isMp4Supported() {
     typeof window.VideoEncoder === "function" &&
     typeof window.VideoFrame === "function"
   );
+}
+
+/** AAC 音声設定 (モノラル固定。sampleRate は encodeMp4 の audio 引数で渡る) */
+function aacConfig(sampleRate) {
+  return {
+    codec: "mp4a.40.2", // AAC-LC (SNS/プレイヤー互換の標準)
+    sampleRate,
+    numberOfChannels: 1,
+    bitrate: 128_000,
+    aac: { format: "aac" }, // 生のアクセスユニット (ADTS なし) → MP4 に直接詰める
+  };
+}
+
+/** WebCodecs による AAC 音声エンコードが使えるか (プラットフォーム依存) */
+export async function isMp4AudioSupported(sampleRate = 44100) {
+  if (typeof window === "undefined" || typeof window.AudioEncoder !== "function")
+    return false;
+  try {
+    const s = await AudioEncoder.isConfigSupported(aacConfig(sampleRate));
+    return !!(s && s.supported);
+  } catch {
+    return false;
+  }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -97,51 +121,46 @@ function toU8(d) {
 //  MP4 muxer
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/**
- * moov ボックスを構築する。stco の chunk offset は引数で受け取る。
- * (offset は固定長フィールドなので、値が変わっても moov の長さは不変。
- *  → 一度仮の値で長さを測り、本当の mdat オフセットで作り直せる)
- */
-function buildMoov(sizes, keyframes, avcC, w, h, fps, stcoOffset) {
-  const n = sizes.length;
-  const dur = n; // タイムスケール = fps、1 サンプル = 1 単位
+/** dinf (dref > url) — 全トラック共通の「データは同ファイル内」宣言 */
+function buildDinf() {
+  return box("dinf", fullbox("dref", 0, 0, u32(1), fullbox("url ", 0, 1)));
+}
 
-  const mvhd = fullbox(
-    "mvhd", 0, 0,
-    u32(0), u32(0), u32(fps), u32(dur),
-    u32(0x00010000), // rate 1.0
-    u16(0x0100), // volume 1.0
-    u16(0), u32(0), u32(0), // reserved
-    UNITY_MATRIX,
-    u32(0), u32(0), u32(0), u32(0), u32(0), u32(0), // pre_defined
-    u32(2), // next_track_ID
+/** hdlr — handler_type と名前 */
+function buildHdlr(type, name) {
+  return fullbox(
+    "hdlr", 0, 0,
+    u32(0), str4(type), u32(0), u32(0), u32(0),
+    new Uint8Array([...new TextEncoder().encode(name), 0]),
   );
+}
+
+/**
+ * ビデオトラック (trak) を構築する。
+ * @param {number} movieDur  ムービータイムスケール (ms) での長さ
+ * @param {number} stcoOffset  映像チャンクのファイル先頭からのオフセット
+ */
+function buildVideoTrak(sizes, keyframes, avcC, w, h, fps, movieDur, stcoOffset) {
+  const n = sizes.length;
 
   const tkhd = fullbox(
     "tkhd", 0, 7, // enabled | in movie | in preview
-    u32(0), u32(0), u32(1), u32(0), u32(dur),
+    u32(0), u32(0), u32(1), u32(0), u32(movieDur),
     u32(0), u32(0), // reserved
     s16(0), s16(0), s16(0), u16(0), // layer, alt_group, volume, reserved
     UNITY_MATRIX,
     u32(w << 16), u32(h << 16), // 16.16 fixed
   );
 
+  // メディアタイムスケール = fps、1 フレーム = 1 単位
   const mdhd = fullbox(
     "mdhd", 0, 0,
-    u32(0), u32(0), u32(fps), u32(dur),
+    u32(0), u32(0), u32(fps), u32(n),
     u16(0x55c4), // language 'und'
     u16(0),
   );
 
-  const hdlr = fullbox(
-    "hdlr", 0, 0,
-    u32(0), str4("vide"), u32(0), u32(0), u32(0),
-    new Uint8Array([...new TextEncoder().encode("SYNESTA"), 0]),
-  );
-
   const vmhd = fullbox("vmhd", 0, 1, u16(0), u16(0), u16(0), u16(0));
-  const dref = fullbox("dref", 0, 0, u32(1), fullbox("url ", 0, 1));
-  const dinf = box("dinf", dref);
 
   // stsd > avc1 > avcC
   const avcCbox = box("avcC", avcC);
@@ -166,20 +185,139 @@ function buildMoov(sizes, keyframes, avcC, w, h, fps, stcoOffset) {
   );
 
   const stbl = box("stbl", stsd, stts, stsc, stsz, stco, stss);
-  const minf = box("minf", vmhd, dinf, stbl);
-  const mdia = box("mdia", mdhd, hdlr, minf);
-  const trak = box("trak", tkhd, mdia);
-  return box("moov", mvhd, trak);
+  const minf = box("minf", vmhd, buildDinf(), stbl);
+  const mdia = box("mdia", mdhd, buildHdlr("vide", "SYNESTA"), minf);
+  return box("trak", tkhd, mdia);
 }
 
-/** エンコード済みサンプル列 + avcC を MP4 Blob にまとめる */
-function muxMp4(samples, avcC, w, h, fps) {
+/** AAC のサンプリング周波数インデックス (AudioSpecificConfig 用) */
+const AAC_FREQS = [
+  96000, 88200, 64000, 48000, 44100, 32000,
+  24000, 22050, 16000, 12000, 11025, 8000, 7350,
+];
+
+/** AAC-LC モノラルの AudioSpecificConfig (2 byte) を組み立てる (description 欠落時の保険) */
+function defaultAsc(sampleRate) {
+  const idx = Math.max(0, AAC_FREQS.indexOf(sampleRate));
+  // objectType(5)=2(AAC-LC) | freqIdx(4) | chanCfg(4)=1 | GASpecificConfig(3)=0
+  return new Uint8Array([(2 << 3) | (idx >> 1), ((idx & 1) << 7) | (1 << 3)]);
+}
+
+/** MPEG-4 記述子 [tag][length][body] (サイズは全て <128 の前提で 1 byte 長) */
+function descriptor(tag, body) {
+  return concat([new Uint8Array([tag, body.length]), body]);
+}
+
+/** esds — AAC の DecoderSpecificInfo (AudioSpecificConfig) を運ぶ記述子ボックス */
+function buildEsds(asc, bitrate) {
+  const dsi = descriptor(0x05, asc); // DecoderSpecificInfo
+  const dcd = descriptor(
+    0x04, // DecoderConfigDescriptor
+    concat([
+      new Uint8Array([0x40, 0x15]), // objectType=AAC, streamType=audio
+      new Uint8Array([0, 0, 0]), // bufferSizeDB (u24)
+      u32(bitrate), u32(bitrate), // max/avg bitrate
+      dsi,
+    ]),
+  );
+  const slc = descriptor(0x06, new Uint8Array([0x02])); // SLConfig (MP4 予約値)
+  const es = descriptor(0x03, concat([u16(1), new Uint8Array([0]), dcd, slc]));
+  return fullbox("esds", 0, 0, es);
+}
+
+/**
+ * オーディオトラック (trak) を構築する。AAC は 1 アクセスユニット = 1024 PCM サンプル。
+ * @param {{chunks:Uint8Array[], asc:Uint8Array, sampleRate:number}} audio
+ */
+function buildAudioTrak(audio, movieDur, stcoOffset) {
+  const n = audio.chunks.length;
+  const sr = audio.sampleRate;
+
+  const tkhd = fullbox(
+    "tkhd", 0, 7,
+    u32(0), u32(0), u32(2), u32(0), u32(movieDur), // track_ID = 2
+    u32(0), u32(0),
+    s16(0), s16(0), s16(0x0100), u16(0), // volume 1.0 (音声トラック)
+    UNITY_MATRIX,
+    u32(0), u32(0), // width/height = 0
+  );
+
+  // メディアタイムスケール = sampleRate、長さ = AAC フレーム数 × 1024
+  const mdhd = fullbox(
+    "mdhd", 0, 0,
+    u32(0), u32(0), u32(sr), u32(n * 1024),
+    u16(0x55c4),
+    u16(0),
+  );
+
+  const smhd = fullbox("smhd", 0, 0, u16(0), u16(0));
+
+  // stsd > mp4a > esds
+  const mp4a = box(
+    "mp4a",
+    new Uint8Array(6), u16(1), // reserved + data_reference_index
+    u32(0), u32(0), // reserved
+    u16(1), u16(16), // channelcount (mono), samplesize
+    u16(0), u16(0), // pre_defined, reserved
+    u32(sr << 16), // samplerate 16.16
+    buildEsds(audio.asc, 128_000),
+  );
+  const stsd = fullbox("stsd", 0, 0, u32(1), mp4a);
+  const stts = fullbox("stts", 0, 0, u32(1), u32(n), u32(1024));
+  const stsc = fullbox("stsc", 0, 0, u32(1), u32(1), u32(n), u32(1));
+  const stsz = fullbox(
+    "stsz", 0, 0, u32(0), u32(n),
+    concat(audio.chunks.map((c) => u32(c.length))),
+  );
+  const stco = fullbox("stco", 0, 0, u32(1), u32(stcoOffset));
+
+  const stbl = box("stbl", stsd, stts, stsc, stsz, stco); // 音声は全サンプルが sync (stss 不要)
+  const minf = box("minf", smhd, buildDinf(), stbl);
+  const mdia = box("mdia", mdhd, buildHdlr("soun", "SYNESTA"), minf);
+  return box("trak", tkhd, mdia);
+}
+
+/**
+ * moov ボックスを構築する。stco の chunk offset は引数で受け取る。
+ * (offset は固定長フィールドなので、値が変わっても moov の長さは不変。
+ *  → 一度仮の値で長さを測り、本当の mdat オフセットで作り直せる)
+ */
+function buildMoov(video, audio, movieDur, videoOffset, audioOffset) {
+  const mvhd = fullbox(
+    "mvhd", 0, 0,
+    u32(0), u32(0), u32(1000), u32(movieDur), // ムービータイムスケール = 1000 (ms)
+    u32(0x00010000), // rate 1.0
+    u16(0x0100), // volume 1.0
+    u16(0), u32(0), u32(0), // reserved
+    UNITY_MATRIX,
+    u32(0), u32(0), u32(0), u32(0), u32(0), u32(0), // pre_defined
+    u32(audio ? 3 : 2), // next_track_ID
+  );
+  const traks = [
+    buildVideoTrak(
+      video.sizes, video.keyframes, video.avcC,
+      video.w, video.h, video.fps, movieDur, videoOffset,
+    ),
+  ];
+  if (audio) traks.push(buildAudioTrak(audio, movieDur, audioOffset));
+  return box("moov", mvhd, ...traks);
+}
+
+/**
+ * エンコード済みサンプル列を MP4 Blob にまとめる (純関数 — 単体テスト対象)。
+ * mdat は「映像チャンク → 音声チャンク」の 2 チャンク構成。
+ * @param {{data:Uint8Array, key:boolean}[]} samples  H.264 アクセスユニット列
+ * @param {{chunks:Uint8Array[], asc:Uint8Array, sampleRate:number}|null} [audio]
+ */
+export function muxMp4(samples, avcC, w, h, fps, audio = null) {
   const sizes = samples.map((s) => s.data.length);
   const keyframes = [];
   samples.forEach((s, i) => {
     if (s.key) keyframes.push(i + 1); // stss は 1 始まり
   });
   if (keyframes.length === 0) keyframes.push(1);
+  const video = { sizes, keyframes, avcC, w, h, fps };
+  const movieDur = Math.round((samples.length / fps) * 1000); // ms
 
   const ftyp = box(
     "ftyp",
@@ -187,16 +325,66 @@ function muxMp4(samples, avcC, w, h, fps) {
     str4("isom"), str4("iso2"), str4("avc1"), str4("mp41"),
   );
 
-  // 1 回目: 仮オフセットで moov 長を確定 → mdat データ開始位置を算出
-  let moov = buildMoov(sizes, keyframes, avcC, w, h, fps, 0);
-  const mdatDataStart = ftyp.length + moov.length + 8;
-  // 2 回目: 本当の chunk offset で作り直す (長さは不変)
-  moov = buildMoov(sizes, keyframes, avcC, w, h, fps, mdatDataStart);
+  const videoBytes = sizes.reduce((a, b) => a + b, 0);
 
-  const mdatBody = concat(samples.map((s) => s.data));
+  // 1 回目: 仮オフセットで moov 長を確定 → mdat データ開始位置を算出
+  let moov = buildMoov(video, audio, movieDur, 0, 0);
+  const videoOffset = ftyp.length + moov.length + 8;
+  const audioOffset = videoOffset + videoBytes;
+  // 2 回目: 本当の chunk offset で作り直す (長さは不変)
+  moov = buildMoov(video, audio, movieDur, videoOffset, audioOffset);
+
+  const parts = samples.map((s) => s.data);
+  if (audio) parts.push(...audio.chunks);
+  const mdatBody = concat(parts);
   const mdat = concat([u32(mdatBody.length + 8), str4("mdat"), mdatBody]);
 
   return new Blob([ftyp, moov, mdat], { type: "video/mp4" });
+}
+
+/**
+ * PCM (Float32 モノラル) を WebCodecs で AAC にエンコードする。
+ * @returns {Promise<{chunks:Uint8Array[], asc:Uint8Array, sampleRate:number}|null>}
+ *   非対応/失敗時は null (呼び側は音声なしで続行する)
+ */
+async function encodeAacMono(pcm, sampleRate) {
+  if (!(await isMp4AudioSupported(sampleRate))) return null;
+  const chunks = [];
+  let asc = null;
+  let encErr = null;
+  const encoder = new AudioEncoder({
+    output: (chunk, meta) => {
+      const desc = meta && meta.decoderConfig && meta.decoderConfig.description;
+      if (desc && !asc) asc = toU8(desc);
+      const data = new Uint8Array(chunk.byteLength);
+      chunk.copyTo(data);
+      chunks.push(data);
+    },
+    error: (e) => {
+      encErr = e;
+    },
+  });
+  encoder.configure(aacConfig(sampleRate));
+
+  // 1 秒ずつ AudioData として投入 (エンコーダが 1024 サンプル単位の AU に切る)
+  for (let off = 0; off < pcm.length && !encErr; off += sampleRate) {
+    const part = pcm.subarray(off, Math.min(off + sampleRate, pcm.length));
+    const ad = new AudioData({
+      format: "f32",
+      sampleRate,
+      numberOfFrames: part.length,
+      numberOfChannels: 1,
+      timestamp: Math.round((off / sampleRate) * 1_000_000),
+      data: part,
+    });
+    encoder.encode(ad);
+    ad.close();
+  }
+  await encoder.flush();
+  encoder.close();
+
+  if (encErr || chunks.length === 0) return null;
+  return { chunks, asc: asc || defaultAsc(sampleRate), sampleRate };
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -233,7 +421,7 @@ async function pickCodec(w, h, fps, bitrate) {
 }
 
 /**
- * 1bit フレーム列を H.264/MP4 にエンコードする。
+ * 1bit フレーム列 (+任意の PCM 音声) を H.264(+AAC)/MP4 にエンコードする。
  *
  * @param {Uint8Array[]} frames  各要素が 0/1 の画素 (length = w*h)
  * @param {number} w  フレーム幅 (画素)
@@ -242,9 +430,11 @@ async function pickCodec(w, h, fps, bitrate) {
  * @param {number[]} fgRgb  前景色 [r,g,b]
  * @param {number} fps  フレームレート
  * @param {number} scale  拡大率 (出力解像度 = w*scale × h*scale、偶数に丸め)
+ * @param {{samples:Float32Array, sampleRate:number}|null} [audio]  PCM 音声 (モノラル)。
+ *   AAC 非対応環境やエンコード失敗時は音声を落とし映像のみで書き出す。
  * @returns {Promise<Blob>}  MP4 Blob
  */
-export async function encodeMp4(frames, w, h, bgRgb, fgRgb, fps, scale) {
+export async function encodeMp4(frames, w, h, bgRgb, fgRgb, fps, scale, audio = null) {
   if (!isMp4Supported()) throw new Error("WebCodecs unavailable");
   if (!frames || frames.length === 0) throw new Error("no frames");
 
@@ -329,5 +519,15 @@ export async function encodeMp4(frames, w, h, bgRgb, fgRgb, fps, scale) {
   if (samples.length === 0) throw new Error("encoder produced no samples");
   if (!description) throw new Error("missing avcC description");
 
-  return muxMp4(samples, description, outW, outH, fps);
+  // 音声 (任意): AAC 化に失敗しても映像は書き出す (ライブ用途で export を殺さない)
+  let aac = null;
+  if (audio && audio.samples && audio.samples.length > 0) {
+    try {
+      aac = await encodeAacMono(audio.samples, audio.sampleRate);
+    } catch (e) {
+      console.warn("[mp4] AAC encode failed, exporting video only:", e);
+    }
+  }
+
+  return muxMp4(samples, description, outW, outH, fps, aac);
 }

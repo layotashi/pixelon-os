@@ -39,8 +39,10 @@
  *
  * VFS / 操作:
  *   - Alt+N 新規 / Ctrl+O 開く / Ctrl+S 保存 / Ctrl+Shift+S 名前を付けて保存
- *   - Ctrl+E / EXPORT で作品を size ちょうどに PNG/GIF/MP4 書き出し。WAV は sound: の
- *     1 周期を音声書き出し。CODE はソースを 1080² の SYNESTA カードとして書き出す。Ctrl+R で seed: 振り直し。
+ *   - Ctrl+E / EXPORT で作品を size ちょうどに PNG/GIF/MP4 書き出し。MP4 は sound: があれば
+ *     音声入り（1 周期を AAC 化して多重化＝ループ一致。AAC 非対応環境は映像のみ + footer で明示）。
+ *     WAV は sound: の 1 周期を音声書き出し。CODE はソースを 1080² の SYNESTA カードとして
+ *     書き出す。Ctrl+R で seed: 振り直し。
  *   - ライブ編集耐性: コンパイル/評価に失敗しても直前の good を流し続ける（映像/音が途切れない）。
  *   - PERFORM（ライブ演奏ビュー）: Alt+Enter / F11 でフルスクリーン化し、画面そのものが
  *     キャンバスになる（1 アートドット = PERFORM_CHUNK(=4) 画面px。canvas:/pad: は無視、Esc / F11 で解除）。
@@ -1249,7 +1251,7 @@ function exportName(ext) {
 }
 
 /** PNG=1枚 / GIF・MP4=period ループ を frameAt(t) から書き出す共通ヘルパ。 */
-function exportFrames(key, frameAt, w, h, scale, invert, fps, period, tag) {
+function exportFrames(key, frameAt, w, h, scale, invert, fps, period, tag, audio = null) {
   const name = (ext) =>
     tag ? exportName(ext).replace(/\.(\w+)$/, `_${tag}.$1`) : exportName(ext);
   try {
@@ -1263,9 +1265,13 @@ function exportFrames(key, frameAt, w, h, scale, invert, fps, period, tag) {
       const frames = [];
       for (let i = 0; i < loopFrames; i++) frames.push(frameAt((i / loopFrames) * period));
       statusText = `ENCODING ${key.toUpperCase()}...`;
-      ArtExport.exportVideo(frames, w, h, scale, invert, fps, key, name(key), (s) => {
-        statusText = s;
-      });
+      ArtExport.exportVideo(
+        frames, w, h, scale, invert, fps, key, name(key),
+        (s) => {
+          statusText = s;
+        },
+        audio,
+      );
     }
   } catch (e) {
     errMsg = e.message + (e.pos != null ? ` (pos ${e.pos})` : "");
@@ -1299,13 +1305,19 @@ function exportArt() {
     downloadBlob(new Blob([encodeWav(data, sr)], { type: "audio/wav" }), exportName("wav"));
     return;
   }
+  // MP4 は sound: があれば音声入り（1 周期を決定論レンダ → AAC 多重化 = ループ一致）。
+  let audio = null;
+  if (key === "mp4" && prog.audio) {
+    const sr = 44100;
+    audio = { samples: prog.audio.renderAudio(sr, period, seed, period), sampleRate: sr };
+  }
   if (codeOn) {
     // コードカード: 作品(額縁=pad) + バー + 文字。art/code の INV は frame に焼き込む。
     const eff = effectiveRender();
     const mode = eff.mode === "ascii" ? "dither" : eff.mode; // 背景は面系ディザ
     const lay = getCardLayout();
     const frameAt = (t) => renderCard(prog, t, seed, mode, eff.params, lay, artInv, codeInv);
-    exportFrames(key, frameAt, lay.cbW, lay.cbH, lay.scale, false, fps, period, "code");
+    exportFrames(key, frameAt, lay.cbW, lay.cbH, lay.scale, false, fps, period, "code", audio);
   } else {
     // 作品のみ: base ×pixel で効率出力。ART INV は palette 反転で。
     const { baseW, baseH, artW, artH, pixel } = outputDims();
@@ -1316,7 +1328,7 @@ function exportArt() {
       renderField(prog, surf, t, seed);
       return ArtExport.composeMatte(surf.buf, artW, artH, baseW, baseH);
     };
-    exportFrames(key, frameAt, baseW, baseH, pixel, artInv, fps, period, "");
+    exportFrames(key, frameAt, baseW, baseH, pixel, artInv, fps, period, "", audio);
   }
 }
 
@@ -1668,8 +1680,9 @@ WM.wmRegister(
         "it loops over 'period' in sync with the view. Declare named timbres with " +
         "voice <name>: <expr with f>, then play them by name and mix with +. " +
         "The visual field can read the sound: amp (audio level 0..1) and beat(n)/" +
-        "step(n) share the loop clock, so visuals react to the audio. Pick WAV to " +
-        "export the sound (one loop). Typos never blank the output — the last " +
+        "step(n) share the loop clock, so visuals react to the audio. MP4 export " +
+        "includes the sound; pick WAV to export the sound alone (one loop). " +
+        "Typos never blank the output — the last " +
         "working version keeps running until the new code is valid. Alt+Enter (or " +
         "F11) is PERFORM: the screen itself becomes the canvas (one dot = 8 px, " +
         "fullscreen) with your code overlaid on the animating art — cursor, " +

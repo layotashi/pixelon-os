@@ -15,7 +15,7 @@
 
 import { palette } from "../config.js";
 import { encodeGif } from "./gif.js";
-import { encodeMp4, isMp4Supported } from "./mp4.js";
+import { encodeMp4, isMp4Supported, isMp4AudioSupported } from "./mp4.js";
 
 export { isMp4Supported };
 
@@ -104,6 +104,8 @@ export function downloadPng(baseBuf, baseW, baseH, scale, invert, filename) {
  * @param {Uint8Array[]} frames  base 解像度の 1-bit フレーム列
  * @param {"gif"|"mp4"} format
  * @param {(s:string)=>void} [onStatus]  進捗テキスト通知（任意）
+ * @param {{samples:Float32Array, sampleRate:number}|null} [audio]  MP4 に多重化する
+ *   PCM 音声（モノラル・任意）。AAC 非対応環境では音声を落とし、status で明示する。
  * @returns {Promise<void>}
  */
 export function exportVideo(
@@ -116,6 +118,7 @@ export function exportVideo(
   format,
   filename,
   onStatus,
+  audio = null,
 ) {
   let bg = palette.bg,
     fg = palette.fg;
@@ -131,18 +134,21 @@ export function exportVideo(
     const timeout = new Promise((_, reject) =>
       setTimeout(() => reject(new Error("MP4 encode timeout")), 30000),
     );
-    return Promise.race([
-      encodeMp4(frames, baseW, baseH, bg, fg, fps, scale),
-      timeout,
-    ])
-      .then((blob) => {
-        triggerDownload(blob, filename);
-        status("");
-      })
-      .catch((err) => {
-        console.error("[art_export] MP4 encode failed:", err);
-        status("MP4 ENCODE ERROR");
-      });
+    const run = async () => {
+      let aud = audio;
+      let doneNote = "";
+      if (aud && !(await isMp4AudioSupported(aud.sampleRate))) {
+        aud = null; // 音声だけ落として映像は書き出す
+        doneNote = "MP4 SAVED - NO AUDIO (AAC N/A)";
+      }
+      const blob = await encodeMp4(frames, baseW, baseH, bg, fg, fps, scale, aud);
+      triggerDownload(blob, filename);
+      status(doneNote);
+    };
+    return Promise.race([run(), timeout]).catch((err) => {
+      console.error("[art_export] MP4 encode failed:", err);
+      status("MP4 ENCODE ERROR");
+    });
   }
 
   // GIF: 自前エンコーダで同期。次フレームに遅延して "ENCODING" を見せる。
