@@ -15,11 +15,6 @@
  *   1: fg ドット
  *   2: bg + 斜線暗化
  *   3: fg + 斜線暗化
- *
- * 撤廃済み (BACKLOG「Pixel Grid / Glow / Noise の撤廃」参照):
- *   - CELL=3 のジオメトリ拡大 (Pixel Grid)
- *   - Glow (gap 位置の隣接ピクセル色着色)
- *   - Noise (RGB ランダム揺らぎ)
  */
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

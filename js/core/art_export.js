@@ -5,9 +5,7 @@
  * 入力は常に「art 解像度の 1-bit バッファ」。これを額縁マット付きで base 解像度に中央合成し、
  * 整数 ×scale で拡大して PNG / GIF / MP4 として保存する。サイズモデル（出力 = base ×scale）と
  * フレーム捕捉はアプリ側の責務、合成と符号化・ダウンロードはここに集約する。
- *
- * 旧 GENART のインライン実装（composeDotBuffer / saveArtAsPng / finishVideoRecording）を
- * 抽出・一般化したもの。GENART 廃止後は TESSERA がこれを使う（北極星 B の延長＝出力も共有）。
+ * TESSERA が使う共有モジュール（北極星 B の延長＝出力も共有）。
  *
  * 書き出しは**作品そのもの＝純粋な 2 色 1-bit**。SYNESTA 仮想 OS 側の表示エフェクト
  * （Diagonal scanline / Vignette）は画面の雰囲気であって作品ではないため、PNG/GIF/MP4 とも

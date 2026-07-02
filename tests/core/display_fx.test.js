@@ -1,7 +1,5 @@
 /**
  * core/display_fx.js — 表示エフェクト (Vignette + Diagonal scanline) のテスト。
- *
- * 注: 旧 Pixel Grid (CELL=3) / Glow / Noise は撤廃済み (BACKLOG 参照)。
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import {

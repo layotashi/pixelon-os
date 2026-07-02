@@ -6,8 +6,7 @@
  * 「直前まで隠れていて再表示された Box」の内部リーフがまだ
  * visible=false のままだと、その HBox.w が 0 に縮退し、
  * 結果として VBox 全体の maxW が過小評価され、HSep などの
- * ストレッチ対象が縮んでしまうバグ (DISPLAY_TUNING の
- * Pixel Grid OFF→ON で再現)。
+ * ストレッチ対象が縮んでしまうバグ (隠れていた行 Box の再表示で再現)。
  */
 import { describe, it, expect } from "vitest";
 import { HBox, VBox } from "@/ui/layout.js";
@@ -90,7 +89,7 @@ describe("Box.layout 可視性カスケード", () => {
     expect(visibleLeaf.visible).toBe(true);
   });
 
-  it("再表示時に直接子の HSep の幅が正しく拡張される (Pixel Grid OFF→ON のミニチュア)", () => {
+  it("再表示時に直接子の HSep の幅が正しく拡張される (行 Box 再表示のミニチュア)", () => {
     const wideRow = HBox([new FakeWidget(100, 10)]);
     const narrowRow = HBox([new FakeWidget(30, 10)]);
     const sep = new FakeHSep();

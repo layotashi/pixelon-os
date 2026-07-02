@@ -39,7 +39,7 @@ export function initPorts(ports) {
 export { Widget } from "./Widget.js";
 export { FocusableWidget } from "./FocusableWidget.js";
 
-// ── ウィジェットグループ (旧 drawWidgets / updateWidgets) ──
+// ── ウィジェットグループ ──
 export { WidgetGroup } from "./WidgetGroup.js";
 
 // ── ウィジェットクラス ──

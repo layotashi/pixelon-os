@@ -8,19 +8,18 @@
  * 名前: tessera = モザイクの一片（タイル）。1-bit のセル/ピクセルを敷き詰めて絵にする
  * この言語の本質。tessellation（平面充填）と同語源。
  *
- * 立ち位置: SYNESTA 唯一の generative-art アプリ。旧 GENART（プリセット＋ノブのノーコード）
- * は廃止し、その全 19 算法を `.tess` サンプルへ、出力パイプライン（OUTPUT/dotScale/PAD/
- * PNG·GIF·MP4）を本アプリへ移設・一本化した。「書いて創る」コード一本。
+ * 立ち位置: SYNESTA 唯一の generative-art アプリ。プリセットやノブは持たず「書いて創る」
+ * コード一本。学習用 `/Sketches/Learn` と作例 `/Sketches/Gallery` の `.tess` サンプルを備える。
  *
  * 統合の要: 言語は抽象 surface 契約だけに依存。lang/surface.js の純粋な
  * makeBufferSurface（1-bit FB）に描かせ、その .buf を GPU.blit するだけ。合成・書き出しは
- * 共有モジュール core/art_export.js（旧 GENART の compose/encode を抽出・一般化）。
+ * 共有モジュール core/art_export.js。
  *
  * 設定はすべてコードの設定ディレクティブで宣言する（recipe 自己完結）:
  *   canvas: WxH / pad: N / fps: N / seed: N / period: 秒 / view: mode(args)
- *   （pixel は 8 固定＝チャンキー 1bit が核。ディレクティブは廃止）
- * 画面のコントロールは「書き出し形式 + DL」のみ＝最小。SEED/方式/出力/pad/fps の
- * ウィジェットは廃止した（旧 GENART/初期 TESSERA の名残）。プレビューは size のアスペクト比を反映。
+ *   （1 アートドット = 8 出力px 固定＝チャンキー 1bit が核）
+ * 画面のコントロールは「書き出し形式 + DL」のみ＝最小（設定はコード側）。
+ * プレビューは canvas のアスペクト比を反映。
  *
  * 構成:
  *   - トップツールバー(1 行): 形式(PNG/GIF/MP4) + EXPORT/RESEED/SAVE/OPEN/NEW/WALLPAPER。

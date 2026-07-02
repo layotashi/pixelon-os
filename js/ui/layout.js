@@ -150,8 +150,8 @@ export class Box {
     // 前回 hidden だった Box が今回 visible になる場合、リーフが
     // visible=false のまま残っているとその Box の HBox.w / VBox.h が 0 に
     // 縮退し、後段の maxW が過小評価される。
-    // (例: DISPLAY_TUNING で Pixel Grid を OFF→ON すると、
-    //      復活した HBox の幅が 0 として計算され、HSep が縮んでいた。)
+    // (例: 隠れていた行 Box を再表示したとき、その HBox の幅が 0 と計算され
+    //      中の HSep が縮んでしまう不具合として顕在化した。)
     for (const c of this.children) {
       if (c instanceof Box) {
         c._setLeavesVisible(c.visible !== false);

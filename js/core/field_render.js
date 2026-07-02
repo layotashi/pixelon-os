@@ -4,7 +4,7 @@
  *
  * Tessera 言語の出力は結局 0..1 のスカラー場 f(x,y)。それを DITHER / HATCH / HALFTONE /
  * BRAILLE の各「面」方式で 1-bit (0/1) に変換する純関数群。「場 = 共通通貨」
- * という北極星 B の中核（旧 GENART の renderPixelMode を抽出。現在は TESSERA が使う）。
+ * という北極星 B の中核（TESSERA が使う）。
  *
  * すべて純粋: 入力 field=Float32Array(W*H, 0..1)、出力 out=Uint8Array(W*H, 0/1)。
  * 座標系・合成（額縁/倍率）・書き出しは呼び側＝アプリ／core/art_export.js の責務。
@@ -65,7 +65,7 @@ function clampF(f, x, y, W, H) {
   return f[y * W + x];
 }
 
-// ── 各方式（field → 1bit out。旧 GENART の renderPixelMode から抽出した同一ロジック） ──
+// ── 各方式（field → 1bit out） ──
 
 function renderDither(f, W, H, a, size) {
   const dp = ditherParams(size);

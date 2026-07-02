@@ -1,6 +1,6 @@
 /**
  * @module ui/WidgetGroup
- * WidgetGroup.js — ウィジェットグループ (旧 drawWidgets / updateWidgets の代替)
+ * WidgetGroup.js — ウィジェットグループ
  *
  * Widget インスタンスの配列を保持し、描画・入力処理・フォーカス管理・
  * ラジオグループの排他制御・ポップアップキュー登録を一括で行う。
