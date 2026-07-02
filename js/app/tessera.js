@@ -748,27 +748,19 @@ function drawPerformOverlay(cr) {
     if (cells <= 0) continue;
     const barW = OV.barPadX * 2 + cells * OV.adv - 2;
     GPU.fillRect(L.x0 - OV.barPadX, y, barW, OV.barH, 0);
-    // 文字。選択セルは反転 (セル矩形を明色 → グリフを暗色)。
+    const uw = GLYPH_W * 2; // 下線幅 = グリフ幅（字間を含まない＝TextArea と同規約）
+    const uy = y + OV.padTop + OV.textH + OV.gapCursor; // カーソル/選択の下線 Y
+    // 文字（明色）＋選択下線（TextArea と同じく下線で表現）。
     for (let c = 0; c < visText.length; c++) {
       const cx = L.x0 + c * OV.adv;
-      if (sel && ovInSelection(sel, li, _ovScrollCol + c)) {
-        GPU.fillRect(cx - 1, y + OV.padTop - 1, OV.adv, OV.textH + 2, 1);
-        drawGlyph2x(visText[c], cx, y + OV.padTop, 0);
-      } else {
-        drawGlyph2x(visText[c], cx, y + OV.padTop, 1);
-      }
+      drawGlyph2x(visText[c], cx, y + OV.padTop, 1);
+      if (sel && ovInSelection(sel, li, _ovScrollCol + c))
+        GPU.fillRect(cx, uy, uw, OV.cursorH, 1);
     }
-    // 下線カーソル (フォーカス時・ブリンク)
+    // カーソル下線 (フォーカス時・ブリンク)。選択下線と同じ Y・太さ。
     if (isCur && focused && blink) {
       const cc = editor.cursorCol - _ovScrollCol;
-      if (cc >= 0 && cc < L.maxCols)
-        GPU.fillRect(
-          L.x0 + cc * OV.adv,
-          y + OV.padTop + OV.textH + OV.gapCursor,
-          OV.textH,
-          OV.cursorH,
-          1,
-        );
+      if (cc >= 0 && cc < L.maxCols) GPU.fillRect(L.x0 + cc * OV.adv, uy, uw, OV.cursorH, 1);
     }
   }
 
