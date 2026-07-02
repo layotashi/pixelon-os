@@ -42,6 +42,8 @@
  *   - Ctrl+E / EXPORT で作品を size ちょうどに PNG/GIF/MP4 書き出し。WAV は sound: の
  *     1 周期を音声書き出し。CODE はソースを 1080² の SYNESTA カードとして書き出す。Ctrl+R で seed: 振り直し。
  *   - ライブ編集耐性: コンパイル/評価に失敗しても直前の good を流し続ける（映像/音が途切れない）。
+ *   - ライブ演奏ビュー: ウィンドウを広げる/最大化するとプレビューが利用可能領域へ拡大（コードは
+ *     左に残る）。CODE トグルで作品にコードを重畳すれば、大きなコードカードのライブ表示になる。
  *   - Alt+W で現在の場をデスクトップ背景に。Alt+P で音の再生/停止。Shift+Alt+F で整形。
  *     未保存変更は破棄確認。サンプルは /Sketches/Learn（番号順・09 で音）と /Sketches/Gallery。
  *   - EXPLORER から .tess をダブルクリックで開く（tesseraOpenFile）。
@@ -74,7 +76,9 @@ const GALLERY_DIR = "/Sketches/Gallery";
 const COLS = 40; // エディタ幅 (文字数)。40桁 = レトロ家庭機の画面幅
 const ROWS = 24; // エディタ表示行数（最長サンプル julia ~23 行をスクロール無しで表示）
 const MAX_LINES = 9999;
-const PV_BOX = 176; // 画面上のプレビュー枠の長辺px（出力をクリーンな倍率で縮めて表示）
+const PV_BOX = 176; // プレビュー枠の長辺px の**自然サイズ**（最小）。onDraw で利用可能領域へ拡大
+// 現フレームのプレビュー枠長辺px。onDraw が cr から算出（自然サイズ以上）。onMeasure は PV_BOX。
+let _pvBox = PV_BOX;
 // プレビューは出力合成（art→額縁→base）をクリーンな倍率(整数 or 1/整数)＋NN で見せる
 // ＝pixel の粗さ・pad が WYSIWYG かつ半端比率のモアレ無し。
 const GAP = 8; // エディタ⇄プレビュー間
@@ -893,8 +897,8 @@ function previewScale(ascii) {
   const maxBase = Math.max(baseW, baseH);
   let renderDenom = 1,
     displayScale = 1;
-  if (maxBase <= PV_BOX) displayScale = Math.max(1, Math.floor(PV_BOX / maxBase));
-  else renderDenom = Math.ceil(maxBase / PV_BOX);
+  if (maxBase <= _pvBox) displayScale = Math.max(1, Math.floor(_pvBox / maxBase));
+  else renderDenom = Math.ceil(maxBase / _pvBox);
   // ASCII はグリフを拡大すると汚いので等倍表示。
   if (ascii && displayScale > 1) displayScale = 1;
   const rbW = Math.max(1, Math.round(baseW / renderDenom));
@@ -1225,6 +1229,22 @@ function onDraw(cr) {
 
   GPU.fillRect(cr.x, cr.y, cr.w, cr.h, 0); // 背景クリア
 
+  // ── プレビューを利用可能領域いっぱいへ拡大（自然サイズ PV_BOX 以上）──
+  // ウィンドウを広げる/最大化するとライブビューが大きくなる。エディタ＝コードは左に残るので
+  // 「コードを見せたまま画（と音）が大きく動く」＝ライブ演奏ビュー。CODE トグルで作品にコードを
+  // 重畳すれば大きなコードカードのライブ表示になる。
+  {
+    const { baseW, baseH } = outputDims();
+    const sideH = sideGroup ? sideGroup.measure().h : 0;
+    const availW = cr.w - editor.x - editor.w - GAP - UI.FOCUS_MARGIN;
+    const availH = cr.h - (editor.y + 1) - GAP - sideH - UI.FOCUS_MARGIN;
+    const box =
+      baseW >= baseH
+        ? Math.min(availW, (availH * baseW) / baseH)
+        : Math.min(availH, (availW * baseH) / baseW);
+    _pvBox = Math.max(PV_BOX, Number.isFinite(box) ? Math.floor(box) : 0);
+  }
+
   // ── トップツールバー（全幅に均等配分）+ エディタ（左カラム）──
   fitToolbar();
   group.draw(cr);
@@ -1314,6 +1334,7 @@ function onInput(ev) {
 function onMeasure() {
   // トップツールバーは全幅に均等配分し、その下に [エディタ | プレビュー]。ウィンドウは
   // エディタ + 実プレビュー幅ちょうど（プレビューが右下端に揃う）。
+  _pvBox = PV_BOX; // 自然サイズで測る（onDraw の拡大値を測定へ持ち込まない＝フィードバック回避）
   fitToolbar();
   const pv = previewScale(asciiActive);
   const contentW = Math.max(ctrlRow ? ctrlRow.w : 0, editor.w + GAP + pv.w);
@@ -1371,7 +1392,9 @@ WM.wmRegister(
         "The visual field can read the sound: amp (audio level 0..1) and beat(n)/" +
         "step(n) share the loop clock, so visuals react to the audio. Pick WAV to " +
         "export the sound (one loop). Typos never blank the output — the last " +
-        "working version keeps running until the new code is valid.",
+        "working version keeps running until the new code is valid. Resize or " +
+        "maximize the window to enlarge the live view (code stays on the left); " +
+        "toggle CODE to overlay the source over the animating art.",
       onRelayout: relayout,
     });
     refreshTitle();
