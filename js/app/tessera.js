@@ -678,7 +678,11 @@ function ovLayout(cr) {
   const gridW = maxCols * OV.adv - 2;
   const x0 = ax + ((artW - gridW) >> 1); // テキスト左端 (中央寄せ＝左右対称)
   const maxRows = Math.max(1, Math.floor(artH / OV.pitch));
-  return { x0, y0: ay, maxCols, maxRows };
+  // 縦も横と同じく中央寄せ＝上下対称。バー群の縦幅 (末尾の行間は含めない) を中央に置く。
+  // 内容はこのグリッド内で上詰め (タイプしても動かない)。
+  const gridH = (maxRows - 1) * OV.pitch + OV.barH;
+  const y0 = ay + ((artH - gridH) >> 1);
+  return { x0, y0, maxCols, maxRows };
 }
 
 /** グリフを 2x で描く (5x5 → 10x10)。SYNESTA の表示は常に大文字 (drawText と同じ規約)。 */
