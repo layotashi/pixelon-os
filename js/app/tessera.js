@@ -39,8 +39,9 @@
  *
  * VFS / 操作:
  *   - Alt+N 新規 / Ctrl+O 開く / Ctrl+S 保存 / Ctrl+Shift+S 名前を付けて保存
- *   - Ctrl+E / EXPORT で作品を size ちょうどに PNG/GIF/MP4 書き出し。CODE はソースを
- *     1080² の SYNESTA カード（作品背景＋ハイライトコード）として書き出す。Ctrl+R で seed: 振り直し。
+ *   - Ctrl+E / EXPORT で作品を size ちょうどに PNG/GIF/MP4 書き出し。WAV は sound: の
+ *     1 周期を音声書き出し。CODE はソースを 1080² の SYNESTA カードとして書き出す。Ctrl+R で seed: 振り直し。
+ *   - ライブ編集耐性: コンパイル/評価に失敗しても直前の good を流し続ける（映像/音が途切れない）。
  *   - Alt+W で現在の場をデスクトップ背景に。Alt+P で音の再生/停止。Shift+Alt+F で整形。
  *     未保存変更は破棄確認。サンプルは /Sketches/Learn（番号順・09 で音）と /Sketches/Gallery。
  *   - EXPLORER から .tess をダブルクリックで開く（tesseraOpenFile）。
@@ -56,6 +57,7 @@ import * as FieldRender from "../core/field_render.js";
 import * as AsciiArt from "../core/ascii_art.js";
 import * as ArtExport from "../core/art_export.js";
 import { initAudio, getAudioContext, getMasterGain } from "../core/audio.js";
+import { encodeWav } from "../core/wav.js";
 import { compile } from "../../lang/runtime.js";
 import { makeBufferSurface } from "../../lang/surface.js";
 import { format } from "../../lang/format.js";
@@ -445,6 +447,7 @@ const EXPORT_FORMATS = [
   { key: "png", label: "PNG" },
   { key: "gif", label: "GIF" },
   { key: "mp4", label: "MP4" },
+  { key: "wav", label: "WAV" }, // 音のみ（sound: の 1 周期を書き出し）
 ];
 let exportFormatIdx = 0; // availableFormats() のインデックス
 /** この環境で選べる書き出し形式（MP4 は WebCodecs 対応時のみ）。 */
@@ -642,13 +645,19 @@ let _ready = false;
 let _seeded = false;
 
 function recompile(src) {
-  _pvFrame = -1; // コード変更（fps 含む）は即プレビューへ反映
-  _cardLayout = null; // ソース/canvas/pad 変更でカードのレイアウト・マスクを作り直す
   try {
-    program = compile(src);
+    const candidate = compile(src);
+    // 試し評価: コンパイルは通るが評価時に投げる式（未定義変数など）も弾く。
+    // これらが通ったときだけ program を差し替える＝ライブ編集中の typo で映像/音が
+    // 途切れず、直前の good を流し続ける（last-good 継続）。
+    candidate.sample(0.5, 0.5, 0, 0);
+    if (candidate.audio) candidate.audio.sampleAudio(0, 0, Math.PI * 2);
+    program = candidate;
     errMsg = "";
+    _pvFrame = -1; // 新しい good を即プレビューへ反映
+    _cardLayout = null; // ソース/canvas/pad 変更でカードのレイアウト・マスクを作り直す
   } catch (e) {
-    program = null;
+    // 直前の good（program）はそのまま流し続ける。エラーは footer に出すだけ。
     errMsg = e.message + (e.pos != null ? ` (pos ${e.pos})` : "");
   }
 }
@@ -955,6 +964,16 @@ function makeExportSurface(w, h, asciiOn, mode, params) {
   return surf;
 }
 
+/** Blob をファイルとしてダウンロードする（WAV 等）。 */
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 /** 書き出しファイル名 tessera_<name>_<seed>_<ts>.<ext>。 */
 function exportName(ext) {
   const base = currentFilePath
@@ -1004,6 +1023,17 @@ function exportArt() {
   const key = currentFormatKey();
   const { seed, period } = resolvedConfig();
   const fps = outputDims().fps;
+  if (key === "wav") {
+    // 音のみ: sound: の 1 周期を決定論レンダして WAV 書き出し（シームレスループ）。
+    if (!prog.audio) {
+      errMsg = "no sound: block to export as WAV";
+      return;
+    }
+    const sr = 44100;
+    const data = prog.audio.renderAudio(sr, period, seed, period);
+    downloadBlob(new Blob([encodeWav(data, sr)], { type: "audio/wav" }), exportName("wav"));
+    return;
+  }
   if (codeOn) {
     // コードカード: 作品(額縁=pad) + バー + 文字。art/code の INV は frame に焼き込む。
     const eff = effectiveRender();
@@ -1235,9 +1265,8 @@ function onDraw(cr) {
         _pvFrame = frameIdx;
       }
     } catch (e) {
-      program = null;
+      // 描画中の例外でも直前の good フレーム（_pvCache）は保持し、映像を途切れさせない。
       errMsg = e.message + (e.pos != null ? ` (pos ${e.pos})` : "");
-      _pvCache = null;
     }
     const pv = _pvCache;
     if (pv) {
@@ -1340,7 +1369,9 @@ WM.wmRegister(
         "it loops over 'period' in sync with the view. Declare named timbres with " +
         "voice <name>: <expr with f>, then play them by name and mix with +. " +
         "The visual field can read the sound: amp (audio level 0..1) and beat(n)/" +
-        "step(n) share the loop clock, so visuals react to the audio.",
+        "step(n) share the loop clock, so visuals react to the audio. Pick WAV to " +
+        "export the sound (one loop). Typos never blank the output — the last " +
+        "working version keeps running until the new code is valid.",
       onRelayout: relayout,
     });
     refreshTitle();
