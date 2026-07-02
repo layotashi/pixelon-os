@@ -1,24 +1,17 @@
-# SYNESTA v0.2.0 — JavaScript モジュール構成
+# js/ — アーキテクチャ
 
-> 1-bit Desktop DAW — ブラウザ上で動作するチップチューン風デスクトップ環境
+SYNESTA (1-bit の空想レトロ・クリエイティブ OS) を構成する全 JavaScript モジュール。
+ビルドツールなしの ES Modules で、`index.html` が `js/kernel.js` を読み込む。
 
-## アーキテクチャ概要
+## ドキュメント方針 (SSoT)
 
-```
-kernel.js           ← エントリポイント / DI wiring / main loop
-config.js           ← グローバル設定・定数
-  │
-  ├── core/         ← 描画・入力・フォント・ストレージ等のインフラ
-  ├── audio/        ← シンセ・再生エンジン・トランスポートUI
-  ├── ui/           ← ウィジェットライブラリ (ボタン・スライダー・テキスト等)
-  ├── wm/           ← OS風ウィンドウマネージャ
-  ├── app/          ← 各アプリケーションウィンドウ
-  │
-  ├── splash.js     ← スプラッシュスクリーン (ブート演出)
-  └── wallpaper.js  ← 壁紙管理 (Solid 階調 / VFS 画像)
-```
+このディレクトリ以下のドキュメント・コメントは **概念・アーキテクチャ・設計理由・非自明な
+契約** を書く場所。バージョン・寸法・プリセット・パレット・音楽定数・API シグネチャなど
+「コードや manifest を見れば分かる可変な事実」は **そちらが唯一の出所** とし、docs には
+書き写さない (再掲は必ず陳腐化する)。例: 製品バージョンは `config.js` の `APP_VERSION`、
+アセット寸法は各 `manifest.json` の `format`。
 
-## レイヤー依存方向
+## レイヤ構成と依存方向
 
 依存は **上→下** の一方向のみ。循環依存はゼロ。
 
@@ -26,113 +19,45 @@ config.js           ← グローバル設定・定数
 app/  →  wm/  →  ui/  →  core/
   │        │       │        ↑
   └────────┴───────┴── config.js
-                        audio/  →  core/  (UIなし)
+                        audio/  →  core/   (UI なし)
 ```
 
-## DI (Dependency Injection) パターン
+| レイヤ        | 役割                                                             |
+| ------------- | ---------------------------------------------------------------- |
+| `core/`       | 描画・入力・フォント・音声・ストレージ等のプラットフォーム基盤    |
+| `audio/`      | STUDIO 専用の再生エンジン・トランスポート UI (UI 非依存のエンジン + UI) |
+| `ui/`         | OS 風ウィジェットライブラリ (DI で `core` から切り離し・再利用可能) |
+| `wm/`         | OS 風ウィンドウマネージャ・デスクトップ                           |
+| `app/`        | 各アプリケーションウィンドウ                                     |
+| ルート        | `kernel` (配線) / `config` (定数) / `splash` / `wallpaper`       |
 
-レイヤー間の逆方向参照はすべてコールバック注入で解決しています。  
-配線は `kernel.js` の `boot()` に集約されています。
+各レイヤのファイル一覧・規約は配下の `README.md` を参照。
 
-| 注入関数                           | 注入先        | 注入される機能                                     |
-| ---------------------------------- | ------------- | -------------------------------------------------- |
-| `wmSetUiCallbacks()`               | wm → ui       | `flushPopups`, `hasOpenPopup`, `hasTextInputFocus`, `dispatchPopupInput` |
-| `uiSetWmCallbacks()`               | ui → wm       | `wmSetTooltip`, `wmRequestCursor`                  |
-| `transportSetPianoRollCallbacks()` | audio → app   | `getTracks`, `setPlayheadPos`                      |
-| `transportSetIsHostFocused()`      | audio → wm    | `wmIsFocused("STUDIO")` (Space キー制御)           |
-| `configSetSaveCallback()`          | config → core | `save(key, value)` ディスパッチャ                  |
+## DI (依存注入) — 逆方向参照の解決
 
-## ファイル一覧
+レイヤ間の逆方向参照はすべてコールバック注入で解決し、配線は `kernel.js` の `boot()` に集約。
 
-### ルート (6)
-
-| ファイル       | 行数 | 役割                                                               |
-| -------------- | ---- | ------------------------------------------------------------------ |
-| `kernel.js`    | ~170 | ブートストラップ + メインループ + DI 配線                          |
-| `config.js`    | ~380 | 解像度プリセット・パレット・フォントレジストリ・音楽定数の一元定義 |
-| `splash.js`    | ~275 | スプラッシュスクリーン (ブート演出 + ディザ遷移)                   |
-| `logo.js`      | ~45  | ブートロゴ PNG の読み込み・描画                                    |
-| `wallpaper.js` | ~230 | 壁紙管理 (Solid 階調 / VFS 画像)                                   |
-
-### core/ (14) — インフラ層
-
-| ファイル       | 行数 | 役割                                                            |
-| -------------- | ---- | --------------------------------------------------------------- |
-| `gpu.js`       | ~665 | VRAM + 描画プリミティブ (pset/line/rect/blit 等)                |
-| `input.js`     | ~370 | キーボード・マウス入力の状態管理                                |
-| `font.js`      | ~155 | ビットマップフォント読み込み・描画・動的切替 (switchFont)       |
-| `cursor.js`    | ~160 | カーソルスプライトの管理・描画                                  |
-| `icon.js`      | ~150 | アイコンスプライトシートの管理・描画                            |
-| `text_icon.js` | ~105 | テキスト用アイコン (改行記号等)                                 |
-| `storage.js`   | ~120 | `localStorage` ベースの設定永続化                               |
-| `dither.js`    | ~185 | Bayer ordered dithering (RGBA → 1-bit)                          |
-| `ascii_art.js` | ~270 | ASCII Art 変換 (RGBA → 文字濃淡ハーフトーニング)                |
-| `anim.js`      | ~300 | イージング関数群 (25種 + linear) + アニメーションユーティリティ |
-| `audio.js`     | ~700 | Web Audio API 基盤 (AudioContext・SynthChannel・SFX)            |
-| `gif.js`       | ~260 | GIF89a エンコーダ (1-bit 特化, LZW 圧縮)                        |
-| `pbm.js`       | ~70  | PBM P1 (ASCII) コーデック (encode / decode)                     |
-| `vfs.js`       | ~480 | localStorage ベースの仮想ファイルシステム                       |
-
-### audio/ (2) — STUDIO 専用オーディオ層
-
-| ファイル             | 行数 | 役割                                                 |
-| -------------------- | ---- | ---------------------------------------------------- |
-| `playback_engine.js` | ~475 | 再生エンジン (look-ahead スケジューラ, メトロノーム) |
-| `transport.js`       | ~380 | トランスポートUI (再生/停止/BPM/ループ)              |
-
-### ui/ — ウィジェット層
-
-| ファイル / ディレクトリ | 行数       | 役割                                                      |
-| ----------------------- | ---------- | --------------------------------------------------------- |
-| `Widget.js`             | ~110       | ウィジェット基底クラス                                    |
-| `FocusableWidget.js`    | ~45        | フォーカス可能ウィジェット基底クラス                      |
-| `WidgetGroup.js`        | ~280       | ウィジェットグループ (描画・入力・計測のオーケストレータ) |
-| `ui_helpers.js`         | ~160       | 共有状態・ユーティリティ (focus, キーリピート 等)         |
-| `widgets/`              | 16ファイル | 具象ウィジェットクラス (Button/Slider/DropDown 等)        |
-| `FileDialog.js`         | ~200       | ファイルダイアログ (Save/Open モーダル)                   |
-| `scrollbar.js`          | ~430       | スクロールバー プリミティブ (状態管理・描画・入力)        |
-| `layout.js`             | ~210       | レイアウトエンジン (Box / HBox / VBox, measureWidgets)    |
-| `ui_constants.js`       | ~10        | 共有定数 (FOCUS_MARGIN)                                   |
-| `index.js`              | ~86        | ファサード (全 public API の re-export)                   |
-
-### wm/ (2) — ウィンドウマネージャ層
-
-| ファイル   | 行数  | 役割                                                       |
-| ---------- | ----- | ---------------------------------------------------------- |
-| `wm.js`    | ~1840 | ウィンドウシステム (移動/リサイズ/スナップ/Z順/スクロール) |
-| `index.js` | ~40   | ファサード (全 public API の re-export)                    |
-
-### app/ (9+) — アプリケーション層
-
-| ファイル                | 行数  | 役割                                                 |
-| ----------------------- | ----- | ---------------------------------------------------- |
-| `app.js`                | ~85   | アプリ層ハブ (各ウィンドウの登録・更新・描画)        |
-| `about.js`              | ~71   | ABOUT ダイアログ                                     |
-| `breakout.js`           | ~1140 | BREAKOUT ウィンドウ (ブロック崩し)                   |
-| `capture.js`            | ~530  | CAPTURE ウィンドウ (スクリーンキャプチャ + 動画撮影) |
-| `game_utils.js`         | ~256  | ゲームアプリ共通ユーティリティ                       |
-| `tessera.js`            | ~900  | TESSERA ウィンドウ (1-bit 生成的アート言語＋出力)    |
-| `graze.js`              | ~840  | GRAZE ウィンドウ (弾幕サバイバル)                    |
-| `notepad.js`            | ~145  | メモ帳ウィンドウ                                     |
-| `settings.js`           | ~400  | 設定ウィンドウ (パレット/壁紙/解像度)                |
-| `vram_dump.js`          | ~400  | VRAM ダンプ (開発・デバッグ用, BIN/HEX/RLE)          |
-| `studio/studio.js`      | ~335  | STUDIO ウィンドウ (Transport + タブ切替)             |
-| `studio/synth_panel.js` | ~560  | シンセサイザ UI (STUDIO 内 INST タブ)                |
-| `studio/piano_roll.js`  | ~1100 | ピアノロールエディタ (STUDIO 内タブ)                 |
+| 注入                                | 方向         | 渡すもの                                                        |
+| ----------------------------------- | ------------ | --------------------------------------------------------------- |
+| `initPorts(...)`                    | core → ui    | gpu / font / icon / input / textIcon / dither (ui/ports.js)     |
+| `wmSetUiCallbacks(...)`             | ui → wm      | flushPopups / hasOpenPopup / hasTextInputFocus / dispatchPopupInput |
+| `WidgetGroup.setWmCallbacks(...)`   | wm → ui      | setTooltip / requestCursor                                      |
+| `transportSetPianoRollCallbacks(...)` | app → audio | getTracks / setPlayheadPos                                      |
+| `transportSetIsHostFocused(...)`    | wm → audio   | STUDIO フォーカス判定 (Space キー制御用)                        |
+| `configSetSaveCallback(...)`        | core → config | 設定保存ディスパッチャ (storage へ)                            |
+| `configSetFontSwitchCallback(...)`  | core → config | フォント切替時のグリフ差し替え (font へ)                       |
 
 ## 技術スタック
 
-- **言語**: ES Modules (ES2020+), ビルドツールなし
-- **描画**: `Uint8Array` VRAM (1-bit) → `Canvas putImageData`
+- **言語**: ES Modules (ES2020+)、ビルドツールなし
+- **描画**: `Uint8Array` VRAM (1-bit) → `display_fx` で RGBA 展開 → `Canvas putImageData`
 - **音声**: Web Audio API (`OscillatorNode` + `GainNode`)
-- **録画**: MediaRecorder API (MP4/WebM) + `canvas.captureStream()`
-- **永続化**: `localStorage`
+- **書き出し**: GIF89a / WAV / PBM は自前コーデック、MP4 は WebCodecs、動画録画は MediaRecorder
+- **永続化**: `localStorage` (設定 + VFS + ユーザーフォント)
 - **エントリ**: `index.html` → `<script type="module" src="./js/kernel.js">`
 
-## 開発メモ
+## 規約
 
-- すべてのモジュールには先頭に JSDoc ヘッダーコメントがあります
-- `ui/` と `wm/` は `index.js` ファサードを通じてアクセスしてください
-- 副作用インポート (`import "./xxx.js"`) は `app/app.js` でのウィンドウ登録のみ
-- V2 では TypeScript への移行を予定しています
-
+- `ui/` と `wm/` は `index.js` ファサード経由でアクセスする。
+- 副作用インポート (`import "./xxx.js"`) は `app/app.js` でのウィンドウ登録のみ。
+- モジュール先頭の JSDoc `@module` ヘッダーが、その 1 ファイルの役割の SSoT。
