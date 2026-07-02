@@ -93,12 +93,6 @@ const ctrlKeyPressed = new Map();
 /** Alt+キー の1フレーム押下フラグ */
 const altKeyPressed = new Map();
 
-/** Alt+キー のインターセプト対象キーコード */
-const ALT_INTERCEPT = new Set([
-  "KeyN",
-  "KeyF", // Shift+Alt+F = フォーマット (SKETCH)。横取りして文字挿入を防ぐ
-]);
-
 /** Ctrl+キー のインターセプト対象キーコード */
 const CTRL_INTERCEPT = new Set([
   "KeyA",
@@ -366,9 +360,12 @@ export function initInput() {
         keyState.set(code, true);
       }
     } else if (e.altKey) {
-      // Alt+key: ブラウザメニュー起動を抑止
+      // Alt+key: ブラウザメニュー起動を抑止し、Alt ショートカットとして記録する。
+      // 旧実装は ALT_INTERCEPT ホワイトリスト方式で、登録漏れのキー (Alt+W 等) が
+      // 無反応になる脆さがあった。修飾キー以外の全 Alt+key を横取り＝記録して、
+      // アプリが追加する Alt ショートカットが保守不要で必ず効くようにする。
       e.preventDefault();
-      if (ALT_INTERCEPT.has(code)) {
+      if (!MODIFIER_CODES.has(code)) {
         altKeyPressed.set(code, { shift: e.shiftKey });
       }
     } else {
@@ -382,7 +379,7 @@ export function initInput() {
     }
 
     // ── keyState / keyPressed 更新 ──
-    const isAltIntercepted = e.altKey && ALT_INTERCEPT.has(code);
+    const isAltIntercepted = e.altKey && !MODIFIER_CODES.has(code);
     if (!(e.ctrlKey || e.metaKey) || CTRL_PASSTHROUGH.has(code)) {
       // Ctrl 押下中は PASSTHROUGH 以外は keyState に入れない (既存挙動)
       // Alt+インターセプト対象も keyState に入れない (アプリ側で altDown で処理)
