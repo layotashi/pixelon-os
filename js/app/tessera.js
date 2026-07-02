@@ -42,9 +42,11 @@
  *   - Ctrl+E / EXPORT で作品を size ちょうどに PNG/GIF/MP4 書き出し。WAV は sound: の
  *     1 周期を音声書き出し。CODE はソースを 1080² の SYNESTA カードとして書き出す。Ctrl+R で seed: 振り直し。
  *   - ライブ編集耐性: コンパイル/評価に失敗しても直前の good を流し続ける（映像/音が途切れない）。
- *   - ライブ演奏ビュー: Alt+Enter で PERFORM（エディタ/ツールバーを隠しプレビューをコンテンツ
- *     全域へ＝大きなライブ表示。Esc で解除）。入力はエディタに届くので CODE トグルでコードを
- *     重畳すればコードを見せたままライブ編集できる。ウィンドウ最大化と併用でさらに大きく。
+ *   - PERFORM（ライブ演奏ビュー）: Alt+Enter / F11 でフルスクリーン化し、画面そのものが
+ *     キャンバスになる（1 アートドット = 8 画面px。canvas:/pad: は無視、Esc / F11 で解除）。
+ *     動くアートの上に「暗色バー + 明色 2x コード + カーソル」のオーバーレイエディタが重なり、
+ *     通常どおり編集できる（編集モデルは同じ TextArea。編集は即 recompile ＝ライブコーディング）。
+ *     エラーは最下端の反転バーに出し、映像/音は直前 good が流れ続ける。
  *   - Alt+W で現在の場をデスクトップ背景に。Alt+P で音の再生/停止。Shift+Alt+F で整形。
  *     未保存変更は破棄確認。サンプルは /Sketches/Learn（番号順・09 で音）と /Sketches/Gallery。
  *   - EXPLORER から .tess をダブルクリックで開く（tesseraOpenFile）。
@@ -627,6 +629,199 @@ function drawPerform(cr) {
     const ox = cr.x + ((cr.w - pv.w) >> 1);
     const oy = cr.y + ((cr.h - pv.h) >> 1);
     GPU.blit(pv.buf, pv.w, pv.h, ox, oy, 1);
+  }
+}
+
+// ── PERFORM オーバーレイエディタ ──────────────────────────────────────
+// 動くアートの上に「暗色バー + 明色 2x コード + カーソル」を重ねる Strudel 流のライブ
+// エディタ。編集モデル (行/カーソル/選択/undo/クリップボード/キー処理) は通常モードと
+// 同じ TextArea をそのまま使い、ここは描画とマウス座標変換だけを担う専用ビュー。
+//
+// メトリクス (画面px。コード層は 2px = 1 単位、1 行 24px = 3 チャンクでアートと整合):
+//   縦: バー上 4 / 文字 10 / 間 2 / カーソル 2 / バー下 4 = バー 22 + 透過行間 2 = 24
+//   横: 透過 4 / バー 3 / 文字 10 (字間 2) …/ バー 3 / 透過 4 — 480px 幅に 39 桁が
+//       ぴったり対称に収まる (4+3 + (39*12-2) + 3+4 = 480)。広い画面では中央寄せ。
+const OV = {
+  adv: 12, // 字送り (文字 10 + 字間 2)
+  textH: 10, // 2x グリフ (5x5 → 10x10)
+  padTop: 4,
+  gapCursor: 2,
+  cursorH: 2,
+  padBottom: 4,
+  lineGap: 2, // バー間の透過行間 (アートが覗く)
+  barH: 22, // padTop+textH+gapCursor+cursorH+padBottom
+  pitch: 24, // barH + lineGap = 3 チャンク
+  barPadX: 3,
+  marginX: 4,
+};
+let _ovScrollRow = 0; // オーバーレイ独自のスクロール (カーソル追従 + ホイール)
+let _ovScrollCol = 0;
+let _ovDragging = false;
+let _ovDragAnchor = null; // ドラッグ選択の起点 {r, c}
+let _ovLastCursor = ""; // カーソル移動検知 (追従スクロールはカーソルが動いたときだけ)
+
+/** オーバーレイのレイアウト (アートのレターボックス原点にアンカー＝チャンク整合)。 */
+function ovLayout(cr) {
+  const artW = Math.floor(cr.w / PIXEL) * PIXEL;
+  const artH = Math.floor(cr.h / PIXEL) * PIXEL;
+  const ax = cr.x + ((cr.w - artW) >> 1);
+  const ay = cr.y + ((cr.h - artH) >> 1);
+  // 画面に入る桁数 (対称余白込み・上限 COLS)。480 幅 → ちょうど 39。
+  const usable = artW - 2 * (OV.marginX + OV.barPadX);
+  const maxCols = Math.max(1, Math.min(COLS, Math.floor((usable + 2) / OV.adv)));
+  const gridW = maxCols * OV.adv - 2;
+  const x0 = ax + ((artW - gridW) >> 1); // テキスト左端 (中央寄せ＝左右対称)
+  const maxRows = Math.max(1, Math.floor(artH / OV.pitch));
+  return { x0, y0: ay, maxCols, maxRows };
+}
+
+/** グリフを 2x で描く (5x5 → 10x10)。SYNESTA の表示は常に大文字 (drawText と同じ規約)。 */
+function drawGlyph2x(ch, x, y, c) {
+  const g = getGlyph(ch.toUpperCase());
+  if (!g) return;
+  for (let gy = 0; gy < GLYPH_H; gy++)
+    for (let gx = 0; gx < GLYPH_W; gx++)
+      if (g[gy * GLYPH_W + gx]) GPU.fillRect(x + gx * 2, y + gy * 2, 2, 2, c);
+}
+
+/** エディタの選択範囲を正規化して返す (無ければ null)。 */
+function ovSelection() {
+  const ar = editor.selectionAnchorRow;
+  if (ar === null) return null;
+  const ac = editor.selectionAnchorCol;
+  const br = editor.cursorRow;
+  const bc = editor.cursorCol;
+  if (ar === br && ac === bc) return null;
+  return ar < br || (ar === br && ac < bc)
+    ? { r0: ar, c0: ac, r1: br, c1: bc }
+    : { r0: br, c0: bc, r1: ar, c1: ac };
+}
+
+function ovInSelection(s, r, c) {
+  if (r < s.r0 || r > s.r1) return false;
+  if (r === s.r0 && c < s.c0) return false;
+  if (r === s.r1 && c >= s.c1) return false;
+  return true;
+}
+
+/** オーバーレイ描画 (drawPerform の上に重ねる)。 */
+function drawPerformOverlay(cr) {
+  const L = ovLayout(cr);
+  const lines = editor.lines;
+
+  // カーソルが動いたときだけ追従スクロール (ホイールの自由スクロールを妨げない)
+  const curKey = editor.cursorRow + ":" + editor.cursorCol;
+  if (curKey !== _ovLastCursor) {
+    _ovLastCursor = curKey;
+    if (editor.cursorRow < _ovScrollRow) _ovScrollRow = editor.cursorRow;
+    if (editor.cursorRow >= _ovScrollRow + L.maxRows)
+      _ovScrollRow = editor.cursorRow - L.maxRows + 1;
+    if (editor.cursorCol < _ovScrollCol) _ovScrollCol = editor.cursorCol;
+    if (editor.cursorCol >= _ovScrollCol + L.maxCols)
+      _ovScrollCol = editor.cursorCol - L.maxCols + 1;
+  }
+  _ovScrollRow = Math.max(0, Math.min(_ovScrollRow, Math.max(0, lines.length - L.maxRows)));
+  _ovScrollCol = Math.max(0, _ovScrollCol);
+
+  const sel = ovSelection();
+  const focused = WM.wmIsFocused(winId);
+  const blink = Math.floor(performance.now() / 500) % 2 === 0;
+
+  for (let r = 0; r < L.maxRows; r++) {
+    const li = _ovScrollRow + r;
+    if (li >= lines.length) break;
+    const y = L.y0 + r * OV.pitch;
+    const visText = lines[li].slice(_ovScrollCol, _ovScrollCol + L.maxCols);
+    const isCur = li === editor.cursorRow;
+    // バーはその行の内容ぶんだけ (空行はバー無し＝アートが覗く)。カーソルセルは含める。
+    let cells = visText.length;
+    if (isCur) {
+      const cc = editor.cursorCol - _ovScrollCol;
+      if (cc >= 0) cells = Math.max(cells, Math.min(cc + 1, L.maxCols));
+    }
+    if (cells <= 0) continue;
+    const barW = OV.barPadX * 2 + cells * OV.adv - 2;
+    GPU.fillRect(L.x0 - OV.barPadX, y, barW, OV.barH, 0);
+    // 文字。選択セルは反転 (セル矩形を明色 → グリフを暗色)。
+    for (let c = 0; c < visText.length; c++) {
+      const cx = L.x0 + c * OV.adv;
+      if (sel && ovInSelection(sel, li, _ovScrollCol + c)) {
+        GPU.fillRect(cx - 1, y + OV.padTop - 1, OV.adv, OV.textH + 2, 1);
+        drawGlyph2x(visText[c], cx, y + OV.padTop, 0);
+      } else {
+        drawGlyph2x(visText[c], cx, y + OV.padTop, 1);
+      }
+    }
+    // 下線カーソル (フォーカス時・ブリンク)
+    if (isCur && focused && blink) {
+      const cc = editor.cursorCol - _ovScrollCol;
+      if (cc >= 0 && cc < L.maxCols)
+        GPU.fillRect(
+          L.x0 + cc * OV.adv,
+          y + OV.padTop + OV.textH + OV.gapCursor,
+          OV.textH,
+          OV.cursorH,
+          1,
+        );
+    }
+  }
+
+  // エラーバー (画面最下端・極性反転で 1 行)。ライブ耐性で直前 good が動き続けるため、
+  // 「いまのコードは反映されていない」ことをここで知らせる。
+  if (errMsg) {
+    const msg = ("ERR " + errMsg).toUpperCase().slice(0, L.maxCols);
+    const y = cr.y + cr.h - OV.barH - OV.lineGap;
+    const barW = OV.barPadX * 2 + msg.length * OV.adv - 2;
+    GPU.fillRect(L.x0 - OV.barPadX, y, barW, OV.barH, 1);
+    for (let c = 0; c < msg.length; c++)
+      drawGlyph2x(msg[c], L.x0 + c * OV.adv, y + OV.padTop, 0);
+  }
+}
+
+/** PERFORM 中のマウス入力: オーバーレイ座標系で editor モデルを直接操作する。 */
+function ovHandleMouse(ev) {
+  const cr = WM.wmGetContentRect(winId);
+  if (!cr) return;
+  const L = ovLayout(cr);
+  const lines = editor.lines;
+  // ev.localX/Y はコンテンツ原点ローカル → 絶対座標へ (PERFORM は非スクロールなので加算なし)
+  const ax = ev.localX + cr.x;
+  const ay = ev.localY + cr.y;
+  const row = Math.max(
+    0,
+    Math.min(lines.length - 1, _ovScrollRow + Math.floor((ay - L.y0) / OV.pitch)),
+  );
+  const col = Math.max(
+    0,
+    Math.min(lines[row].length, _ovScrollCol + Math.round((ax - L.x0) / OV.adv)),
+  );
+
+  switch (ev.type) {
+    case "down":
+      editor.cursorRow = row;
+      editor.cursorCol = col;
+      editor.selectionAnchorRow = null;
+      editor.selectionAnchorCol = null;
+      editor.boxSelection = null;
+      _ovDragging = true;
+      _ovDragAnchor = { r: row, c: col };
+      break;
+    case "held":
+      if (_ovDragging && _ovDragAnchor) {
+        if (row !== _ovDragAnchor.r || col !== _ovDragAnchor.c) {
+          editor.selectionAnchorRow = _ovDragAnchor.r;
+          editor.selectionAnchorCol = _ovDragAnchor.c;
+        }
+        editor.cursorRow = row;
+        editor.cursorCol = col;
+      }
+      break;
+    case "up":
+      _ovDragging = false;
+      break;
+    case "wheel":
+      _ovScrollRow += Math.sign(ev.deltaY) * 2; // 2 行/ノッチ (clamp は draw 側)
+      break;
   }
 }
 
@@ -1296,15 +1491,28 @@ function onDraw(cr) {
     else if (altDown("KeyP")) toggleAudio(); // sound: の再生/停止トグル
     else if (altDown("Enter")) togglePerform(); // PERFORM（フルスクリーン演奏ビュー）
     else if (altShiftDown("KeyF")) formatEditor();
-    else if (performMode && keyDown("Escape"))
-      WM.wmSetFullscreen(winId, false); // Esc で PERFORM 解除
+    else if (performMode && keyDown("Escape")) {
+      // Esc: 選択があれば選択解除だけ、なければ PERFORM 解除 (段階的な脱出)
+      if (editor.selectionAnchorRow !== null || editor.boxSelection) {
+        editor.selectionAnchorRow = null;
+        editor.selectionAnchorCol = null;
+        editor.boxSelection = null;
+      } else {
+        WM.wmSetFullscreen(winId, false);
+      }
+    }
   }
 
   GPU.fillRect(cr.x, cr.y, cr.w, cr.h, 0); // 背景クリア
 
-  // ── PERFORM: 画面そのものがキャンバス（通常レイアウトは描かない）──
+  // ── PERFORM: 画面そのものがキャンバス + コードのオーバーレイエディタ ──
   if (performMode) {
+    // キーボード編集はフォーカス管理を迂回して TextArea を直接駆動する
+    // (handleKey が文字入力/ナビ/undo/クリップボードまで自己完結。編集は onChange
+    //  経由で即 recompile = ライブコーディング)。
+    if (WM.wmIsFocused(winId)) editor.handleKey();
     drawPerform(cr);
+    drawPerformOverlay(cr);
     return;
   }
 
@@ -1379,9 +1587,12 @@ function onDrawFooter(fr) {
 }
 
 function onInput(ev) {
-  // PERFORM 中は隠れたウィジェットへ配信しない（誤クリック・tooltip・Esc による
-  // フォーカス解除を回避）。編集入力は Phase C のオーバーレイエディタが担う。
-  if (performMode) return;
+  // PERFORM 中は隠れたウィジェットへ配信せず（誤クリック・tooltip・Esc による
+  // フォーカス解除を回避）、オーバーレイ座標系で editor モデルを直接操作する。
+  if (performMode) {
+    ovHandleMouse(ev);
+    return;
+  }
   group.update(ev);
   codeInvToggle.visible = codeOn; // hit 判定の前に可視性を同期
   // フォーカスは全体で 1 つ（Helpers）。sideGroup は down/mdown が自分のトグルに当たった
@@ -1456,9 +1667,10 @@ WM.wmRegister(
         "The visual field can read the sound: amp (audio level 0..1) and beat(n)/" +
         "step(n) share the loop clock, so visuals react to the audio. Pick WAV to " +
         "export the sound (one loop). Typos never blank the output — the last " +
-        "working version keeps running until the new code is valid. Alt+Enter is " +
-        "PERFORM mode: the preview fills the whole window (Esc exits); typing still " +
-        "edits, so toggle CODE to keep the source visible over the big animating art.",
+        "working version keeps running until the new code is valid. Alt+Enter (or " +
+        "F11) is PERFORM: the screen itself becomes the canvas (one dot = 8 px, " +
+        "fullscreen) with your code overlaid on the animating art — cursor, " +
+        "selection and shortcuts all work, so you can live-code the piece. Esc exits.",
       onRelayout: relayout,
     });
     refreshTitle();
