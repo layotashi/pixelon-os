@@ -47,6 +47,17 @@ index.js   → wm.js (re-export のみ)
   (FIT TO CONTENT / MAXIMIZE / CLOSE / ABOUT)。内部 API
   `openContextMenu(items, x, y)` はアイテム型 `app` / `sub` / `sep` / `action` を扱う。
 
+## フルスクリーン (F11)
+
+スナップ最大化とは別軸の OS 機能。chrome（枠/ヘッダー/footer）ごと消して
+全 VRAM をコンテンツにする（背面の窓・デスクトップは描画も入力も停止）。
+
+- `F11` — 最前面ウィンドウをトグル（モーダル表示中は無効）。解除も F11。
+- ヘッダー右クリックメニューの FULLSCREEN からも入れる。
+- API: `wmSetFullscreen(id, on)` / `wmToggleFullscreen(id)` / `wmIsFullscreen(id)`。
+  アプリが独自ショートカット（Esc 等）で解除してもよい。
+- snapState は温存されるので、解除すると元の状態（通常 / maximized）に戻る。
+
 ## ウィンドウオプション (`wmOpen` の opts)
 
 - `modal` — モーダル (他ウィンドウへの入力をブロック)

@@ -165,8 +165,8 @@ function recalcDerivedConstants() {
 /** 全ウィンドウのレイアウトを再計算する */
 function recalcAllWindows() {
   for (const win of windows) {
-    // スナップ中のウィンドウはスナップ領域を維持する (onMeasure で上書きしない)
-    if (win.snapState === "none" && win.onMeasure) {
+    // スナップ中/フルスクリーンのウィンドウは領域を維持する (onMeasure で上書きしない)
+    if (win.snapState === "none" && !win.fullscreen && win.onMeasure) {
       const size = win.onMeasure();
       if (size) {
         const fit = calcWindowSize(size.w, size.h, win.footer, win._scrollable);
@@ -338,6 +338,10 @@ function createWindow(id, x, y, w, h, title, onDraw, onInput, onMeasure, opts) {
     onMeasure: onMeasure || null,
     restoreRect: null,
     snapState: "none",
+    // ── フルスクリーン (F11 / wmSetFullscreen) ──
+    // chrome (枠/ヘッダー/footer) 無しで全 VRAM をコンテンツにする。解除で _fsRestore に復帰。
+    fullscreen: false,
+    _fsRestore: null,
     // ── footer (opt-in) ──
     footer: !!o.footer,
     onDrawFooter: o.onDrawFooter || null,
@@ -1041,6 +1045,7 @@ function hitTestInner(win, px, py) {
  * ヘッダー: 枠上辺の 1px 下 〜 区切り線の直上
  */
 function hitTestHeader(win, px, py) {
+  if (win.fullscreen) return false; // フルスクリーンにヘッダーは無い
   const h = win._layout.headerRect;
   return px > h.x && px < h.x + h.w && py >= h.y && py < h.y + h.h;
 }
@@ -1085,6 +1090,7 @@ function hitTestHeaderIcon(win, px, py) {
  * ボディ: 区切り線の下 〜 枠下辺の 1px 上
  */
 function hitTestBody(win, px, py) {
+  if (win.fullscreen) return true; // フルスクリーンは全域が body (マウスは常に画面内)
   const L = win._layout;
   return (
     px > win.x &&
@@ -1099,7 +1105,7 @@ function hitTestBody(win, px, py) {
  * footer が無効なウィンドウでは常に false。
  */
 function hitTestFooter(win, px, py) {
-  if (!win.footer) return false;
+  if (!win.footer || win.fullscreen) return false; // フルスクリーンに footer は無い
   const L = win._layout;
   return (
     px > win.x &&
@@ -1125,6 +1131,7 @@ function toFooterLocalCoords(win, mx, my) {
  * - 辺: 境界線を中心とした幅 3px の線状領域
  */
 function hitTestBorder(win, px, py) {
+  if (win.fullscreen) return 0; // フルスクリーンはリサイズ境界を持たない
   const x0 = win.x;
   const y0 = win.y;
   const x1 = win.x + win.w - 1;
@@ -1323,6 +1330,32 @@ function unsnap(win, mx, my) {
  *             ├──────────── body area ──────────────┤
  */
 function recalcLayout(win) {
+  // ── フルスクリーン: chrome 無しで全 VRAM がコンテンツ ──
+  // ヒットテストが誤爆しないよう headerRect は空、sepY は -1 (全域が body 扱い)。
+  if (win.fullscreen) {
+    win.x = 0;
+    win.y = 0;
+    win.w = Config.VRAM_WIDTH;
+    win.h = Config.VRAM_HEIGHT;
+    win._layout = {
+      headerRect: { x: 0, y: 0, w: 0, h: 0 },
+      decoRect: { x: 0, y: 0, w: 0, h: 0 },
+      titleX: 0,
+      titleY: 0,
+      iconY: 0,
+      iconBaseX: 0,
+      sepY: -1,
+      contentRect: { x: 0, y: 0, w: Config.VRAM_WIDTH, h: Config.VRAM_HEIGHT },
+      scrollbarRect: null,
+      footerSepY: 0,
+      footerRect: null,
+    };
+    if (win._scrollable && win._vScroll) {
+      Scroll.scrollSetViewport(win._vScroll, Config.VRAM_HEIGHT);
+    }
+    return;
+  }
+
   const fx = win.x;
   const fy = win.y;
   const fw = win.w;
@@ -1637,6 +1670,11 @@ function buildWindowContextMenu(win) {
       action: () => toggleMaximize(win),
     });
   }
+  items.push({
+    type: "action",
+    label: "FULLSCREEN",
+    action: () => setFullscreen(win, true),
+  });
   if (win.about) {
     items.push({
       type: "action",
@@ -1881,6 +1919,15 @@ export function wmUpdate() {
   tooltipPrevText = tooltipText;
   tooltipText = null;
 
+  // ── F11: 最前面ウィンドウのフルスクリーン切替 (OS ショートカット) ──
+  // モーダル表示中は無効。解除も F11 (アプリが Esc 等を独自に割り当ててもよい)。
+  if (Input.keyDown("F11") && _modalWinId === null && windows.length > 0) {
+    setFullscreen(
+      windows[windows.length - 1],
+      !windows[windows.length - 1].fullscreen,
+    );
+  }
+
   // ── モーダルウィンドウ (他ウィンドウの入力をブロック) ──
   if (_modalWinId !== null) {
     const modalWin = windows.find((w) => w.id === _modalWinId);
@@ -1948,11 +1995,13 @@ export function wmUpdate() {
   // ── マウスアップ: 操作終了 ──
   handleMouseRelease(mx, my);
 
-  // ── デスクトップアイコン ドラッグ・ショートカット処理 ──
-  Desktop.desktopUpdate(mx, my);
-
-  // ── デスクトップアイコンのホバー ──
-  handleDesktopHover(mx, my);
+  // ── デスクトップアイコン (最前面がフルスクリーンなら覆われていて操作不能) ──
+  const frontFullscreen =
+    windows.length > 0 && windows[windows.length - 1].fullscreen;
+  if (!frontFullscreen) {
+    Desktop.desktopUpdate(mx, my);
+    handleDesktopHover(mx, my);
+  }
 
   // ── カーソル種別更新 ──
   updateCursorShape(mx, my);
@@ -2088,6 +2137,57 @@ function handleBorderClick(i, edges, mx, my) {
   resizeStartY = w.y;
   resizeStartW = w.w;
   resizeStartH = w.h;
+}
+
+// ── フルスクリーン (F11 / API) ──
+// スナップ最大化とは別軸: chrome (枠/ヘッダー/footer) ごと消して全 VRAM をコンテンツにする。
+// snapState は温存するので、解除すると元の状態 (通常 / maximized) にそのまま戻る。
+
+/** フルスクリーンの設定/解除。 */
+function setFullscreen(win, on) {
+  if (win.fullscreen === !!on) return;
+  if (on) {
+    win._fsRestore = { x: win.x, y: win.y, w: win.w, h: win.h };
+    win.fullscreen = true;
+    // ABOUT パネルは chrome の一部なので閉じる (復帰手段のヘッダーが消えるため)
+    win._aboutMode = false;
+    win._aboutAnim = null;
+    const i = windows.indexOf(win);
+    if (i >= 0) activeIndex = bringToFront(i);
+  } else {
+    win.fullscreen = false;
+    const r = win._fsRestore;
+    if (r) {
+      win.x = r.x;
+      win.y = r.y;
+      win.w = r.w;
+      win.h = r.h;
+    }
+    win._fsRestore = null;
+  }
+  recalcLayout(win);
+}
+
+/**
+ * ウィンドウのフルスクリーンを設定する (公開 API)。
+ * @param {number} id
+ * @param {boolean} on
+ */
+export function wmSetFullscreen(id, on) {
+  const win = windows.find((w) => w.id === id);
+  if (win) setFullscreen(win, on);
+}
+
+/** ウィンドウのフルスクリーンをトグルする (公開 API)。 */
+export function wmToggleFullscreen(id) {
+  const win = windows.find((w) => w.id === id);
+  if (win) setFullscreen(win, !win.fullscreen);
+}
+
+/** ウィンドウがフルスクリーンか (公開 API)。 */
+export function wmIsFullscreen(id) {
+  const win = windows.find((w) => w.id === id);
+  return !!(win && win.fullscreen);
 }
 
 /** 最大化 ↔ 復帰をトグルする共通処理 */
@@ -2758,22 +2858,30 @@ function drawTooltip() {
  * 全ウィンドウを描画する。背面 (配列先頭) から前面 (末尾) へ順に描く。
  */
 export function wmDraw() {
-  // ── デスクトップアイコン (壁紙の上、ウィンドウの下) ──
-  Desktop.desktopDraw();
+  // 最前面がフルスクリーンなら全 VRAM を覆うので、下 (デスクトップ・背面窓) は描かない。
+  const frontFullscreen =
+    windows.length > 0 && windows[windows.length - 1].fullscreen;
 
-  // ── スナッププレビュー (全ウィンドウの背面) ──
-  if (snapPreview) {
-    const sp = snapPreview;
-    // 背景を暗色で塗り潰し (角丸四隅の透過防止 + 余白の下地)
-    GPU.fillRect(sp.x, sp.y, sp.w, sp.h, 0);
-    // 角丸ボーダー (1px)
-    GPU.drawRoundRect(sp.x, sp.y, sp.w, sp.h, 1, 1);
-    // ボーダー内側 1px 余白を空けて市松模様
-    GPU.drawCheckerboard(sp.x + 2, sp.y + 2, sp.w - 4, sp.h - 4, 1);
-  }
+  if (frontFullscreen) {
+    drawWindowFrame(windows[windows.length - 1]);
+  } else {
+    // ── デスクトップアイコン (壁紙の上、ウィンドウの下) ──
+    Desktop.desktopDraw();
 
-  for (const win of windows) {
-    drawWindowFrame(win);
+    // ── スナッププレビュー (全ウィンドウの背面) ──
+    if (snapPreview) {
+      const sp = snapPreview;
+      // 背景を暗色で塗り潰し (角丸四隅の透過防止 + 余白の下地)
+      GPU.fillRect(sp.x, sp.y, sp.w, sp.h, 0);
+      // 角丸ボーダー (1px)
+      GPU.drawRoundRect(sp.x, sp.y, sp.w, sp.h, 1, 1);
+      // ボーダー内側 1px 余白を空けて市松模様
+      GPU.drawCheckerboard(sp.x + 2, sp.y + 2, sp.w - 4, sp.h - 4, 1);
+    }
+
+    for (const win of windows) {
+      drawWindowFrame(win);
+    }
   }
 
   // ── メニュー ──
@@ -2952,6 +3060,18 @@ function _drawAboutTransition(win, cr) {
 }
 
 function drawWindowFrame(win) {
+  // ── フルスクリーン: chrome 無し。全面を下地色で塗り、コンテンツのみ描く ──
+  if (win.fullscreen) {
+    const cr = win._layout.contentRect;
+    GPU.fillRect(cr.x, cr.y, cr.w, cr.h, 0);
+    if (win.onDraw) {
+      GPU.setClip(cr.x, cr.y, cr.w, cr.h);
+      safeOnDraw(win, cr);
+      GPU.resetClip();
+    }
+    return;
+  }
+
   const L = win._layout;
 
   // 内部領域を背景色 (0) で角丸塗りつぶし

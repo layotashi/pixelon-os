@@ -61,6 +61,7 @@ window.__synesta = {
   booted: true,
   wmOpenByName, wmGetRegistry, wmGetWindowList,
   wmGetWindowRect, wmGetContentRect, // ウィンドウ矩形取得 (スクリプト操作用)
+  wmSetFullscreen, wmIsFullscreen,   // フルスクリーン切替 (検証用)
   setEffect,        // Diagonal / Vignette 等の視覚効果切替
   setCursorHidden,  // カーソル非表示 (レビュー用)
 };

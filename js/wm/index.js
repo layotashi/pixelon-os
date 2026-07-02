@@ -37,6 +37,9 @@ export {
   wmFocus,
   wmSetContentSize,
   wmGetScroll,
+  wmSetFullscreen,
+  wmToggleFullscreen,
+  wmIsFullscreen,
 
   // メインループ
   wmUpdate,

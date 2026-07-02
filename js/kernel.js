@@ -241,6 +241,9 @@ async function boot() {
       wmGetWindowList: WM.wmGetWindowList,
       wmGetWindowRect: WM.wmGetWindowRect,
       wmGetContentRect: WM.wmGetContentRect,
+      // フルスクリーン検証用 (capture からの操作)
+      wmSetFullscreen: WM.wmSetFullscreen,
+      wmIsFullscreen: WM.wmIsFullscreen,
       // capture.mjs が screenshot 撮影前に視覚効果 (Diagonal scanline /
       // Vignette) を切るために使う。production には影響しない。
       setEffect: Config.setEffectParam,
