@@ -42,8 +42,9 @@
  *   - Ctrl+E / EXPORT で作品を size ちょうどに PNG/GIF/MP4 書き出し。WAV は sound: の
  *     1 周期を音声書き出し。CODE はソースを 1080² の SYNESTA カードとして書き出す。Ctrl+R で seed: 振り直し。
  *   - ライブ編集耐性: コンパイル/評価に失敗しても直前の good を流し続ける（映像/音が途切れない）。
- *   - ライブ演奏ビュー: ウィンドウを広げる/最大化するとプレビューが利用可能領域へ拡大（コードは
- *     左に残る）。CODE トグルで作品にコードを重畳すれば、大きなコードカードのライブ表示になる。
+ *   - ライブ演奏ビュー: Alt+Enter で PERFORM（エディタ/ツールバーを隠しプレビューをコンテンツ
+ *     全域へ＝大きなライブ表示。Esc で解除）。入力はエディタに届くので CODE トグルでコードを
+ *     重畳すればコードを見せたままライブ編集できる。ウィンドウ最大化と併用でさらに大きく。
  *   - Alt+W で現在の場をデスクトップ背景に。Alt+P で音の再生/停止。Shift+Alt+F で整形。
  *     未保存変更は破棄確認。サンプルは /Sketches/Learn（番号順・09 で音）と /Sketches/Gallery。
  *   - EXPLORER から .tess をダブルクリックで開く（tesseraOpenFile）。
@@ -54,7 +55,7 @@ import * as UI from "../ui/index.js";
 import * as GPU from "../core/gpu.js";
 import * as VFS from "../core/vfs.js";
 import { drawText, textWidth, getGlyph, GLYPH_W, GLYPH_H } from "../core/font.js";
-import { altShiftDown, altDown, ctrlDown, ctrlShiftDown } from "../core/input.js";
+import { altShiftDown, altDown, ctrlDown, ctrlShiftDown, keyDown } from "../core/input.js";
 import * as FieldRender from "../core/field_render.js";
 import * as AsciiArt from "../core/ascii_art.js";
 import * as ArtExport from "../core/art_export.js";
@@ -545,6 +546,12 @@ function toggleAudio() {
   else playAudio();
 }
 
+/** Alt+Enter / Esc: PERFORM（全域プレビュー）トグル。プレビュー寸法が変わるので再描画を強制。 */
+function togglePerform() {
+  performMode = !performMode;
+  _pvFrame = -1; // プレビュー寸法が変わるため次フレームで作り直す
+}
+
 // ── AV 同期（P3）: 視覚の場が音を読む ─────────────────────────────────
 // 決定論＋t/period 共有なので、外部アナライザ無しで「音に反応する画」が作れる。
 // renderField が毎フレーム amp（音の振幅エンベロープ）と音クロック(period)を視覚の場へ渡す
@@ -634,6 +641,9 @@ let _pvFrame = -1; // 直近に描いた fps フレーム番号（-1 = 要再描
 let codeOn = false; // コードオーバーレイ（OFF=作品のみ / ON=カード）
 let artInv = false; // 作品層の明暗反転
 let codeInv = false; // バー/文字の極性反転
+// PERFORM: エディタ/ツールバーを隠しプレビューをコンテンツ全域へ＝大きなライブ演奏ビュー。
+// 入力はエディタに届くので CODE 重畳でコードを見せたままライブ編集できる。Alt+Enter / Esc。
+let performMode = false;
 
 /** 現在編集中のファイル VFS パス (null = 無題) */
 let currentFilePath = null;
@@ -1224,20 +1234,28 @@ function onDraw(cr) {
     else if (altDown("KeyW")) setWallpaper(); // 現在の場をデスクトップ背景に
     else if (altDown("KeyN")) newFile();
     else if (altDown("KeyP")) toggleAudio(); // sound: の再生/停止トグル
+    else if (altDown("Enter")) togglePerform(); // ライブ演奏ビュー（全域プレビュー）
     else if (altShiftDown("KeyF")) formatEditor();
+    else if (performMode && keyDown("Escape")) togglePerform(); // Esc で PERFORM 解除
   }
 
   GPU.fillRect(cr.x, cr.y, cr.w, cr.h, 0); // 背景クリア
 
-  // ── プレビューを利用可能領域いっぱいへ拡大（自然サイズ PV_BOX 以上）──
-  // ウィンドウを広げる/最大化するとライブビューが大きくなる。エディタ＝コードは左に残るので
-  // 「コードを見せたまま画（と音）が大きく動く」＝ライブ演奏ビュー。CODE トグルで作品にコードを
-  // 重畳すれば大きなコードカードのライブ表示になる。
+  // ── プレビュー枠 _pvBox を利用可能領域から算出（整数クリーン倍率で拡大）──
+  // 通常はエディタの右。ただし既定解像度では縦の空きが 2×(base*2) に届かず 1× に留まる。
+  // PERFORM(Alt+Enter) はエディタ/ツールバーを隠しコンテンツ全域を使う＝クリーン倍率のまま
+  // 最大化した大きなライブ演奏ビュー（CODE トグルでコードを重畳した表示に）。
   {
     const { baseW, baseH } = outputDims();
-    const sideH = sideGroup ? sideGroup.measure().h : 0;
-    const availW = cr.w - editor.x - editor.w - GAP - UI.FOCUS_MARGIN;
-    const availH = cr.h - (editor.y + 1) - GAP - sideH - UI.FOCUS_MARGIN;
+    let availW, availH;
+    if (performMode) {
+      availW = cr.w - UI.FOCUS_MARGIN * 2;
+      availH = cr.h - UI.FOCUS_MARGIN * 2;
+    } else {
+      const sideH = sideGroup ? sideGroup.measure().h : 0;
+      availW = cr.w - editor.x - editor.w - GAP - UI.FOCUS_MARGIN;
+      availH = cr.h - (editor.y + 1) - GAP - sideH - UI.FOCUS_MARGIN;
+    }
     const box =
       baseW >= baseH
         ? Math.min(availW, (availH * baseW) / baseH)
@@ -1245,18 +1263,25 @@ function onDraw(cr) {
     _pvBox = Math.max(PV_BOX, Number.isFinite(box) ? Math.floor(box) : 0);
   }
 
-  // ── トップツールバー（全幅に均等配分）+ エディタ（左カラム）──
-  fitToolbar();
-  group.draw(cr);
+  // ── 通常モードのみ: トップツールバー + エディタ（左カラム）を描く ──
+  if (!performMode) {
+    fitToolbar();
+    group.draw(cr);
+  }
 
-  // ── 右: ライブプレビュー（ツールバーの下。**右端をツールバー右端へ揃える**）──
-  // 枠は内容の 1px 外側に描く（drawRect(pvX-1,pvY-1,…)）ので、エディタ枠（drawRoundRect）と
-  // 上端を揃えるため pvY を +1。右端は ctrlRow.w に合わせ、エディタ⇄プレビュー間隔で吸収。
+  // ── ライブプレビュー（PERFORM=中央 / 通常=エディタ右） ──
   const pv0 = previewScale(asciiActive); // プレビュー枠サイズ（カードもこの枠へ縮小）
-  const pvW = pv0.w;
-  const contentW = Math.max(ctrlRow.w, editor.w + GAP + pvW);
-  const pvX = cr.x + editor.x + contentW - pvW;
-  const pvY = cr.y + editor.y + 1;
+  let pvX,
+    pvY,
+    contentW = 0;
+  if (performMode) {
+    pvX = cr.x + Math.floor((cr.w - pv0.w) / 2);
+    pvY = cr.y + Math.floor((cr.h - pv0.h) / 2);
+  } else {
+    contentW = Math.max(ctrlRow.w, editor.w + GAP + pv0.w);
+    pvX = cr.x + editor.x + contentW - pv0.w;
+    pvY = cr.y + editor.y + 1;
+  }
 
   if (program) {
     // 実効方式（view: があればコードが決める。無ければ既定 dither）。
@@ -1296,15 +1321,21 @@ function onDraw(cr) {
     }
   }
 
-  // ── プレビュー直下: カードの見た目トグル（CODE / ART INV / CODE INV）──
-  codeInvToggle.visible = codeOn; // CODE OFF 時は CODE INV を隠す
-  sideGroup.setLayoutOrigin(editor.x + contentW - pvW, editor.y + 1 + pv0.h + GAP);
-  sideGroup.draw(cr);
+  // ── 通常モードのみ: プレビュー直下のトグル群（CODE / ART INV / CODE INV）──
+  if (!performMode) {
+    codeInvToggle.visible = codeOn; // CODE OFF 時は CODE INV を隠す
+    sideGroup.setLayoutOrigin(editor.x + contentW - pv0.w, editor.y + 1 + pv0.h + GAP);
+    sideGroup.draw(cr);
+  }
 }
 
 function onDrawFooter(fr) {
   if (errMsg) {
     drawText(fr.x, fr.y, "ERR " + errMsg, 1);
+    return;
+  }
+  if (performMode) {
+    drawText(fr.x, fr.y, "PERFORM  Alt+Enter or Esc to exit", 1);
     return;
   }
   const rc = resolvedConfig();
@@ -1392,9 +1423,9 @@ WM.wmRegister(
         "The visual field can read the sound: amp (audio level 0..1) and beat(n)/" +
         "step(n) share the loop clock, so visuals react to the audio. Pick WAV to " +
         "export the sound (one loop). Typos never blank the output — the last " +
-        "working version keeps running until the new code is valid. Resize or " +
-        "maximize the window to enlarge the live view (code stays on the left); " +
-        "toggle CODE to overlay the source over the animating art.",
+        "working version keeps running until the new code is valid. Alt+Enter is " +
+        "PERFORM mode: the preview fills the whole window (Esc exits); typing still " +
+        "edits, so toggle CODE to keep the source visible over the big animating art.",
       onRelayout: relayout,
     });
     refreshTitle();

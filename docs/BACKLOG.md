@@ -46,8 +46,8 @@
 
 ### Tessera（音の拡張 — AV ライブコーディングへ）
 > 音＝時間の場 `a(t)`。チップチューン割り切り（離散的・デジタル）。生成音・`voice:` 多声・
-> AV 同期・WAV 書き出し・ライブ耐性（直前 good 継続）・ライブ演奏ビュー（ウィンドウ拡大で
-> プレビュー拡大＋CODE 重畳）まで実装済み。詳細は `lang/README.md` の「音」節。
+> AV 同期・WAV 書き出し・ライブ耐性（直前 good 継続）・ライブ演奏ビュー（`Alt+Enter` PERFORM＝
+> プレビュー全域化＋CODE 重畳でコードを見せたままライブ編集）まで実装済み。詳細は `lang/README.md`。
 > テンポは loop 相対の `beat(n)`/`step(n)`（`bpm` は入れない）。
 - `[P3]` **MP4+audio 書き出し** — 自作 ISO BMFF に WebCodecs AudioEncoder(AAC) の音トラックを多重化。
 - `[P3]` **外部音のリアクティブ（将来）** — STUDIO 再生/マイクの FFT を `band.js` 基盤で視覚へ。
