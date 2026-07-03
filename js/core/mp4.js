@@ -27,27 +27,44 @@ export function isMp4Supported() {
   );
 }
 
-/** AAC 音声設定 (モノラル固定。sampleRate は encodeMp4 の audio 引数で渡る) */
-function aacConfig(sampleRate) {
+// AAC-LC モノラルの希望ビットレート (高い順)。プラットフォームの OS エンコーダが対応
+// する最高値を選ぶ (pickAacBitrate)。Windows(Media Foundation) は 192k が上限で 224k↑は
+// 非対応、macOS 等はより高い値も通る。モノラルなので 192k でも実質トランスペアレント
+// (ステレオ ~384k 相当)。AAC は VBR なので単純な音は自動で節約し、上限は「使える上限」。
+const AAC_BITRATES = [320_000, 256_000, 192_000, 160_000, 128_000, 96_000];
+
+/** AAC 音声設定 (モノラル固定)。bitrate は pickAacBitrate が選んだ値。 */
+function aacConfig(sampleRate, bitrate) {
   return {
     codec: "mp4a.40.2", // AAC-LC (SNS/プレイヤー互換の標準)
     sampleRate,
     numberOfChannels: 1,
-    bitrate: 128_000,
+    bitrate,
     aac: { format: "aac" }, // 生のアクセスユニット (ADTS なし) → MP4 に直接詰める
   };
 }
 
+/**
+ * この環境が対応する AAC-LC mono の最高ビットレートを返す (非対応なら null)。
+ * OS エンコーダの上限はプラットフォーム依存なので、高い順に問い合わせて最初に通る値を採る。
+ */
+export async function pickAacBitrate(sampleRate = 44100) {
+  if (typeof window === "undefined" || typeof window.AudioEncoder !== "function")
+    return null;
+  for (const bitrate of AAC_BITRATES) {
+    try {
+      const s = await AudioEncoder.isConfigSupported(aacConfig(sampleRate, bitrate));
+      if (s && s.supported) return bitrate;
+    } catch {
+      /* 次の候補へ */
+    }
+  }
+  return null;
+}
+
 /** WebCodecs による AAC 音声エンコードが使えるか (プラットフォーム依存) */
 export async function isMp4AudioSupported(sampleRate = 44100) {
-  if (typeof window === "undefined" || typeof window.AudioEncoder !== "function")
-    return false;
-  try {
-    const s = await AudioEncoder.isConfigSupported(aacConfig(sampleRate));
-    return !!(s && s.supported);
-  } catch {
-    return false;
-  }
+  return (await pickAacBitrate(sampleRate)) !== null;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -260,7 +277,7 @@ function buildAudioTrak(audio, movieDur, stcoOffset) {
     u16(1), u16(16), // channelcount (mono), samplesize
     u16(0), u16(0), // pre_defined, reserved
     u32(sr << 16), // samplerate 16.16
-    buildEsds(audio.asc, 128_000),
+    buildEsds(audio.asc, audio.bitrate || 128_000), // esds の bitrate は実際の選択値
   );
   const stsd = fullbox("stsd", 0, 0, u32(1), mp4a);
   const stts = fullbox("stts", 0, 0, u32(1), u32(n), u32(1024));
@@ -348,7 +365,8 @@ export function muxMp4(samples, avcC, w, h, fps, audio = null) {
  *   非対応/失敗時は null (呼び側は音声なしで続行する)
  */
 async function encodeAacMono(pcm, sampleRate) {
-  if (!(await isMp4AudioSupported(sampleRate))) return null;
+  const bitrate = await pickAacBitrate(sampleRate);
+  if (bitrate == null) return null;
   const chunks = [];
   let asc = null;
   let encErr = null;
@@ -364,7 +382,7 @@ async function encodeAacMono(pcm, sampleRate) {
       encErr = e;
     },
   });
-  encoder.configure(aacConfig(sampleRate));
+  encoder.configure(aacConfig(sampleRate, bitrate));
 
   // 1 秒ずつ AudioData として投入 (エンコーダが 1024 サンプル単位の AU に切る)
   for (let off = 0; off < pcm.length && !encErr; off += sampleRate) {
@@ -384,7 +402,7 @@ async function encodeAacMono(pcm, sampleRate) {
   encoder.close();
 
   if (encErr || chunks.length === 0) return null;
-  return { chunks, asc: asc || defaultAsc(sampleRate), sampleRate };
+  return { chunks, asc: asc || defaultAsc(sampleRate), sampleRate, bitrate };
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
