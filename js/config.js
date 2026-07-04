@@ -496,6 +496,27 @@ export const PALETTES = {
     origin: "P7 long-persistence phosphor\nTektronix 4010, radar displays",
     note: "Dual-layer: blue flash fading\nto yellow-green afterglow.",
   },
+  p10_magenta: {
+    bg: "#E6DEE6",
+    fg: "#3E0A34",
+    label: "P10 Magenta",
+    origin: "P10 scotophor (dark-trace CRT)\nSkiatron radar projectors",
+    note: "The beam darkens the screen to\nmagenta instead of glowing.\nRead against ambient light.",
+  },
+  p31_lime: {
+    bg: "#081000",
+    fg: "#A6FF4B",
+    label: "P31 Lime",
+    origin: "P31 phosphor\nTektronix scopes, measurement gear",
+    note: "The standard oscilloscope trace,\nbrighter and yellower than P1.",
+  },
+  p47_violet: {
+    bg: "#05030E",
+    fg: "#7A5CFF",
+    label: "P47 Violet",
+    origin: "P47 phosphor\nFlying-spot scanners, film recorders",
+    note: "A fast blue-violet phosphor for\nwork where afterglow was the enemy.",
+  },
 
   // ── 特殊ディスプレイ技術 ──
 
@@ -512,6 +533,13 @@ export const PALETTES = {
     label: "EL Teal",
     origin: "Electroluminescent backlight\nTimex Indiglo, Game Boy Light",
     note: "Cool blue-green cold-cathode\nglow. The iconic '90s backlight.",
+  },
+  flipdot: {
+    bg: "#0D0D0D",
+    fg: "#FFDD2E",
+    label: "Flip-Dot",
+    origin: "Flip-disc electromechanical display\nStation & bus destination signs",
+    note: "Physical discs flip to a bright\nface. A display you can hear\nclatter as it updates.",
   },
 
   // ── 携帯機・LCD ──
@@ -546,6 +574,13 @@ export const PALETTES = {
     label: "Virtual Boy",
     origin: "Virtual Boy\nNintendo, 1995",
     note: "Red LED-only stereoscopic display.\nA commercial failure, but an\nunforgettable visual experience.",
+  },
+  zx_magenta: {
+    bg: "#0C040C",
+    fg: "#E24BC4",
+    label: "ZX Magenta",
+    origin: "ZX Spectrum, colour 3 + BRIGHT\nSinclair Research, 1982",
+    note: "The punchiest hue on the rubber-key\nhome micro that taught Britain\nto code.",
   },
 
   // ── デスクトップ・紙メタファー ──
