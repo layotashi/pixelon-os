@@ -24,7 +24,7 @@ import { loadCustomPalette, load } from "./core/storage.js";
  *   true  — DEMO 系アプリや未完成機能がメニュー・デスクトップに表示される。
  *   false — ベータ / 本番公開用。dev フラグ付きアプリは非表示になる。
  */
-export const DEV_MODE = true;
+export const DEV_MODE = false;
 
 // ── 永続化コールバック (責務分離) ──
 
@@ -66,7 +66,7 @@ export const RESOLUTIONS = [
 export const MAX_VRAM_WIDTH = 960;
 export const MAX_VRAM_HEIGHT = 540;
 
-/** 仮想画面 横ピクセル数 (localStorage から復元、デフォルト 400) */
+/** 仮想画面 横ピクセル数 (localStorage から復元、デフォルト 480) */
 export let VRAM_WIDTH = load("vramW", 480);
 
 /** 仮想画面 縦ピクセル数 (localStorage から復元、デフォルト 360) */
@@ -570,6 +570,13 @@ export const PALETTES = {
     label: "E-Ink",
     origin: "E Ink display\nKindle, 2007",
     note: "Low-contrast paper-like display.\nElectrophoretic microcapsules;\nthe modern paper metaphor.",
+  },
+  bsod: {
+    bg: "#0000AA",
+    fg: "#FFFFFF",
+    label: "BSoD",
+    origin: "Blue Screen of Death (STOP error)\nMicrosoft Windows, 1992–2001",
+    note: "Famously spotted on public displays,\nfrom Times Square billboards to ATMs.",
   },
 };
 

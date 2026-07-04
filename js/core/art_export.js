@@ -163,7 +163,7 @@ export function exportVideo(
   );
 }
 
-/** 1-bit バッファを NN で dw×dh へ拡大/縮小する（cells のキャップ格子 → art 解像度）。 */
+/** 1-bit バッファを NN で dw×dh へ拡大/縮小する。 */
 export function resampleNN(src, sw, sh, dw, dh) {
   if (sw === dw && sh === dh) return src;
   const out = new Uint8Array(dw * dh);

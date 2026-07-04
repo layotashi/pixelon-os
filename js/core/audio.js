@@ -782,39 +782,11 @@ export function noteOff(time) {
   getDefaultChannel().noteOff(time);
 }
 
-// scheduleVoice / stopAllScheduled のモジュールレベルラッパーは廃止。
-// トランスポート等は channel.scheduleVoice() / channel.stopAllScheduled() を直接呼ぶこと。
-
-export function setWaveform(type) {
-  getDefaultChannel().setWaveform(type);
-}
-
-export function getWaveform() {
-  return getDefaultChannel().getWaveform();
-}
-
-export function cycleWaveform() {
-  return getDefaultChannel().cycleWaveform();
-}
-
-export function setStartPhase(phase) {
-  getDefaultChannel().setStartPhase(phase);
-}
+// パラメータ設定系のモジュールレベルラッパーは廃止 (scheduleVoice / stopAllScheduled と同様)。
+// 各アプリは channel.setWaveform() 等をインスタンスに対して直接呼ぶこと。
 
 export function getStartPhase() {
   return getDefaultChannel().getStartPhase();
-}
-
-export function setADSR(a, d, s, r) {
-  getDefaultChannel().setADSR(a, d, s, r);
-}
-
-export function setVolume(v) {
-  getDefaultChannel().setVolume(v);
-}
-
-export function getWaveformSamples(n) {
-  return getDefaultChannel().getWaveformSamples(n);
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

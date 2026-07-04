@@ -621,7 +621,7 @@ export function invertRect(x, y, w, h) {
 
 /**
  * VRAM内の矩形領域を別の座標へコピーする。
- * 重なりがあっても正しく動作する（コピー方向を自動選択）。
+ * 一時バッファ経由でコピーするため、重なりがあっても正しく動作する。
  */
 export function copyRect(sx, sy, dx, dy, w, h) {
   // 一時バッファにコピーしてから書き戻す

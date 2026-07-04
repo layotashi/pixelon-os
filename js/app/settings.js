@@ -10,7 +10,13 @@ import * as Config from "../config.js";
 import * as Wallpaper from "../wallpaper.js";
 import { setSystemSfxEnabled } from "../core/sfx.js";
 import { copyDefaultsToClipboard } from "../core/defaults.js";
-import { basename, readDir, parentPath, joinPath, readFile } from "../core/vfs.js";
+import {
+  basename,
+  readDir,
+  parentPath,
+  joinPath,
+  readFile,
+} from "../core/vfs.js";
 import { wmOpen, wmRegister, wmSetContentSize } from "../wm/index.js";
 import {
   Label,
@@ -89,7 +95,14 @@ let maxLabelWidth = 0;
 /** @type {import("../ui/index.js").Label[]} */
 let allLabels = [];
 let customWidgets, solidWidgets, imageWidgets, tesseraWidgets;
-let bgRow, fgRow, bayerRow, levelRow, imagePathRow, imageFileRow, imageFillRow, tessPathRow;
+let bgRow,
+  fgRow,
+  bayerRow,
+  levelRow,
+  imagePathRow,
+  imageFileRow,
+  imageFillRow,
+  tessPathRow;
 let sep1, sep2, sep3;
 
 // ── タブ ──
@@ -170,7 +183,9 @@ function _initWidgets() {
   // フォント一覧 / 選択の変化に追従 (FONTSMITH での保存・適用を即時反映)
   const _syncFontSel = () => {
     if (!ddFont) return;
-    const idx = Config.FONTS.findIndex((f) => f.id === Config.getSystemFontId());
+    const idx = Config.FONTS.findIndex(
+      (f) => f.id === Config.getSystemFontId(),
+    );
     ddFont.selectedIndex = Math.max(0, idx);
   };
   Config.onFontListChange(() => {
@@ -438,10 +453,18 @@ function _initWidgets() {
   );
   lblVigStrength = new Label(0, 0, "Strength:");
   valVigStrength = new Label(0, 0, formatPercent(ep.vignetteStrength));
-  sldVigStrength = new Slider(0, 0, SLIDER_W, 0, 100, ep.vignetteStrength, (v) => {
-    valVigStrength.text = formatPercent(v);
-    Config.setEffectParam("vignetteStrength", v);
-  });
+  sldVigStrength = new Slider(
+    0,
+    0,
+    SLIDER_W,
+    0,
+    100,
+    ep.vignetteStrength,
+    (v) => {
+      valVigStrength.text = formatPercent(v);
+      Config.setEffectParam("vignetteStrength", v);
+    },
+  );
   lblVigRadius = new Label(0, 0, "Radius:");
   valVigRadius = new Label(0, 0, formatPercent(ep.vignetteRadius));
   sldVigRadius = new Slider(0, 0, SLIDER_W, 0, 50, ep.vignetteRadius, (v) => {
@@ -566,10 +589,22 @@ function _initWidgets() {
   const vigStrengthRow = HBox([lblVigStrength, sldVigStrength, valVigStrength]);
   const vigRadiusRow = HBox([lblVigRadius, sldVigRadius, valVigRadius]);
   vigRows = [vigStrengthRow, vigRadiusRow];
-  const diagDarknessRow = HBox([lblDiagDarkness, sldDiagDarkness, valDiagDarkness]);
+  const diagDarknessRow = HBox([
+    lblDiagDarkness,
+    sldDiagDarkness,
+    valDiagDarkness,
+  ]);
   const diagSpeedRow = HBox([lblDiagSpeed, sldDiagSpeed, valDiagSpeed]);
-  const diagSpacingRow = HBox([lblDiagSpacing, nbDiagSpacing, new Label(0, 0, "DOT")]);
-  const diagThicknessRow = HBox([lblDiagThickness, nbDiagThickness, new Label(0, 0, "DOT")]);
+  const diagSpacingRow = HBox([
+    lblDiagSpacing,
+    nbDiagSpacing,
+    new Label(0, 0, "DOT"),
+  ]);
+  const diagThicknessRow = HBox([
+    lblDiagThickness,
+    nbDiagThickness,
+    new Label(0, 0, "DOT"),
+  ]);
   diagRows = [diagDarknessRow, diagSpeedRow, diagSpacingRow, diagThicknessRow];
 
   const displayPage = VBox([
@@ -619,10 +654,16 @@ function _initWidgets() {
   tesseraWidgets = [tessPathRow];
 
   // ── タブバー + 現在タブのルートを構築 ──
-  tabBar = new TabBar(0, 0, TAB_LABELS, (i) => {
-    activeTab = i;
-    buildMainRoot();
-  }, activeTab);
+  tabBar = new TabBar(
+    0,
+    0,
+    TAB_LABELS,
+    (i) => {
+      activeTab = i;
+      buildMainRoot();
+    },
+    activeTab,
+  );
   buildMainRoot();
 }
 
@@ -663,7 +704,8 @@ function syncBgWidgets() {
 
   // Background ドロップダウン
   const curMode = Wallpaper.getBackgroundMode();
-  ddBackground.selectedIndex = curMode === "image" ? 1 : curMode === "tessera" ? 2 : 0;
+  ddBackground.selectedIndex =
+    curMode === "image" ? 1 : curMode === "tessera" ? 2 : 0;
   ddImageFill.selectedIndex = Wallpaper.getImageFillBit();
 
   // Appearance ウィジェット同期

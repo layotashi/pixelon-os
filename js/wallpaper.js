@@ -24,7 +24,7 @@ import * as Storage from "./core/storage.js";
 //  内部状態
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/** 壁紙モード: "solid" | "image" */
+/** 壁紙モード: "solid" | "image" | "tessera" */
 let wallpaperMode = "solid";
 
 /** Solid 背景の Bayer 階調レベル (4x4: 0–16, 8x8: 0–64) */

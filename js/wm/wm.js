@@ -1564,17 +1564,6 @@ export function wmGetRegistry() {
 }
 
 /**
- * 登録済みのすべてのウィンドウを開く (デバッグ用).
- */
-function wmOpenAll() {
-  for (const entry of registry) {
-    if (entry.winId === null) {
-      entry.winId = entry.factory();
-    }
-  }
-}
-
-/**
  * 名前を指定してウィンドウを開く。既に開いている場合は何もしない。
  * @param {string} name  wmRegister で登録した名前
  */
@@ -1875,7 +1864,7 @@ export function wmIsModalOpen() {
 
 /**
  * スクロール可能ウィンドウの仮想コンテンツサイズを設定する。
- * cotnentRect より大きい場合にスクロールバーが有効になる。
+ * contentRect より大きい場合にスクロールバーが有効になる。
  * @param {number} id    ウィンドウ ID
  * @param {number} virtualH  仮想コンテンツ高さ (px)
  */
