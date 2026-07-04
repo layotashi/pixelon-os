@@ -142,13 +142,8 @@ function doDelete() {
   if (!sel || sel.path === "/") return; // ルートは削除不可
 
   if (sel.type === "dir") {
-    // 空でなければ再帰削除
-    const children = VFS.readDir(sel.path);
-    if (children && children.length > 0) {
-      VFS.removeRecursive(sel.path);
-    } else {
-      VFS.remove(sel.path);
-    }
+    // ディレクトリは中身ごと再帰削除 (空なら通常削除と同じ)
+    VFS.remove(sel.path, { recursive: true });
   } else {
     VFS.remove(sel.path);
   }

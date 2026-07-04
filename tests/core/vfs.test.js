@@ -27,7 +27,6 @@ import {
   isBinaryFile,
   mkdir,
   remove,
-  removeRecursive,
   rename,
   move,
   flattenTree,
@@ -274,18 +273,18 @@ describe("remove", () => {
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  removeRecursive
+//  remove({ recursive: true })
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-describe("removeRecursive", () => {
+describe("remove recursive", () => {
   it("中身のあるディレクトリを再帰削除できる", () => {
-    expect(removeRecursive("/Documents")).toBe(true);
+    expect(remove("/Documents", { recursive: true })).toBe(true);
     expect(exists("/Documents")).toBe(false);
     expect(exists("/Documents/readme.txt")).toBe(false);
   });
 
   it("ルートは再帰削除できない", () => {
-    expect(removeRecursive("/")).toBe(false);
+    expect(remove("/", { recursive: true })).toBe(false);
   });
 });
 

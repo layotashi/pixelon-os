@@ -452,37 +452,22 @@ export function mkdir(path) {
  * @param {string} path
  * @returns {boolean}
  */
-export function remove(path) {
+/**
+ * パスを削除する。既定は非再帰 (空でないディレクトリは削除不可)。
+ * @param {string} path
+ * @param {{ recursive?: boolean }} [opts]  recursive:true で中身ごと再帰削除
+ * @returns {boolean} 削除できたら true
+ */
+export function remove(path, { recursive = false } = {}) {
   if (normalizePath(path) === "/") return false; // ルートは削除不可
 
   const node = resolveNode(path);
   if (!node) return false;
 
-  // ディレクトリが空でなければ削除不可
-  if (node.type === "dir" && node.children.length > 0) return false;
-
-  const parent = resolveParent(path);
-  if (!parent) return false;
-
-  const idx = parent.children.indexOf(node);
-  if (idx < 0) return false;
-
-  parent.children.splice(idx, 1);
-  parent.modifiedAt = Date.now();
-  persist();
-  return true;
-}
-
-/**
- * ディレクトリを中身ごと再帰的に削除する。
- * @param {string} path
- * @returns {boolean}
- */
-export function removeRecursive(path) {
-  if (normalizePath(path) === "/") return false;
-
-  const node = resolveNode(path);
-  if (!node) return false;
+  // 非再帰時: ディレクトリが空でなければ削除不可
+  if (!recursive && node.type === "dir" && node.children.length > 0) {
+    return false;
+  }
 
   const parent = resolveParent(path);
   if (!parent) return false;
