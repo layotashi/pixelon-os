@@ -916,6 +916,12 @@ export function wmOpenOrFocus(name) {
  * @returns {{ w: number, h: number, clamped: boolean }} clamped: 高さが clamp されたか
  */
 const SCROLL_INIT_RATIO = 0.85;
+
+/**
+ * ウィンドウスクロールは px 単位。ステッパーボタン 1 クリックは 1 行ぶん
+ * (≒ 文字高 + 行間) をスクロールさせる。既定 step=1 では 1px しか動かず不自然なため。
+ */
+const WIN_SCROLL_BTN_STEP = GLYPH_H + 1;
 function clampScrollableInitSize(w, h) {
   const workAreaH = Config.VRAM_HEIGHT - workAreaTop;
   const maxH = Math.floor(workAreaH * SCROLL_INIT_RATIO);
@@ -1571,7 +1577,14 @@ function handleBodyClick(i, mx, my) {
   if (hitTestWindowScrollbar(target, mx, my)) {
     const sb = target._layout.scrollbarRect;
     const th = Scroll.vScrollbarSlotThumbArea(sb.x, sb.y, sb.h);
-    Scroll.handleVScrollInput(target._vScroll, "down", my, th.y, th.h);
+    Scroll.handleVScrollInput(
+      target._vScroll,
+      "down",
+      my,
+      th.y,
+      th.h,
+      WIN_SCROLL_BTN_STEP,
+    );
     wmRequestCursor("drag-v");
     return;
   }
@@ -1827,7 +1840,14 @@ function propagateBodyEvents(mx, my) {
       const sb = front._layout.scrollbarRect;
       const th = Scroll.vScrollbarSlotThumbArea(sb.x, sb.y, sb.h);
       if (Input.mouseButtonHeld(0)) {
-        Scroll.handleVScrollInput(front._vScroll, "held", my, th.y, th.h);
+        Scroll.handleVScrollInput(
+          front._vScroll,
+          "held",
+          my,
+          th.y,
+          th.h,
+          WIN_SCROLL_BTN_STEP,
+        );
       }
       if (Input.mouseButtonUp(0)) {
         Scroll.handleVScrollInput(front._vScroll, "up", my, th.y, th.h);

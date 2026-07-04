@@ -23,6 +23,11 @@
  *   この仕様は drawVScrollbarSlot / drawHScrollbarSlot が一元管理し、
  *   呼び出し側はスロット矩形を渡すだけでよい。
  *
+ *   スクロール可能かつトラックが十分長い時は、両端に ▲▼ / ◀▶ の
+ *   ステッパーボタンを出す (クリックで 1 段 = 縦1行/横1桁、押しっぱなしで
+ *   オートリピート、押下中は反転表示)。短いバー・非スクロール時はボタン無し。
+ *   ボタンの有無・当たり判定・サム区間は trackLayout() が単一管理する。
+ *
  * ── スクロール状態 (ScrollState) ──
  *   {
  *     offset:   number,  // 現在のスクロール位置 (0-based)
@@ -45,7 +50,7 @@
  *   const startIdx = vs.offset;
  */
 
-import { fillRect, vline, hline } from "./ports.js";
+import { fillRect, vline, hline, pset } from "./ports.js";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  定数
@@ -70,6 +75,27 @@ export const SCROLLBAR_SLOT_WIDTH = SCROLLBAR_W + SCROLLBAR_MARGIN * 2 + 1;
 /** サムの最小サイズ (px) */
 const THUMB_MIN = 5;
 
+/**
+ * ステッパーボタン (端の ▲▼ / ◀▶) の一辺 (px)。トラック幅と同じ正方形。
+ * scrollBy(±step) でスクロール軸方向に 1 段 (縦=1行 / 横=1桁) 動かす。
+ */
+const SCROLLBAR_BTN = SCROLLBAR_W;
+
+/** ボタンとサムトラックの間に入れる暗色の隙間 (px)。ボタンとサムを視覚的に分ける。 */
+const BTN_GAP = 1;
+
+/**
+ * ボタンを出す最小トラック長 (px)。両端ボタン + 隙間 + 最小サムが収まらない
+ * 短いトラックではボタンを出さず、従来どおりサムのみ表示する (小窓での破綻回避)。
+ */
+const MIN_TRACK_FOR_BUTTONS = (SCROLLBAR_BTN + BTN_GAP) * 2 + THUMB_MIN;
+
+/** ボタン押しっぱなしオートリピート: 初動から反復開始までの hold フレーム数。 */
+const BTN_REPEAT_DELAY = 20;
+
+/** ボタン押しっぱなしオートリピート: 反復間隔 (フレーム)。 */
+const BTN_REPEAT_INTERVAL = 3;
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  ファクトリ
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -88,6 +114,10 @@ export function createScrollState(viewport, content) {
     _thumbDrag: false,
     _dragStartPos: 0,
     _dragStartOffset: 0,
+    /** ステッパーボタン押下中: -1=上/左, 0=なし, +1=下/右 */
+    _btnHeld: 0,
+    /** ボタン押下継続フレーム数 (オートリピート判定用) */
+    _btnRepeat: 0,
   };
 }
 
@@ -114,12 +144,14 @@ export function scrollNeeded(s) {
 }
 
 /**
- * サムをドラッグ中かどうかを返す。
+ * スクロールバーがマウスを掴んでいるか (サムドラッグ中 or ステッパーボタン押下中)。
+ * 消費者はこれを見て「バー外へ出ても held/up を送り続ける」既存プラミングを流用でき、
+ * ボタンのオートリピート継続とバー外リリースの後始末が同じ経路で処理される。
  * @param {object} s  ScrollState
  * @returns {boolean}
  */
 export function scrollIsDragging(s) {
-  return s._thumbDrag;
+  return s._thumbDrag || s._btnHeld !== 0;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -183,11 +215,13 @@ export function scrollSetViewport(s, viewport) {
 }
 
 /**
- * ドラッグ状態を強制リセットする (フォーカス喪失時など)。
+ * ドラッグ / ボタン押下状態を強制リセットする (リリース・フォーカス喪失時など)。
  * @param {object} s  ScrollState
  */
 export function scrollDragReset(s) {
   s._thumbDrag = false;
+  s._btnHeld = 0;
+  s._btnRepeat = 0;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -210,6 +244,68 @@ function thumbGeom(s, trackStart, trackLen) {
   const trackRange = trackLen - size;
   const pos = (trackStart + trackRange * (s.offset / max)) | 0;
   return { pos, size, trackRange };
+}
+
+/**
+ * トラック (サム走行域) をステッパーボタンとサム区間に分割する。描画と入力で
+ * 同じ分割を使い、ボタン当たり判定とサム位置がズレないようにする単一の真実。
+ * ボタンは「スクロール可能 (scrollNeeded) かつトラックが十分長い」時だけ出す。
+ * @param {object} s          ScrollState
+ * @param {number} trackStart トラック開始座標 (px, スクロール軸)
+ * @param {number} trackLen   トラック長さ (px)
+ * @returns {{ showButtons:boolean, aStart:number, bStart:number,
+ *             thumbStart:number, thumbLen:number }}
+ */
+function trackLayout(s, trackStart, trackLen) {
+  if (!scrollNeeded(s) || trackLen < MIN_TRACK_FOR_BUTTONS) {
+    return {
+      showButtons: false,
+      aStart: 0,
+      bStart: 0,
+      thumbStart: trackStart,
+      thumbLen: trackLen,
+    };
+  }
+  const inset = SCROLLBAR_BTN + BTN_GAP;
+  return {
+    showButtons: true,
+    aStart: trackStart, // 上/左ボタン
+    bStart: trackStart + trackLen - SCROLLBAR_BTN, // 下/右ボタン
+    thumbStart: trackStart + inset,
+    thumbLen: trackLen - inset * 2,
+  };
+}
+
+/** 7x7 ボタン内に中央寄せの三角形 (▲▼◀▶) を色 c で描く。(bx,by)=ボタン左上。 */
+function drawArrow(dir, bx, by, c) {
+  if (dir === "up") {
+    pset(bx + 3, by + 2, c);
+    hline(bx + 2, bx + 4, by + 3, c);
+    hline(bx + 1, bx + 5, by + 4, c);
+  } else if (dir === "down") {
+    hline(bx + 1, bx + 5, by + 2, c);
+    hline(bx + 2, bx + 4, by + 3, c);
+    pset(bx + 3, by + 4, c);
+  } else if (dir === "left") {
+    pset(bx + 2, by + 3, c);
+    vline(bx + 3, by + 2, by + 4, c);
+    vline(bx + 4, by + 1, by + 5, c);
+  } else {
+    // right
+    vline(bx + 2, by + 1, by + 5, c);
+    vline(bx + 3, by + 2, by + 4, c);
+    pset(bx + 4, by + 3, c);
+  }
+}
+
+/** ステッパーボタンを描く。押下中は 7x7 を塗り潰して矢印を抜き文字にし反転表示。 */
+function drawButton(dir, bx, by, pressed) {
+  if (pressed) {
+    fillRect(bx, by, SCROLLBAR_W, SCROLLBAR_W, 1);
+    drawArrow(dir, bx, by, 0);
+  } else {
+    drawArrow(dir, bx, by, 1);
+  }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -295,11 +391,16 @@ export function drawHScrollSep(x1, x2, y) {
 export function drawVScrollbarSlot(s, x, y, h) {
   // sep 線
   vline(x, y, y + h - 1, 1);
-  // thumb (暗色余白を挟んだ内側に描画)
   const thumbX = x + 1 + SCROLLBAR_MARGIN;
-  const thumbY = y + SCROLLBAR_MARGIN;
-  const thumbH = h - SCROLLBAR_MARGIN * 2;
-  if (thumbH > 0) drawVScrollbar(s, thumbX, thumbY, thumbH);
+  const trackY = y + SCROLLBAR_MARGIN;
+  const trackH = h - SCROLLBAR_MARGIN * 2;
+  if (trackH <= 0) return;
+  const L = trackLayout(s, trackY, trackH);
+  if (L.showButtons) {
+    drawButton("up", thumbX, L.aStart, s._btnHeld === -1);
+    drawButton("down", thumbX, L.bStart, s._btnHeld === 1);
+  }
+  drawVScrollbar(s, thumbX, L.thumbStart, L.thumbLen);
 }
 
 /**
@@ -318,11 +419,16 @@ export function drawVScrollbarSlot(s, x, y, h) {
 export function drawHScrollbarSlot(s, x, y, w) {
   // sep 線
   hline(x, x + w - 1, y, 1);
-  // thumb (暗色余白を挟んだ内側に描画)
-  const thumbX = x + SCROLLBAR_MARGIN;
   const thumbY = y + 1 + SCROLLBAR_MARGIN;
-  const thumbW = w - SCROLLBAR_MARGIN * 2;
-  if (thumbW > 0) drawHScrollbar(s, thumbX, thumbY, thumbW);
+  const trackX = x + SCROLLBAR_MARGIN;
+  const trackW = w - SCROLLBAR_MARGIN * 2;
+  if (trackW <= 0) return;
+  const L = trackLayout(s, trackX, trackW);
+  if (L.showButtons) {
+    drawButton("left", L.aStart, thumbY, s._btnHeld === -1);
+    drawButton("right", L.bStart, thumbY, s._btnHeld === 1);
+  }
+  drawHScrollbar(s, L.thumbStart, thumbY, L.thumbLen);
 }
 
 /**
@@ -357,10 +463,11 @@ export function vScrollbarSlotThumbArea(slotX, slotY, slotH) {
  * @param {number} mousePos  マウス Y 座標 (ローカル座標)
  * @param {number} trackY    トラック上端 Y (ローカル座標)
  * @param {number} trackH    トラック高さ (px)
+ * @param {number} [step=1]  ステッパーボタン 1 クリックのスクロール量 (縦=1行)
  * @returns {{ consumed: boolean }}  入力を消費したかどうか
  */
-export function handleVScrollInput(s, evType, mousePos, trackY, trackH) {
-  return _handleScrollInput(s, evType, mousePos, trackY, trackH);
+export function handleVScrollInput(s, evType, mousePos, trackY, trackH, step = 1) {
+  return _handleSlotInput(s, evType, mousePos, trackY, trackH, step);
 }
 
 /**
@@ -370,10 +477,62 @@ export function handleVScrollInput(s, evType, mousePos, trackY, trackH) {
  * @param {number} mousePos  マウス X 座標 (ローカル座標)
  * @param {number} trackX    トラック左端 X (ローカル座標)
  * @param {number} trackW    トラック幅 (px)
+ * @param {number} [step=1]  ステッパーボタン 1 クリックのスクロール量 (横=1桁)
  * @returns {{ consumed: boolean }}  入力を消費したかどうか
  */
-export function handleHScrollInput(s, evType, mousePos, trackX, trackW) {
-  return _handleScrollInput(s, evType, mousePos, trackX, trackW);
+export function handleHScrollInput(s, evType, mousePos, trackX, trackW, step = 1) {
+  return _handleSlotInput(s, evType, mousePos, trackX, trackW, step);
+}
+
+/**
+ * スロット入力の共通実装 (方向非依存)。両端ボタン (クリック/オートリピート) を
+ * 先に処理し、それ以外 (サムドラッグ / トラックジャンプ) は縮んだサム区間へ委譲する。
+ * ボタン非表示時は従来どおりトラック全体で _handleScrollInput を呼ぶ。
+ * @param {object} s          ScrollState
+ * @param {string} evType     "down" | "held" | "up"
+ * @param {number} mousePos   マウス座標 (スクロール軸)
+ * @param {number} trackStart トラック開始座標
+ * @param {number} trackLen   トラック長さ
+ * @param {number} step       ボタン 1 クリックのスクロール量
+ * @returns {{ consumed: boolean }}
+ */
+function _handleSlotInput(s, evType, mousePos, trackStart, trackLen, step) {
+  const L = trackLayout(s, trackStart, trackLen);
+  if (L.showButtons) {
+    const onA = mousePos >= L.aStart && mousePos < L.aStart + SCROLLBAR_BTN;
+    const onB = mousePos >= L.bStart && mousePos < L.bStart + SCROLLBAR_BTN;
+
+    // ボタン押下 → 即 1 段スクロールし、押下状態を掴む (オートリピート開始)
+    if (evType === "down" && (onA || onB)) {
+      const dir = onA ? -1 : 1;
+      scrollBy(s, dir * step);
+      s._btnHeld = dir;
+      s._btnRepeat = 0;
+      return { consumed: true };
+    }
+    // 押しっぱなし → ボタン上に留まる間だけ、ディレイ後に一定間隔で反復
+    if (evType === "held" && s._btnHeld !== 0) {
+      const stillOnBtn =
+        (s._btnHeld === -1 && onA) || (s._btnHeld === 1 && onB);
+      if (stillOnBtn) {
+        s._btnRepeat++;
+        if (
+          s._btnRepeat >= BTN_REPEAT_DELAY &&
+          (s._btnRepeat - BTN_REPEAT_DELAY) % BTN_REPEAT_INTERVAL === 0
+        ) {
+          scrollBy(s, s._btnHeld * step);
+        }
+      }
+      return { consumed: true };
+    }
+    if (evType === "up" && s._btnHeld !== 0) {
+      s._btnHeld = 0;
+      s._btnRepeat = 0;
+      return { consumed: true };
+    }
+  }
+  // ボタン以外 → 縮んだサム区間 (ボタン非表示時はトラック全体) で処理
+  return _handleScrollInput(s, evType, mousePos, L.thumbStart, L.thumbLen);
 }
 
 /**
