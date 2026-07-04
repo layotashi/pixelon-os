@@ -963,30 +963,19 @@ Config.onResize(() => {
 
   // はみ出したウィンドウ・スナップウィンドウを新しい画面に合わせる
   for (const win of windows) {
-    // スナップ中のウィンドウはスナップ領域を再計算
-    const waTop = workAreaTop;
-    if (win.snapState === "maximized") {
-      win.x = 0;
-      win.y = waTop;
-      win.w = Config.VRAM_WIDTH;
-      win.h = Config.VRAM_HEIGHT - waTop;
-    } else if (win.snapState === "snap-left") {
-      win.x = 0;
-      win.y = waTop;
-      win.w = (Config.VRAM_WIDTH / 2) | 0;
-      win.h = Config.VRAM_HEIGHT - waTop;
-    } else if (win.snapState === "snap-right") {
-      const half = (Config.VRAM_WIDTH / 2) | 0;
-      win.x = half;
-      win.y = waTop;
-      win.w = Config.VRAM_WIDTH - half;
-      win.h = Config.VRAM_HEIGHT - waTop;
+    // スナップ中のウィンドウはスナップ領域を再計算 (getSnapRect と同じ式)
+    const snap = snapRectFor(win.snapState);
+    if (snap) {
+      win.x = snap.x;
+      win.y = snap.y;
+      win.w = snap.w;
+      win.h = snap.h;
     } else {
       // 通常ウィンドウ: はみ出しを制約
       if (win.x + win.w > Config.VRAM_WIDTH)
         win.x = Math.max(0, Config.VRAM_WIDTH - win.w);
       if (win.y + win.h > Config.VRAM_HEIGHT)
-        win.y = Math.max(waTop, Config.VRAM_HEIGHT - win.h);
+        win.y = Math.max(workAreaTop, Config.VRAM_HEIGHT - win.h);
     }
     recalcLayout(win);
   }
@@ -1163,42 +1152,40 @@ function sendToBack(i) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /**
- * マウス座標からスナップ先の矩形を返す。
- * スナップゾーン外なら null。
+ * スナップ状態名から配置矩形を返す。現在の work area / 解像度に基づく。
+ * ドロップ時 (getSnapRect) と解像度変更時 (Config.onResize) が共有する
+ * 単一の矩形式。state が "none" / 不明なら null。
+ * @param {string} state  "maximized" | "snap-left" | "snap-right"
+ * @returns {{ x:number, y:number, w:number, h:number }|null}
+ */
+function snapRectFor(state) {
+  const waTop = workAreaTop;
+  const h = Config.VRAM_HEIGHT - waTop;
+  const half = (Config.VRAM_WIDTH / 2) | 0;
+  switch (state) {
+    case "maximized":
+      return { x: 0, y: waTop, w: Config.VRAM_WIDTH, h };
+    case "snap-left":
+      return { x: 0, y: waTop, w: half, h };
+    case "snap-right":
+      return { x: half, y: waTop, w: Config.VRAM_WIDTH - half, h };
+    default:
+      return null;
+  }
+}
+
+/**
+ * マウス座標からスナップ先の矩形 (state 付き) を返す。
+ * スナップゾーン外なら null。上端=最大化を優先し、次に左端・右端。
  * @returns {{ x:number, y:number, w:number, h:number, state:string }|null}
  */
 function getSnapRect(mx, my) {
-  const waTop = workAreaTop;
-  const maxH = Config.VRAM_HEIGHT - waTop;
-  if (my < waTop + SNAP_ZONE) {
-    return {
-      x: 0,
-      y: waTop,
-      w: Config.VRAM_WIDTH,
-      h: maxH,
-      state: "maximized",
-    };
-  }
-  if (mx < SNAP_ZONE) {
-    return {
-      x: 0,
-      y: waTop,
-      w: (Config.VRAM_WIDTH / 2) | 0,
-      h: maxH,
-      state: "snap-left",
-    };
-  }
-  if (mx >= Config.VRAM_WIDTH - SNAP_ZONE) {
-    const half = (Config.VRAM_WIDTH / 2) | 0;
-    return {
-      x: half,
-      y: waTop,
-      w: Config.VRAM_WIDTH - half,
-      h: maxH,
-      state: "snap-right",
-    };
-  }
-  return null;
+  let state = null;
+  if (my < workAreaTop + SNAP_ZONE) state = "maximized";
+  else if (mx < SNAP_ZONE) state = "snap-left";
+  else if (mx >= Config.VRAM_WIDTH - SNAP_ZONE) state = "snap-right";
+  const rect = snapRectFor(state);
+  return rect && { ...rect, state };
 }
 
 /**
