@@ -24,9 +24,11 @@
  *   呼び出し側はスロット矩形を渡すだけでよい。
  *
  *   スクロール可能かつトラックが十分長い時は、両端に ▲▼ / ◀▶ の
- *   ステッパーボタンを出す (クリックで 1 段 = 縦1行/横1桁、押しっぱなしで
- *   オートリピート、押下中は反転表示)。短いバー・非スクロール時はボタン無し。
- *   ボタンの有無・当たり判定・サム区間は trackLayout() が単一管理する。
+ *   ステッパーボタンを出す。ボタンは 9x9 (スロット内幅いっぱい) の矩形に
+ *   矢印を中央配置し、サム領域とは区切り線 (BTN_SEP) で隔てる。クリックで
+ *   1 段 (縦1行/横1桁)、押しっぱなしでオートリピート、押下中は反転表示。
+ *   短いバー・非スクロール時はボタン無し。ボタンの有無・当たり判定・区切り線・
+ *   サム区間は trackLayout() が単一管理する。
  *
  * ── スクロール状態 (ScrollState) ──
  *   {
@@ -76,19 +78,21 @@ export const SCROLLBAR_SLOT_WIDTH = SCROLLBAR_W + SCROLLBAR_MARGIN * 2 + 1;
 const THUMB_MIN = 5;
 
 /**
- * ステッパーボタン (端の ▲▼ / ◀▶) の一辺 (px)。トラック幅と同じ正方形。
+ * ステッパーボタン (端の ▲▼ / ◀▶) の一辺 (px)。スロット内幅 (sep を除く
+ * = SCROLLBAR_W + margin*2 = 9) と同じ 9x9 の正方形にし、矢印を中央へ置く。
  * scrollBy(±step) でスクロール軸方向に 1 段 (縦=1行 / 横=1桁) 動かす。
  */
-const SCROLLBAR_BTN = SCROLLBAR_W;
+const SCROLLBAR_BTN = SCROLLBAR_W + SCROLLBAR_MARGIN * 2;
 
-/** ボタンとサムトラックの間に入れる暗色の隙間 (px)。ボタンとサムを視覚的に分ける。 */
-const BTN_GAP = 1;
+/** ボタン領域とサム領域を隔てる区切り線の太さ (px)。 */
+const BTN_SEP = 1;
 
 /**
- * ボタンを出す最小トラック長 (px)。両端ボタン + 隙間 + 最小サムが収まらない
- * 短いトラックではボタンを出さず、従来どおりサムのみ表示する (小窓での破綻回避)。
+ * ボタンを出す最小トラック長 (px)。両端 (ボタン + 区切り線) + 最小サムが
+ * 収まらない短いトラックではボタンを出さず、従来どおりサムのみ表示する
+ * (小窓での破綻回避)。
  */
-const MIN_TRACK_FOR_BUTTONS = (SCROLLBAR_BTN + BTN_GAP) * 2 + THUMB_MIN;
+const MIN_TRACK_FOR_BUTTONS = (SCROLLBAR_BTN + BTN_SEP) * 2 + THUMB_MIN;
 
 /** ボタン押しっぱなしオートリピート: 初動から反復開始までの hold フレーム数。 */
 const BTN_REPEAT_DELAY = 20;
@@ -254,7 +258,7 @@ function thumbGeom(s, trackStart, trackLen) {
  * @param {number} trackStart トラック開始座標 (px, スクロール軸)
  * @param {number} trackLen   トラック長さ (px)
  * @returns {{ showButtons:boolean, aStart:number, bStart:number,
- *             thumbStart:number, thumbLen:number }}
+ *             sepA:number, sepB:number, thumbStart:number, thumbLen:number }}
  */
 function trackLayout(s, trackStart, trackLen) {
   if (!scrollNeeded(s) || trackLen < MIN_TRACK_FOR_BUTTONS) {
@@ -262,46 +266,54 @@ function trackLayout(s, trackStart, trackLen) {
       showButtons: false,
       aStart: 0,
       bStart: 0,
+      sepA: 0,
+      sepB: 0,
       thumbStart: trackStart,
       thumbLen: trackLen,
     };
   }
-  const inset = SCROLLBAR_BTN + BTN_GAP;
+  const end = SCROLLBAR_BTN + BTN_SEP; // ボタン(9) + 区切り線(1)
   return {
     showButtons: true,
-    aStart: trackStart, // 上/左ボタン
-    bStart: trackStart + trackLen - SCROLLBAR_BTN, // 下/右ボタン
-    thumbStart: trackStart + inset,
-    thumbLen: trackLen - inset * 2,
+    aStart: trackStart, // 上/左ボタン開始
+    bStart: trackStart + trackLen - SCROLLBAR_BTN, // 下/右ボタン開始
+    sepA: trackStart + SCROLLBAR_BTN, // 上/左ボタン直後の区切り線
+    sepB: trackStart + trackLen - SCROLLBAR_BTN - BTN_SEP, // 下/右ボタン直前の区切り線
+    thumbStart: trackStart + end,
+    thumbLen: trackLen - end * 2,
   };
 }
 
-/** 7x7 ボタン内に中央寄せの三角形 (▲▼◀▶) を色 c で描く。(bx,by)=ボタン左上。 */
+/** 9x9 ボタン内に中央寄せの三角形 (▲▼◀▶) を色 c で描く。(bx,by)=ボタン左上。 */
 function drawArrow(dir, bx, by, c) {
   if (dir === "up") {
-    pset(bx + 3, by + 2, c);
-    hline(bx + 2, bx + 4, by + 3, c);
-    hline(bx + 1, bx + 5, by + 4, c);
+    pset(bx + 4, by + 2, c);
+    hline(bx + 3, bx + 5, by + 3, c);
+    hline(bx + 2, bx + 6, by + 4, c);
+    hline(bx + 1, bx + 7, by + 5, c);
   } else if (dir === "down") {
-    hline(bx + 1, bx + 5, by + 2, c);
-    hline(bx + 2, bx + 4, by + 3, c);
-    pset(bx + 3, by + 4, c);
+    hline(bx + 1, bx + 7, by + 3, c);
+    hline(bx + 2, bx + 6, by + 4, c);
+    hline(bx + 3, bx + 5, by + 5, c);
+    pset(bx + 4, by + 6, c);
   } else if (dir === "left") {
-    pset(bx + 2, by + 3, c);
-    vline(bx + 3, by + 2, by + 4, c);
-    vline(bx + 4, by + 1, by + 5, c);
+    pset(bx + 2, by + 4, c);
+    vline(bx + 3, by + 3, by + 5, c);
+    vline(bx + 4, by + 2, by + 6, c);
+    vline(bx + 5, by + 1, by + 7, c);
   } else {
     // right
-    vline(bx + 2, by + 1, by + 5, c);
-    vline(bx + 3, by + 2, by + 4, c);
-    pset(bx + 4, by + 3, c);
+    vline(bx + 3, by + 1, by + 7, c);
+    vline(bx + 4, by + 2, by + 6, c);
+    vline(bx + 5, by + 3, by + 5, c);
+    pset(bx + 6, by + 4, c);
   }
 }
 
-/** ステッパーボタンを描く。押下中は 7x7 を塗り潰して矢印を抜き文字にし反転表示。 */
+/** ステッパーボタンを描く。押下中は 9x9 を塗り潰して矢印を抜き文字にし反転表示。 */
 function drawButton(dir, bx, by, pressed) {
   if (pressed) {
-    fillRect(bx, by, SCROLLBAR_W, SCROLLBAR_W, 1);
+    fillRect(bx, by, SCROLLBAR_BTN, SCROLLBAR_BTN, 1);
     drawArrow(dir, bx, by, 0);
   } else {
     drawArrow(dir, bx, by, 1);
@@ -391,14 +403,18 @@ export function drawHScrollSep(x1, x2, y) {
 export function drawVScrollbarSlot(s, x, y, h) {
   // sep 線
   vline(x, y, y + h - 1, 1);
-  const thumbX = x + 1 + SCROLLBAR_MARGIN;
+  const btnX = x + 1; // ボタンはスロット内幅いっぱい (9px)
+  const thumbX = x + 1 + SCROLLBAR_MARGIN; // サムは内側に 1px inset (7px)
   const trackY = y + SCROLLBAR_MARGIN;
   const trackH = h - SCROLLBAR_MARGIN * 2;
   if (trackH <= 0) return;
   const L = trackLayout(s, trackY, trackH);
   if (L.showButtons) {
-    drawButton("up", thumbX, L.aStart, s._btnHeld === -1);
-    drawButton("down", thumbX, L.bStart, s._btnHeld === 1);
+    drawButton("up", btnX, L.aStart, s._btnHeld === -1);
+    drawButton("down", btnX, L.bStart, s._btnHeld === 1);
+    // ボタン領域とサム領域を隔てる区切り線
+    hline(btnX, btnX + SCROLLBAR_BTN - 1, L.sepA, 1);
+    hline(btnX, btnX + SCROLLBAR_BTN - 1, L.sepB, 1);
   }
   drawVScrollbar(s, thumbX, L.thumbStart, L.thumbLen);
 }
@@ -419,14 +435,18 @@ export function drawVScrollbarSlot(s, x, y, h) {
 export function drawHScrollbarSlot(s, x, y, w) {
   // sep 線
   hline(x, x + w - 1, y, 1);
-  const thumbY = y + 1 + SCROLLBAR_MARGIN;
+  const btnY = y + 1; // ボタンはスロット内高いっぱい (9px)
+  const thumbY = y + 1 + SCROLLBAR_MARGIN; // サムは内側に 1px inset (7px)
   const trackX = x + SCROLLBAR_MARGIN;
   const trackW = w - SCROLLBAR_MARGIN * 2;
   if (trackW <= 0) return;
   const L = trackLayout(s, trackX, trackW);
   if (L.showButtons) {
-    drawButton("left", L.aStart, thumbY, s._btnHeld === -1);
-    drawButton("right", L.bStart, thumbY, s._btnHeld === 1);
+    drawButton("left", L.aStart, btnY, s._btnHeld === -1);
+    drawButton("right", L.bStart, btnY, s._btnHeld === 1);
+    // ボタン領域とサム領域を隔てる区切り線
+    vline(L.sepA, btnY, btnY + SCROLLBAR_BTN - 1, 1);
+    vline(L.sepB, btnY, btnY + SCROLLBAR_BTN - 1, 1);
   }
   drawHScrollbar(s, L.thumbStart, thumbY, L.thumbLen);
 }
