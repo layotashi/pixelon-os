@@ -59,7 +59,10 @@ function mainLoop() {
   // ── VRAM ダンプモード (デバッグ用) ──
   // ダンプモード中は WM / アプリの入力処理をスキップし、
   // ダンプモジュールが入力を独占する。描画は継続。
-  const dumpBusy = updateVramDump();
+  // DEV_MODE 時のみ有効化する。オーバーレイ描画 (app.js) も DEV_MODE
+  // ゲート付きのため、本番では「画面に何も出ないまま入力を乗っ取られる」
+  // ことがないようここでも揃える。
+  const dumpBusy = Config.DEV_MODE ? updateVramDump() : false;
 
   if (!dumpBusy) {
     WM.wmUpdate();
