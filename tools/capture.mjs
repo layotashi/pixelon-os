@@ -162,6 +162,18 @@ async function main() {
       await page.waitForTimeout(300);
     }
 
+    // 環境変数 SYNESTA_PALETTE で起動時のパレットを切替えられる
+    // (デバッグ用。例: SYNESTA_PALETTE=<パレットキー> npm run capture desktop)
+    const paletteOverride = process.env.SYNESTA_PALETTE;
+    if (paletteOverride) {
+      console.log(`[capture] switching palette to: ${paletteOverride}`);
+      await page.evaluate(async (name) => {
+        const Config = await import("/js/config.js");
+        Config.setPalette(name);
+      }, paletteOverride);
+      await page.waitForTimeout(300);
+    }
+
     // ウィンドウを開く (desktop モードはスキップ)
     if (windowName.toLowerCase() !== "desktop") {
       console.log(`[capture] opening window: ${windowName}`);
