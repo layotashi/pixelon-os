@@ -61,6 +61,25 @@ import { BAYER_4x4 } from "../core/dither.js";
 import { FOCUS_MARGIN } from "../ui/ui_constants.js";
 import * as Scroll from "../ui/scrollbar.js";
 import * as Desktop from "./desktop.js";
+import {
+  BORDER,
+  SEPARATOR_HEIGHT,
+  FOOTER_SEPARATOR_HEIGHT,
+  FOOTER_PADDING,
+  MIN_WIDTH,
+  MIN_HEIGHT,
+  HEADER_HEIGHT,
+  HEADER_PADDING,
+  CONTENT_PADDING,
+  FOOTER_HEIGHT,
+  recalcLayout,
+  calcWindowSize,
+  recalcLayoutConstants,
+} from "./win_layout.js";
+
+// フレーム構成定数・レイアウト算出は win_layout.js が SSoT。
+// 旧来 wm.js から re-export していた公開定数/関数は互換のため再輸出する。
+export { HEADER_HEIGHT, CONTENT_PADDING, FOOTER_HEIGHT, calcWindowSize };
 
 // ── デスクトップ → WM コールバック注入 ──
 Desktop.desktopSetTooltipCallback(wmSetTooltip);
@@ -124,42 +143,18 @@ function hasTextInputFocus() {
 //  定数
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/** ヘッダー内コンテンツ高さ (グリフとアイコンの大きい方) */
-let HEADER_CONTENT_H = Math.max(GLYPH_H, ICON_H);
-
 /**
- * ヘッダーパディング (上下左右共通)。config.js から取得。
- * recalcDerivedConstants() でキャッシュを更新する。
+ * パディング / フォント変更時に派生定数を再計算する。
+ * レイアウト系 (HEADER_HEIGHT / CONTENT_PADDING / FOOTER_HEIGHT /
+ * MIN_HEIGHT 等) は win_layout.js の recalcLayoutConstants() に委譲し、
+ * ここでは menu 系と ICON_SLOT のみ更新する。
  */
-let HEADER_PADDING = Config.getHeaderPad();
-
-/**
- * ヘッダー高さ (枠線除く。パディング上 + コンテンツ + パディング下)。
- * ES Module の live binding により、recalcDerivedConstants() で値が
- * 変更されるとインポート先でも最新値が参照される。
- */
-export let HEADER_HEIGHT = HEADER_CONTENT_H + HEADER_PADDING * 2;
-
-/**
- * コンテンツ領域の内側パディング (上下左右共通)。config.js から取得。
- * ES Module の live binding により、recalcDerivedConstants() で値が
- * 変更されるとインポート先でも最新値が参照される。
- */
-export let CONTENT_PADDING = Config.getContentPad();
-
-/** パディング / フォント変更時に派生定数を再計算する */
 function recalcDerivedConstants() {
-  HEADER_CONTENT_H = Math.max(GLYPH_H, ICON_H);
-  HEADER_PADDING = Config.getHeaderPad();
-  HEADER_HEIGHT = HEADER_CONTENT_H + HEADER_PADDING * 2;
-  CONTENT_PADDING = Config.getContentPad();
-  FOOTER_HEIGHT =
-    FOOTER_SEPARATOR_HEIGHT + FOOTER_PADDING + GLYPH_H + FOOTER_PADDING;
+  recalcLayoutConstants();
   MENU_ITEM_HEIGHT = GLYPH_H + 6;
   ICON_SLOT = ICON_W + ICON_GAP;
   MENU_CHECK_WIDTH = ICON_W + 3;
   MENU_ARROW_WIDTH = ICON_W + 3;
-  MIN_HEIGHT = BORDER + HEADER_HEIGHT + SEPARATOR_HEIGHT + 4 + BORDER;
 }
 
 /** 全ウィンドウのレイアウトを再計算する */
@@ -188,39 +183,9 @@ function recalcAllWindows() {
   }
 }
 
-// ── フレーム構成定数 ──
-// ウィンドウ枠の各部品サイズ。recalcLayout / calcWindowSize で使用。
-
-/** 外枠線の太さ (px) */
-const BORDER = 1;
-/** ヘッダー装飾余白 (px) — ヘッダー枠線と装飾矩形の間 */
-const DECORATION_MARGIN = 1;
-/** ヘッダー/ボディ区切り線の太さ (px) */
-const SEPARATOR_HEIGHT = 1;
-/** footer 区切り線の太さ (px) */
-const FOOTER_SEPARATOR_HEIGHT = 1;
-/** footer 内側パディング (上下左右各 2px) */
-const FOOTER_PADDING = 2;
-
-/** デフォルト footer 高さ: 区切り線(1) + パディング上(2) + グリフ + パディング下(2) */
-export let FOOTER_HEIGHT =
-  FOOTER_SEPARATOR_HEIGHT + FOOTER_PADDING + GLYPH_H + FOOTER_PADDING;
-
-/**
- * コンテンツ幅からウィンドウ幅を算出する際の追加分 (px)。
- * 左右: 外枠(BORDER) × 2 = 2
- */
-const FRAME_EXTRA_W = BORDER * 2; // 2
-
-/**
- * コンテンツ高さからウィンドウ高さを算出する際の追加分 (px, HEADER_HEIGHT / CONTENT_PADDING / footer 除く)。
- * 上枠(BORDER) + 区切り線(SEPARATOR_HEIGHT) + 下枠(BORDER) = 3
- */
-const FRAME_EXTRA_H = BORDER + SEPARATOR_HEIGHT + BORDER; // 3
-
-/** ウィンドウの最小サイズ (枠込み) */
-const MIN_WIDTH = 8;
-let MIN_HEIGHT = BORDER + HEADER_HEIGHT + SEPARATOR_HEIGHT + 4 + BORDER; // 枠上 + ヘッダー + 区切り + ボディ最小4px + 枠下
+// フレーム構成定数 (BORDER / SEPARATOR_HEIGHT / FOOTER_HEIGHT /
+// MIN_WIDTH / MIN_HEIGHT / HEADER_HEIGHT / CONTENT_PADDING 等) と
+// recalcLayout / calcWindowSize は win_layout.js へ分離し、冒頭で import 済み。
 
 /** リサイズ方向ビットフラグ */
 const EDGE_LEFT = 1; // 左辺
@@ -1288,220 +1253,9 @@ function unsnap(win, mx, my) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  レイアウト算出
+//  コンテンツ矩形アクセス / 座標変換
+//  (フレーム構成定数・recalcLayout・calcWindowSize は win_layout.js へ分離)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-/**
- * ウィンドウの全レイアウト矩形を (x, y, w, h) から一括算出し、
- * win._layout にキャッシュする。
- *
- * 呼び出しタイミング:
- *   - createWindow 直後
- *   - ウィンドウの x/y/w/h が変化するたび (移動・リサイズ・スナップ)
- *
- * 構成図 (footer あり時):
- *   win.y     ┌──────────────────────────┐  BORDER (1px)
- *             │ ┌──────────────────────┐ │  DECORATION_MARGIN (装飾矩形, ヘッダーのみ)
- *             │ │    HEADER (HEADER_HEIGHT) │ │
- *             │ └──────────────────────┘ │
- *   sepY      │──────── 区切り線 ────────│  SEPARATOR_HEIGHT (1px)
- *             │  CONTENT_PADDING             │
- *             │    ┌── contentRect ──┐   │
- *             │    │                 │   │
- *             │    └─────────────────┘   │
- *             │  CONTENT_PADDING             │
- *   footerSepY│──────── 区切り線 ────────│  FOOTER_SEPARATOR_HEIGHT (1px) ← footer ありの場合のみ
- *             │    footer (FOOTER_HEIGHT)  │
- *   win.y+h   └──────────────────────────┘  BORDER (1px)
- *
- * scrollable=true の場合:
- *   ボディ領域の右端にスクロールバーが張り付き、その左側にコンテンツゾーンが置かれる。
- *   CONTENT_PADDING はコンテンツゾーン内に適用される (スクロールバーの外側には適用しない)。
- *   明色枠線 (ウィンドウ外枠 + sep + ヘッダー区切り線) の内側に
- *   上下左右 1px の暗色余白を挟み、その内部に thumb を描画する。
- *
- *   sepY      │──────── 区切り線 ────────────────────│ SEPARATOR_HEIGHT
- *             │                               ┊     │
- *             │  PAD ┌ contentRect ┐ PAD  sep ┊ ██  │ ← thumb (1px inset)
- *             │      │             │       ┊  ┊ ██  │
- *             │  PAD └─────────────┘ PAD  sep ┊     │
- *             │                               ┊     │
- *             ├─── content zone ──────────┤─sb area─┤
- *             ├──────────── body area ──────────────┤
- */
-function recalcLayout(win) {
-  // ── フルスクリーン: chrome 無しで全 VRAM がコンテンツ ──
-  // ヒットテストが誤爆しないよう headerRect は空、sepY は -1 (全域が body 扱い)。
-  if (win.fullscreen) {
-    win.x = 0;
-    win.y = 0;
-    win.w = Config.VRAM_WIDTH;
-    win.h = Config.VRAM_HEIGHT;
-    win._layout = {
-      headerRect: { x: 0, y: 0, w: 0, h: 0 },
-      decoRect: { x: 0, y: 0, w: 0, h: 0 },
-      titleX: 0,
-      titleY: 0,
-      iconY: 0,
-      iconBaseX: 0,
-      sepY: -1,
-      contentRect: { x: 0, y: 0, w: Config.VRAM_WIDTH, h: Config.VRAM_HEIGHT },
-      scrollbarRect: null,
-      footerSepY: 0,
-      footerRect: null,
-    };
-    if (win._scrollable && win._vScroll) {
-      Scroll.scrollSetViewport(win._vScroll, Config.VRAM_HEIGHT);
-    }
-    return;
-  }
-
-  const fx = win.x;
-  const fy = win.y;
-  const fw = win.w;
-  const fh = win.h;
-  const footerH = win.footer ? FOOTER_HEIGHT : 0;
-
-  // ── header ──
-  const headerX = fx + BORDER;
-  const headerY = fy + BORDER;
-  const headerW = fw - BORDER * 2;
-
-  // ── 区切り線 Y ──
-  const sepY = fy + BORDER + HEADER_HEIGHT;
-
-  // ── ヘッダー装飾矩形 (header 内側、枠と装飾の間に 1px 隙間) ──
-  const decoX = fx + BORDER + DECORATION_MARGIN;
-  const decoY = fy + BORDER + DECORATION_MARGIN;
-  const decoW = fw - (BORDER + DECORATION_MARGIN) * 2;
-  const decoH = HEADER_HEIGHT - DECORATION_MARGIN * 2;
-
-  // ── タイトル / アイコン Y ──
-  const titleX = fx + BORDER + HEADER_PADDING;
-  const titleY =
-    fy + BORDER + HEADER_PADDING + ((HEADER_CONTENT_H - GLYPH_H) >> 1);
-  const iconY =
-    fy + BORDER + HEADER_PADDING + ((HEADER_CONTENT_H - ICON_H) >> 1);
-  const iconBaseX = fx + fw - BORDER - HEADER_PADDING;
-
-  // ── content (区切り線の下から CONTENT_PADDING を取った領域) ──
-  //
-  // scrollable=true の場合:
-  //   ボディ右端にスクロールバースロット (Scroll.SCROLLBAR_SLOT_WIDTH) が張り付く。
-  //   構成 (左→右): content | sep(1) | dark(1) | thumb | dark(1) | border
-  //   sbReserve = Scroll.SCROLLBAR_SLOT_WIDTH
-  //   contentW  = ボディ幅 - sbReserve - CONTENT_PADDING*2
-  //
-  // scrollable=false: sbReserve=0
-  //
-  // contentTop / contentBottom / contentH は calcWindowSize の逆演算。
-  const sbReserve = win._scrollable ? Scroll.SCROLLBAR_SLOT_WIDTH : 0;
-  const contentTop = sepY + SEPARATOR_HEIGHT + CONTENT_PADDING;
-  const contentBottom =
-    footerH > 0
-      ? fy + fh - BORDER - footerH - CONTENT_PADDING
-      : fy + fh - BORDER - CONTENT_PADDING;
-  const contentX = fx + BORDER + CONTENT_PADDING;
-  const contentY = contentTop;
-  const contentW = Math.max(
-    0,
-    fw - BORDER * 2 - CONTENT_PADDING * 2 - sbReserve,
-  );
-  const contentH = Math.max(0, contentBottom - contentTop);
-
-  // ── スクロールバー・スロット矩形 (scrollable=true) ──
-  // Scroll.drawVScrollbarSlot に渡すスロット領域。
-  // 内部で sep, dark margin, thumb を描画する。
-  let scrollbarRect = null;
-  if (win._scrollable) {
-    const slotTop = sepY + SEPARATOR_HEIGHT;
-    const slotBottom =
-      footerH > 0 ? fy + fh - BORDER - footerH : fy + fh - BORDER;
-    scrollbarRect = {
-      x: fx + fw - BORDER - Scroll.SCROLLBAR_SLOT_WIDTH,
-      y: slotTop,
-      w: Scroll.SCROLLBAR_SLOT_WIDTH,
-      h: Math.max(0, slotBottom - slotTop),
-    };
-  }
-
-  // ── スクロール状態の viewport 更新 ──
-  if (win._scrollable && win._vScroll) {
-    Scroll.scrollSetViewport(win._vScroll, contentH);
-  }
-
-  // ── footer (opt-in) ──
-  // footerRect はパディング内側 (テキスト描画可能領域) を返す。
-  // 区切り線(FOOTER_SEPARATOR_HEIGHT) と上下左右の余白(FOOTER_PADDING) は WM が管理する。
-  let footerRect = null;
-  let footerSepY = 0;
-  if (footerH > 0) {
-    footerSepY = fy + fh - BORDER - footerH;
-    // footer はウィンドウ枠の内側 (BORDER) から FOOTER_PADDING を取った領域
-    const footerX = fx + BORDER + FOOTER_PADDING;
-    const footerW = fw - (BORDER + FOOTER_PADDING) * 2;
-    footerRect = {
-      x: footerX,
-      y: footerSepY + FOOTER_SEPARATOR_HEIGHT + FOOTER_PADDING,
-      w: Math.max(0, footerW),
-      h: Math.max(0, footerH - FOOTER_SEPARATOR_HEIGHT - FOOTER_PADDING * 2),
-    };
-  }
-
-  win._layout = {
-    // ヘッダー領域 (枠内側、区切り線上まで)
-    headerRect: { x: headerX, y: headerY, w: headerW, h: HEADER_HEIGHT },
-    // ヘッダー装飾矩形 (GPU.fillRect 用)
-    decoRect: { x: decoX, y: decoY, w: decoW, h: decoH },
-    // タイトル描画位置
-    titleX,
-    titleY,
-    // アイコン描画 Y 位置 / 右端基準 X
-    iconY,
-    iconBaseX,
-    // ヘッダー/ボディ区切り線 Y
-    sepY,
-    // コンテンツ描画領域
-    contentRect: { x: contentX, y: contentY, w: contentW, h: contentH },
-    // スクロールバー矩形 (scrollable=true の場合のみ, null = スクロール無効)
-    scrollbarRect,
-    // footer 区切り線 Y (footer 有効時のみ)
-    footerSepY,
-    // footer 描画領域 (null = footer 無効)
-    footerRect,
-  };
-}
-
-/**
- * コンテンツサイズからウィンドウの外寸 (w, h) を算出する。
- * wmOpen / border ダブルクリック等で共通使用。
- *
- * 計算式 (recalcLayout の逆演算):
- *   w = cw + BORDER*2 + CONTENT_PADDING*2 + sbReserve
- *   h = ch + BORDER + SEPARATOR_HEIGHT + BORDER + HEADER_HEIGHT + CONTENT_PADDING*2 + (footer ? FOOTER_HEIGHT : 0)
- *
- * scrollable=true の場合、ボディ右端のスクロールバースロット (Scroll.SCROLLBAR_SLOT_WIDTH) を加算する。
- *
- * @param {number} cw  コンテンツ幅
- * @param {number} ch  コンテンツ高さ
- * @param {boolean} [footer=false] footer 有効フラグ
- * @param {boolean} [scrollable=false] スクロール可能ウィンドウか
- * @returns {{ w:number, h:number }}
- */
-export function calcWindowSize(cw, ch, footer = false, scrollable = false) {
-  const sbReserve = scrollable ? Scroll.SCROLLBAR_SLOT_WIDTH : 0;
-  const footerH = footer ? FOOTER_HEIGHT : 0;
-  return {
-    w: Math.max(
-      MIN_WIDTH,
-      cw + FRAME_EXTRA_W + CONTENT_PADDING * 2 + sbReserve,
-    ),
-    h: Math.max(
-      MIN_HEIGHT,
-      ch + FRAME_EXTRA_H + HEADER_HEIGHT + CONTENT_PADDING * 2 + footerH,
-    ),
-  };
-}
 
 /**
  * ウィンドウのボディ内側 (コンテンツ描画可能領域) を返す。
