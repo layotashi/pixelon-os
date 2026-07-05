@@ -187,7 +187,14 @@ export class NotepadEditor extends FocusableWidget {
     if (draggingV || draggingH) return;
 
     // ── 本文領域のマウス ──
-    const hit = this.hitTest(ev.localX, ev.localY);
+    // 交差コーナー（押下不能）や、内容が収まっている時の 100% thumb をクリックしても、
+    // ここへ落ちて「本文カーソル配置＝末尾へジャンプ＝下スクロール」してしまうのを防ぐ。
+    // スクロールバー各領域 (V/H バー・コーナー) を本文ヒットから除外する。
+    const inCorner =
+      ev.localX >= g.vSlotX && ev.localX < g.vSlotX + g.SLOT &&
+      ev.localY >= g.hSlotY && ev.localY < g.hSlotY + g.SLOT;
+    const hit =
+      this.hitTest(ev.localX, ev.localY) && !inV && !inH && !inCorner;
     v.handleTextMouse(ev, hit, g.innerX, g.innerY);
   }
 

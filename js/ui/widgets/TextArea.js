@@ -163,11 +163,12 @@ export class TextArea extends FocusableWidget {
     if (Scroll.scrollIsDragging(vScroll)) return;
 
     // ── 本文領域のマウス ──
-    // スクロールバードラッグ中は上の return で抜けているので、ここは hit だけで判定
-    // （wheel/中ボタンがスクロールバー上でも従来どおり効く）。
+    // スクロールバー領域を本文ヒットから除外する。除外しないと、内容が収まって
+    // いる時の 100% thumb をクリックした際に本文カーソルが末尾へ飛び、意図せず
+    // 下スクロールしてしまう（ドラッグ継続は _dragging 側で扱うので down のみ影響）。
     const innerX = this.x + 2 + Helpers.BUTTON_PADDING;
     const innerY = this.y + 2 + Helpers.BUTTON_PADDING;
-    this.view.handleTextMouse(ev, hit, innerX, innerY);
+    this.view.handleTextMouse(ev, hit && !inScrollbar, innerX, innerY);
   }
 
   /** @override */
