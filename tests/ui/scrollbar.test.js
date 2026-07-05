@@ -21,6 +21,7 @@ import {
   scrollIsDragging,
   scrollDragReset,
   drawVScrollbarSlot,
+  drawScrollCorner,
   SCROLLBAR_W,
 } from "@/ui/scrollbar.js";
 
@@ -103,19 +104,19 @@ describe("ステッパーボタン: オートリピート", () => {
   });
 });
 
-describe("フォールバック: ボタン非表示条件", () => {
+describe("ボタン表示条件", () => {
   it("短いトラックではボタンを出さない (押下状態にならない)", () => {
     const s = scrollable(10);
     handleVScrollInput(s, "down", 3, 0, SHORT); // 上端をクリックしてもボタン扱いしない
     expect(s._btnHeld).toBe(0); // ボタン非表示 → トラックジャンプ扱い
   });
 
-  it("スクロール不要ならボタン無し・押下状態にならない", () => {
+  it("スクロール不要でもボタンは常時表示され押下できる (位置は動かない)", () => {
     const s = createScrollState(20, 10); // content<viewport → max=0
     s.offset = 0;
-    handleVScrollInput(s, "down", 3, 0, LONG);
-    expect(s._btnHeld).toBe(0);
-    expect(s.offset).toBe(0);
+    handleVScrollInput(s, "down", 3, 0, LONG); // 上ボタン
+    expect(s._btnHeld).toBe(-1); // 常時表示 → 押下状態になる
+    expect(s.offset).toBe(0); // スクロール不可なので位置は動かない
   });
 });
 
@@ -125,5 +126,9 @@ describe("描画スモーク", () => {
     expect(() => drawVScrollbarSlot(scrollable(10), 0, 0, SHORT)).not.toThrow();
     const noScroll = createScrollState(20, 10);
     expect(() => drawVScrollbarSlot(noScroll, 0, 0, LONG)).not.toThrow();
+  });
+
+  it("drawScrollCorner が例外を投げない", () => {
+    expect(() => drawScrollCorner(scrollable(10), 0, 0)).not.toThrow();
   });
 });

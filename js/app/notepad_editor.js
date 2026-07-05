@@ -130,6 +130,8 @@ export class NotepadEditor extends FocusableWidget {
     // 縦バー（右端フラッシュ）/ 横バー（下端フラッシュ・常時表示）
     Scroll.drawVScrollbarSlot(this.view._vScroll, g.vSlotX, g.vSlotY, g.vSlotH);
     Scroll.drawHScrollbarSlot(this._hScroll, g.hSlotX, g.hSlotY, g.hSlotW);
+    // V/H が交わる右下コーナー（押下不能の飾り。ボタンが浮いて見えないように）
+    Scroll.drawScrollCorner(this._hScroll, g.vSlotX, g.hSlotY);
   }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

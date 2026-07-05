@@ -23,12 +23,13 @@
  *   この仕様は drawVScrollbarSlot / drawHScrollbarSlot が一元管理し、
  *   呼び出し側はスロット矩形を渡すだけでよい。
  *
- *   スクロール可能かつトラックが十分長い時は、両端に ▲▼ / ◀▶ の
- *   ステッパーボタンを出す。ボタンは 9x9 (スロット内幅いっぱい) の矩形に
- *   矢印を中央配置し、サム領域とは区切り線 (BTN_SEP) で隔てる。クリックで
- *   1 段 (縦1行/横1桁)、押しっぱなしでオートリピート、押下中は反転表示。
- *   短いバー・非スクロール時はボタン無し。ボタンの有無・当たり判定・区切り線・
- *   サム区間は trackLayout() が単一管理する。
+ *   トラックが十分長ければ両端に ▲▼ / ◀▶ のステッパーボタンを**常時**出す
+ *   (スクロール不要でも。1bit では 100% 長 thumb が判別しづらいため)。ボタンは
+ *   9x9 セル内 1px 余白の 7x7 を前景で塗り矢印を抜き文字にする (thumb と同じ前景
+ *   表示・押下で反転しない)。サム領域とは区切り線 (BTN_SEP) で隔てる。クリックで
+ *   1 段 (縦1行/横1桁)、押しっぱなしでオートリピート。短すぎるバーのみボタン無し。
+ *   ボタンの有無・当たり判定・区切り線・サム区間は trackLayout() が単一管理する。
+ *   V/H が交わる右下は drawScrollCorner() で押下不能の市松模様を描く。
  *
  * ── スクロール状態 (ScrollState) ──
  *   {
@@ -256,7 +257,9 @@ function thumbGeom(s, trackStart, trackLen) {
 /**
  * トラック (サム走行域) をステッパーボタンとサム区間に分割する。描画と入力で
  * 同じ分割を使い、ボタン当たり判定とサム位置がズレないようにする単一の真実。
- * ボタンは「スクロール可能 (scrollNeeded) かつトラックが十分長い」時だけ出す。
+ * ボタンはトラックが十分長ければ**常時**出す (スクロール不要でも)。1bit では
+ * 100% 長の thumb はスクロールバーと判別しづらいため、ボタンで「ここはスクロール
+ * UI」と示す狙い。短すぎるトラックのみボタン無し。
  * @param {object} s          ScrollState
  * @param {number} trackStart トラック開始座標 (px, スクロール軸)
  * @param {number} trackLen   トラック長さ (px)
@@ -264,7 +267,7 @@ function thumbGeom(s, trackStart, trackLen) {
  *             sepA:number, sepB:number, thumbStart:number, thumbLen:number }}
  */
 function trackLayout(s, trackStart, trackLen) {
-  if (!scrollNeeded(s) || trackLen < MIN_TRACK_FOR_BUTTONS) {
+  if (trackLen < MIN_TRACK_FOR_BUTTONS) {
     // ボタン無し: サムはスロット内で上下(左右) 1px 余白を取って走る (従来挙動)。
     return {
       showButtons: false,
@@ -316,16 +319,13 @@ function drawArrow(dir, bx, by, c) {
 }
 
 /**
- * ステッパーボタンを描く。押下中は反転領域 (9x9 セル内に 1px 余白の 7x7=サムと
- * 同寸) を塗り潰し、キャレットを抜き文字にして反転表示する。
+ * ステッパーボタンを描く。非押下/押下とも同じ見た目: 9x9 セル内に 1px 余白の
+ * 7x7 (=サムと同寸) を前景で塗り、キャレットを抜き文字にする。thumb が押下で
+ * 反転しないのに合わせ、ボタンも反転せず常に前景表示 (押下フィードバックは無し)。
  */
-function drawButton(dir, bx, by, pressed) {
-  if (pressed) {
-    fillRect(bx + 1, by + 1, SCROLLBAR_W, SCROLLBAR_W, 1); // 7x7 反転領域 (1px 余白)
-    drawArrow(dir, bx, by, 0);
-  } else {
-    drawArrow(dir, bx, by, 1);
-  }
+function drawButton(dir, bx, by) {
+  fillRect(bx + 1, by + 1, SCROLLBAR_W, SCROLLBAR_W, 1); // 7x7 前景 (1px 余白)
+  drawArrow(dir, bx, by, 0); // キャレットを抜き文字に
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -416,8 +416,8 @@ export function drawVScrollbarSlot(s, x, y, h) {
   const thumbX = x + 1 + SCROLLBAR_MARGIN; // サムは内側に 1px inset (7px)
   const L = trackLayout(s, y, h); // ボタンはスロット端にフラッシュ、余白はサム側で
   if (L.showButtons) {
-    drawButton("up", btnX, L.aStart, s._btnHeld === -1);
-    drawButton("down", btnX, L.bStart, s._btnHeld === 1);
+    drawButton("up", btnX, L.aStart);
+    drawButton("down", btnX, L.bStart);
     // ボタン領域とサム領域を隔てる区切り線
     hline(btnX, btnX + SCROLLBAR_BTN - 1, L.sepA, 1);
     hline(btnX, btnX + SCROLLBAR_BTN - 1, L.sepB, 1);
@@ -446,13 +446,33 @@ export function drawHScrollbarSlot(s, x, y, w) {
   const thumbY = y + 1 + SCROLLBAR_MARGIN; // サムは内側に 1px inset (7px)
   const L = trackLayout(s, x, w); // ボタンはスロット端にフラッシュ、余白はサム側で
   if (L.showButtons) {
-    drawButton("left", L.aStart, btnY, s._btnHeld === -1);
-    drawButton("right", L.bStart, btnY, s._btnHeld === 1);
+    drawButton("left", L.aStart, btnY);
+    drawButton("right", L.bStart, btnY);
     // ボタン領域とサム領域を隔てる区切り線
     vline(L.sepA, btnY, btnY + SCROLLBAR_BTN - 1, 1);
     vline(L.sepB, btnY, btnY + SCROLLBAR_BTN - 1, 1);
   }
   drawHScrollbar(s, L.thumbStart, thumbY, L.thumbLen);
+}
+
+/**
+ * V/H スクロールバーが交わる右下コーナー (SLOT×SLOT) を描く。押下不能の飾りで、
+ * これが無いと下/右ボタンが浮いて見える。V/H の sep を継いだ左辺・上辺 + 1px 余白 +
+ * 前景の市松模様 (7x7) で埋め、ボタン (7x7 前景) と枠を揃える。
+ * @param {object} s  ScrollState (未使用だが API 対称のため受ける)
+ * @param {number} x  コーナー左上 X (= V バーの sep 位置)
+ * @param {number} y  コーナー左上 Y (= H バーの sep 位置)
+ */
+export function drawScrollCorner(s, x, y) {
+  // V/H の sep を継ぐ (左辺・上辺)
+  vline(x, y, y + SCROLLBAR_SLOT_WIDTH - 1, 1);
+  hline(x, x + SCROLLBAR_SLOT_WIDTH - 1, y, 1);
+  // 内側 7x7 (1px 余白の内側, x+2..x+8) を前景の市松模様で埋める
+  for (let py = y + 2; py < y + 2 + SCROLLBAR_W; py++) {
+    for (let px = x + 2; px < x + 2 + SCROLLBAR_W; px++) {
+      if (((px + py) & 1) === 0) pset(px, py, 1);
+    }
+  }
 }
 
 /**
