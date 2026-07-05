@@ -182,58 +182,6 @@ export function applyVramRgba(out32, vram, w, h, diagOff) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  applyVramIndexed — VRAM → indexed Uint8Array (GIF 用)
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-/**
- * 1-bit VRAM を 1:1 で indexed-color に変換する。
- * 出力値は 0-3 のパレットインデックス。GIF エンコード用。
- *
- * @param {Uint8Array} vram     1-bit VRAM (0/1)
- * @param {number}     w        VRAM 幅
- * @param {number}     h        VRAM 高さ
- * @param {number}     diagOff  斜線オフセット (px)
- * @returns {{ data: Uint8Array, width: number, height: number }}
- */
-export function applyVramIndexed(vram, w, h, diagOff) {
-  const out = new Uint8Array(w * h);
-  const doff = Math.floor(diagOff);
-  const S = _diagSpacing;
-  const dh = _diagHit;
-
-  for (let y = 0; y < h; y++) {
-    const rowBase = y * w;
-    for (let x = 0; x < w; x++) {
-      const v = vram[rowBase + x];
-      const base = (((x + y - doff) % S) + S) % S;
-      const hit = dh[base];
-      out[rowBase + x] = v + (hit << 1);
-    }
-  }
-  return { data: out, width: w, height: h };
-}
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  getDisplayPalette — 4 色パレット (GIF 用)
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-/**
- * 現在のパレットから 4 色 RGB 配列を返す (GIF エンコード用)。
- * @param {number[]} fg  前景色 [R, G, B]
- * @param {number[]} bg  背景色 [R, G, B]
- * @returns {number[][]}  [[R,G,B], ...] (4 エントリ)
- */
-export function getDisplayPalette(fg, bg) {
-  const dm = 1 - (_diagEnabled ? _diagDarkness : 0);
-  return [
-    [bg[0], bg[1], bg[2]], // 0: bg
-    [fg[0], fg[1], fg[2]], // 1: fg
-    [clamp(bg[0] * dm), clamp(bg[1] * dm), clamp(bg[2] * dm)], // 2: bg+diag
-    [clamp(fg[0] * dm), clamp(fg[1] * dm), clamp(fg[2] * dm)], // 3: fg+diag
-  ];
-}
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  Vignette LUT
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

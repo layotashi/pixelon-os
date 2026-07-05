@@ -5,8 +5,6 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   rebuildLut,
   applyVramRgba,
-  applyVramIndexed,
-  getDisplayPalette,
   applyVignette,
   setDiagEnabled,
 } from "@/core/display_fx.js";
@@ -110,101 +108,6 @@ describe("applyVramRgba", () => {
     for (let i = 0; i < out1.length; i++) {
       expect(out1[i]).toBe(out2[i]);
     }
-  });
-});
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  applyVramIndexed (GIF 経路)
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-describe("applyVramIndexed", () => {
-  it("出力サイズが VRAM と同じ", () => {
-    const w = 8,
-      h = 6;
-    const vram = new Uint8Array(w * h);
-    const result = applyVramIndexed(vram, w, h, 0);
-    expect(result.width).toBe(w);
-    expect(result.height).toBe(h);
-    expect(result.data.length).toBe(w * h);
-  });
-
-  it("出力値が 0-3 の範囲内 (4 色 indexed)", () => {
-    const w = 8,
-      h = 6;
-    const vram = new Uint8Array(w * h);
-    for (let i = 0; i < w * h; i++) vram[i] = i & 1;
-    const result = applyVramIndexed(vram, w, h, 5);
-    for (let i = 0; i < result.data.length; i++) {
-      expect(result.data[i]).toBeGreaterThanOrEqual(0);
-      expect(result.data[i]).toBeLessThanOrEqual(3);
-    }
-  });
-
-  it("Diagonal OFF 時は出力が v ∈ {0, 1} に収まる", () => {
-    setDiagEnabled(false);
-    rebuildLut(FG, BG);
-    const w = 8,
-      h = 6;
-    const vram = new Uint8Array(w * h);
-    for (let i = 0; i < w * h; i++) vram[i] = i & 1;
-    const result = applyVramIndexed(vram, w, h, 0);
-    // 斜線インデックス (2, 3) が出ないとは限らない (gap も無いので)。
-    // ただし LUT 上 2=bg, 3=fg なので、palette 解決後は 2 色のみ。
-    const pal = getDisplayPalette(FG, BG);
-    expect(pal[2]).toEqual(BG);
-    expect(pal[3]).toEqual(FG);
-  });
-});
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  getDisplayPalette (4 色 GIF パレット)
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-describe("getDisplayPalette", () => {
-  it("4 エントリを返す", () => {
-    const pal = getDisplayPalette(FG, BG);
-    expect(pal.length).toBe(4);
-  });
-
-  it("各エントリが [R, G, B] の 3 要素配列", () => {
-    const pal = getDisplayPalette(FG, BG);
-    for (const entry of pal) {
-      expect(entry.length).toBe(3);
-      for (const ch of entry) {
-        expect(ch).toBeGreaterThanOrEqual(0);
-        expect(ch).toBeLessThanOrEqual(255);
-      }
-    }
-  });
-
-  it("index 0 は bg 色", () => {
-    const pal = getDisplayPalette(FG, BG);
-    expect(pal[0]).toEqual(BG);
-  });
-
-  it("index 1 は fg 色", () => {
-    const pal = getDisplayPalette(FG, BG);
-    expect(pal[1]).toEqual(FG);
-  });
-
-  it("index 2 は bg + diag 暗化", () => {
-    const pal = getDisplayPalette(FG, BG);
-    // BG=[0,18,0], diagDarkness=0.20, dm=0.80 → [0, round(18*0.80), 0] = [0, 14, 0]
-    expect(pal[2][0]).toBe(0);
-    expect(pal[2][1]).toBeLessThan(BG[1]);
-    expect(pal[2][2]).toBe(0);
-  });
-
-  it("index 3 は fg + diag 暗化", () => {
-    const pal = getDisplayPalette(FG, BG);
-    expect(pal[3][1]).toBeLessThan(FG[1]);
-  });
-
-  it("Diagonal OFF 時は 2/3 が 0/1 と同じになる", () => {
-    setDiagEnabled(false);
-    const pal = getDisplayPalette(FG, BG);
-    expect(pal[2]).toEqual(BG);
-    expect(pal[3]).toEqual(FG);
   });
 });
 

@@ -6,7 +6,9 @@
  * delay=0 で即時、１〜10 でタイマー撮影。
  * 特定ウィンドウ撮影時は自動的に最前面に昇格してからキャプチャ。
  * GIF ループ機能: VRAM フレームを蓄積し、自前 GIF89a エンコーダで
- * アニメーション GIF としてダウンロード。
+ * 純 2 色 1-bit のアニメーション GIF としてダウンロードする。表示エフェクト
+ * (Diagonal / Vignette) は画面の雰囲気であって作品ではないため焼き込まない
+ * (X 等の再エンコードで色境界が滲む主因になるため)。fps は GIF_CLEAN_FPS 限定。
  *
  * 排他制御: 動画録画と GIF ループは GPU キャプチャバッファを共有するため
  * 同時実行を禁止する (_isContinuousRecordingBusy)。
@@ -17,27 +19,22 @@
 
 import { VRAM_WIDTH, VRAM_HEIGHT, getScale, palette } from "../config.js";
 import * as GPU from "../core/gpu.js";
-import { encodeGifN } from "../core/gif.js";
+import { encodeGif, GIF_CLEAN_FPS } from "../core/gif.js";
 import { drawIcon, ICON_W, ICON_H } from "../core/icon.js";
 import { drawText, textWidth, GLYPH_H } from "../core/font.js";
 import * as WM from "../wm/index.js";
 import * as UI from "../ui/index.js";
 import { initAudio, getAudioStream } from "../core/audio.js";
-import {
-  getDiagOffset,
-  ensureLut,
-  applyVramIndexed,
-  getDisplayPalette,
-} from "../core/display_fx.js";
 import { triggerDownload } from "../core/art_export.js";
 
 const APP_NAME = "CAPTURE";
 
 // ── GIF ループ撮影設定 ──
-const GIF_FPS_OPTIONS = [10, 12, 15]; // 選択可能な FPS
+// fps は GIF_CLEAN_FPS (100 の約数のみ) を使う。理由は gif.js の同定数コメント参照。
+const GIF_FPS_OPTIONS = GIF_CLEAN_FPS; // [10, 20, 25, 50]
 const GIF_MAX_DURATION = 10; // 最大撮影時間 (秒)
 const GIF_DEFAULT_DURATION = 3; // デフォルト撮影時間 (秒)
-const GIF_DEFAULT_FPS = 12; // デフォルト FPS
+const GIF_DEFAULT_FPS = 20; // デフォルト FPS (TESSERA 既定と一致)
 
 // ── スクリーンショット状態 ──
 let screenshotPending = false;
@@ -45,7 +42,7 @@ let screenshotCount = 0;
 let screenshotTimerEnd = 0;
 let screenshotDelay = 0;
 let screenshotTargetId = -1; // -1 = Full screen
-let screenshotScale = 2; // 撮影倍率 (1,2,4,8)
+let screenshotScale = 2; // 撮影倍率 (1,2,3,4,8)
 
 // ── 動画撮影状態 ──
 let isRecording = false;
@@ -396,16 +393,15 @@ function stopGifRecording() {
 
   // エンコードを次のフレームに遅延して UI を更新させる
   setTimeout(() => {
-    const bg = [...palette.bg];
-    const fg = [...palette.fg];
-    const pal = getDisplayPalette(fg, bg);
-    // gifFrames は 4 色 indexed フレーム (bg / fg / bg+diag / fg+diag)
-    // フレームサイズは VRAM 等倍 (CELL 撤廃後)
-    const blob = encodeGifN(
+    // 純 2 色 1-bit で書き出す (Diagonal / Vignette は焼き込まない)。
+    // palette.bg/fg は invert 反映済みなので、そのまま渡せば画面の明暗と一致する。
+    // フレームサイズは録画開始時にロックした値 (VRAM 等倍 or ウィンドウ実寸)。
+    const blob = encodeGif(
       gifFrames,
-      gifFrames[0].width,
-      gifFrames[0].height,
-      pal,
+      gifFrameWidth,
+      gifFrameHeight,
+      palette.bg,
+      palette.fg,
       gifFps,
       screenshotScale,
     );
@@ -421,32 +417,24 @@ function stopGifRecording() {
 }
 
 /**
- * VRAM のスナップショットを取得 (4 色 indexed フレーム: bg/fg/bg+diag/fg+diag)。
+ * VRAM のスナップショットを純 2 色 1-bit フレーム (0/1 の Uint8Array) として取得する。
+ * 表示エフェクト (Diagonal / Vignette) は焼き込まない。
  * ウィンドウ単体録画時、ウィンドウが閉じられたかリサイズされた場合は null を返す。
- * @returns {{ data: Uint8Array, width: number, height: number }|null}
+ * @returns {Uint8Array|null}
  */
 function captureVramSnapshot() {
-  const fg = palette.fg;
-  const bg = palette.bg;
-  ensureLut(fg, bg);
-
   if (gifTargetId < 0) {
-    // Full screen: VRAM を 4 色 indexed に変換 (1:1)
+    // Full screen: 生 VRAM (0/1) を 1:1 でコピー
     const len = VRAM_WIDTH * VRAM_HEIGHT;
-    return applyVramIndexed(
-      GPU.vram.subarray(0, len),
-      VRAM_WIDTH,
-      VRAM_HEIGHT,
-      getDiagOffset(),
-    );
+    return GPU.vram.slice(0, len);
   }
-  // ウィンドウ単体: オフスクリーンキャプチャ
+  // ウィンドウ単体: オフスクリーンキャプチャ (生 1-bit)
   const r = WM.wmGetWindowRect(gifTargetId);
   // ウィンドウが閉じられた or リサイズされた
   if (!r || r.w !== gifFrameWidth || r.h !== gifFrameHeight) return null;
   GPU.beginCapture(gifFrameWidth, gifFrameHeight);
   WM.wmDrawSingleWindow(gifTargetId);
-  return GPU.endCaptureIndexed();
+  return GPU.endCaptureRaw();
 }
 
 // ── ウィジェット (遅延初期化) ──
@@ -482,8 +470,8 @@ function _initWidgets() {
 
   // Row 2: Scale: [dropdown]
   lblScale = new UI.Label(0, 0, "Scale:");
-  ddScale = new UI.DropDown(0, 0, ["X1", "X2", "X4", "X8"], 1, (i) => {
-    screenshotScale = [1, 2, 4, 8][i];
+  ddScale = new UI.DropDown(0, 0, ["X1", "X2", "X3", "X4", "X8"], 1, (i) => {
+    screenshotScale = [1, 2, 3, 4, 8][i];
     refreshOutputLabel();
   });
   ddScale.tooltip = "Output magnification";

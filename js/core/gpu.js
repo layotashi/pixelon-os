@@ -20,7 +20,6 @@ import {
   getDiagOffset,
   ensureLut,
   applyVramRgba,
-  applyVramIndexed,
   applyVignette,
   rebuildVignetteLut,
   isVignetteEnabled,
@@ -805,23 +804,6 @@ export function endCaptureRaw() {
   _restoreRenderTarget();
 
   return buf;
-}
-
-/**
- * キャプチャを終了し、indexed-color の VRAM フレームを返す。
- * GIF エンコード (encodeGifN) 用。4 色パレット (bg/fg/bg+diag/fg+diag)。
- * @returns {{ data: Uint8Array, width: number, height: number }}
- */
-export function endCaptureIndexed() {
-  const w = activeW;
-  const h = activeH;
-  const buf = activeBuffer;
-
-  const result = applyVramIndexed(buf, w, h, getDiagOffset());
-
-  _restoreRenderTarget();
-
-  return result;
 }
 
 /** vram の内容を Canvas に描画する。毎フレーム draw() の末尾で呼ぶ。

@@ -15,6 +15,18 @@
  * 外部依存: なし (ゼロ依存原則に準拠)
  */
 
+/**
+ * GIF として「クリーン」に再生できる fps 候補（GIF 専用 UI の選択肢の SSoT）。
+ *
+ * GIF のフレーム遅延はセンチ秒(1/100s)整数でしか書けない
+ * （_buildGraphicControlExtension の round(delayMs/10)）。ゆえに 100 の約数のみ
+ * round(100/fps) が割り切れ、速度・ループ長がズレない
+ * （例: 12→8cs=12.5fps / 15→7cs≒14.3fps とズレる）。上限は 50:
+ * 1cs(=100fps) はブラウザが 10cs へクランプするため GIF では無効。
+ * MP4 は μ秒精度で不問なので、TESSERA 側 FPS_OPTIONS はより広い集合を別に持つ。
+ */
+export const GIF_CLEAN_FPS = [10, 20, 25, 50];
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  LZW 圧縮 (2色パレット用)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -303,71 +315,6 @@ export function encodeGif(frames, width, height, bgRgb, fgRgb, fps, scale = 1) {
   // Trailer
   parts.push(new Uint8Array([0x3b]));
 
-  return new Blob(parts, { type: "image/gif" });
-}
-
-/**
- * N 色パレット indexed-color フレーム配列から GIF89a アニメーションをエンコードする。
- * ピクセルグリッド (8色) 対応。
- *
- * @param {Array<{data: Uint8Array, width: number, height: number}>} frames
- *   indexed-color フレーム配列 (各要素の data はパレットインデックス)
- * @param {number}       width       フレーム幅 (px)
- * @param {number}       height      フレーム高さ (px)
- * @param {number[][]}   paletteRgb  パレット [[R,G,B], ...]
- * @param {number}       fps         フレームレート
- * @param {number}       [scale=1]   出力倍率 (整数)
- * @returns {Blob}  image/gif の Blob
- */
-export function encodeGifN(frames, width, height, paletteRgb, fps, scale = 1) {
-  const outW = width * scale;
-  const outH = height * scale;
-  const delayMs = 1000 / fps;
-
-  // パレットサイズ: 2^n >= paletteRgb.length を満たす最小の n
-  const nColors = paletteRgb.length;
-  let gctSizeBits = 0;
-  while ((1 << (gctSizeBits + 1)) < nColors) gctSizeBits++;
-  const gctEntries = 1 << (gctSizeBits + 1);
-  const minCodeSize = gctSizeBits + 1; // 8色 → gctSizeBits=2 → minCodeSize=3
-
-  // ── Header ──
-  const header = new Uint8Array(13);
-  header[0] = 0x47; header[1] = 0x49; header[2] = 0x46; // GIF
-  header[3] = 0x38; header[4] = 0x39; header[5] = 0x61; // 89a
-  header[6] = outW & 0xff; header[7] = (outW >> 8) & 0xff;
-  header[8] = outH & 0xff; header[9] = (outH >> 8) & 0xff;
-  // Packed: GCT=1, CR=gctSizeBits, Sort=0, GCTSize=gctSizeBits
-  header[10] = 0x80 | (gctSizeBits << 4) | gctSizeBits;
-  header[11] = 0; header[12] = 0;
-
-  // ── GCT ──
-  const gct = new Uint8Array(gctEntries * 3);
-  for (let i = 0; i < nColors; i++) {
-    gct[i * 3]     = paletteRgb[i][0];
-    gct[i * 3 + 1] = paletteRgb[i][1];
-    gct[i * 3 + 2] = paletteRgb[i][2];
-  }
-  // 残りは 0 (黒) で埋まる — Uint8Array のデフォルト
-
-  const parts = [];
-  parts.push(header);
-  parts.push(gct);
-  parts.push(_buildNetscapeExtension(0));
-
-  for (let i = 0; i < frames.length; i++) {
-    parts.push(_buildGraphicControlExtension(delayMs));
-    parts.push(_buildImageDescriptor(outW, outH));
-    parts.push(new Uint8Array([minCodeSize]));
-
-    let pixelData = frames[i].data;
-    if (scale > 1) {
-      pixelData = _scaleFrame(pixelData, width, height, scale);
-    }
-    parts.push(lzwEncode(pixelData, minCodeSize));
-  }
-
-  parts.push(new Uint8Array([0x3b])); // Trailer
   return new Blob(parts, { type: "image/gif" });
 }
 
