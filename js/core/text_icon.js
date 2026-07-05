@@ -14,6 +14,7 @@
  */
 
 import { blit } from "./gpu.js";
+import { assetUrl } from "../config.js";
 
 // ── マニフェスト URL ──
 
@@ -66,7 +67,7 @@ function loadTextIconPng(url, w, h) {
       resolve(buf);
     };
     img.onerror = () => reject(new Error(`Failed to load text icon: ${url}`));
-    img.src = url;
+    img.src = assetUrl(url);
   });
 }
 
@@ -82,7 +83,7 @@ function loadTextIconPng(url, w, h) {
  */
 export async function initTextIcon(manifestUrl) {
   _manifestUrl = manifestUrl;
-  const res = await fetch(manifestUrl);
+  const res = await fetch(assetUrl(manifestUrl));
   if (!res.ok)
     throw new Error(`Failed to load text-icon manifest: ${res.status}`);
   const manifest = await res.json();

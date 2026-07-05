@@ -16,7 +16,7 @@
  */
 
 import { blit } from "./gpu.js";
-import { getTextTransform } from "../config.js";
+import { getTextTransform, assetUrl } from "../config.js";
 
 // ── フォントパラメータ ──
 // SYNESTA のシステムフォントは 5x5 単一寸法。initFont で実フォントから確定する。
@@ -116,7 +116,7 @@ export function switchFont(url, gw, gh, cols = 10, offset = 1) {
       resolve();
     };
     img.onerror = () => reject(new Error(`Failed to load font: ${url}`));
-    img.src = url;
+    img.src = assetUrl(url);
   });
 }
 

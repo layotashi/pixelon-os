@@ -19,6 +19,7 @@
  */
 
 import { blit } from "./gpu.js";
+import { assetUrl } from "../config.js";
 
 // ── マニフェスト URL ──
 
@@ -85,7 +86,7 @@ function loadCursorPng(url, w, h) {
       resolve({ fgBuf, bgBuf });
     };
     img.onerror = () => reject(new Error(`Failed to load cursor: ${url}`));
-    img.src = url;
+    img.src = assetUrl(url);
   });
 }
 
@@ -98,7 +99,7 @@ function loadCursorPng(url, w, h) {
  * @returns {Promise<void>}
  */
 export async function initCursor() {
-  const res = await fetch(MANIFEST_URL);
+  const res = await fetch(assetUrl(MANIFEST_URL));
   if (!res.ok) throw new Error(`Failed to load cursor manifest: ${res.status}`);
   const manifest = await res.json();
 

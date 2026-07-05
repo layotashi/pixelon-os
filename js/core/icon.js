@@ -13,6 +13,7 @@
  */
 
 import { blit } from "./gpu.js";
+import { assetUrl } from "../config.js";
 
 // ── マニフェスト URL ──
 
@@ -68,7 +69,7 @@ function loadIconPng(url, w, h) {
       resolve(buf);
     };
     img.onerror = () => reject(new Error(`Failed to load icon: ${url}`));
-    img.src = url;
+    img.src = assetUrl(url);
   });
 }
 
@@ -85,7 +86,7 @@ function loadIconPng(url, w, h) {
  */
 export async function initIcon(manifestUrl) {
   _manifestUrl = manifestUrl;
-  const res = await fetch(manifestUrl);
+  const res = await fetch(assetUrl(manifestUrl));
   if (!res.ok) throw new Error(`Failed to load icon manifest: ${res.status}`);
   const manifest = await res.json();
 
