@@ -57,6 +57,11 @@ let MENU_CHECK_WIDTH = ICON_W + 3;
 let MENU_ARROW_WIDTH = ICON_W + 3;
 /** メニュー内セパレーター高さ (上余白 + 線 + 下余白) */
 const MENU_SEPARATOR_HEIGHT = 3;
+/**
+ * 画面端からパネル本体 (境界線) までの最小距離。
+ * 内訳: 背景との分離用アウトライン 1px + 背景透過マージン 1px。
+ */
+const MENU_EDGE_INSET = 2;
 
 /** フォント変更時に menu 派生定数を再計算する (wm.js の recalcDerivedConstants が呼ぶ)。 */
 export function menuRecalcConstants() {
@@ -308,9 +313,15 @@ export function openMenu(x, y) {
  */
 export function openContextMenu(items, x, y) {
   const { w, h } = calcPanelSize(items);
-  // 画面内に収まるよう補正
-  const px = Math.max(0, Math.min(x, Config.VRAM_WIDTH - w));
-  const py = Math.max(0, Math.min(y, Config.VRAM_HEIGHT - h));
+  // 画面内に収まるよう補正 (アウトライン+透過マージン込み)
+  const px = Math.max(
+    MENU_EDGE_INSET,
+    Math.min(x, Config.VRAM_WIDTH - MENU_EDGE_INSET - w),
+  );
+  const py = Math.max(
+    MENU_EDGE_INSET,
+    Math.min(y, Config.VRAM_HEIGHT - MENU_EDGE_INSET - h),
+  );
   menuStack = [{ items, x: px, y: py, w, h, hover: -1, parentIdx: -1 }];
   menuOpen = true;
   _deps.onMenu();
@@ -352,14 +363,20 @@ function openSubmenu(depth, parentIdx, children) {
   const { w, h } = calcPanelSize(children);
   const iy = parent.y + itemTopY(parent.items, parentIdx);
 
-  // X: 親の右端 + 2px 余白。画面外なら左側に出す
+  // X: 親の右端 + 2px 余白。画面外なら左側に出す (アウトライン+透過マージン込み)
   let sx = parent.x + parent.w + 1;
-  if (sx + w > Config.VRAM_WIDTH) sx = parent.x - w - 1;
+  if (sx + w > Config.VRAM_WIDTH - MENU_EDGE_INSET) sx = parent.x - w - 1;
+  sx = Math.max(
+    MENU_EDGE_INSET,
+    Math.min(sx, Config.VRAM_WIDTH - MENU_EDGE_INSET - w),
+  );
   // Y: 子パネル内の最初のアイテムが親アイテムと同じ Y になるよう
   //    パネル上マージン (2px) 分だけ上にずらす
   let sy = iy - 2;
-  if (sy + h > Config.VRAM_HEIGHT) sy = Math.max(0, Config.VRAM_HEIGHT - h);
-  if (sy < 0) sy = 0;
+  sy = Math.max(
+    MENU_EDGE_INSET,
+    Math.min(sy, Config.VRAM_HEIGHT - MENU_EDGE_INSET - h),
+  );
 
   menuStack.push({ items: children, x: sx, y: sy, w, h, hover: -1, parentIdx });
 }
@@ -370,6 +387,8 @@ function openSubmenu(depth, parentIdx, children) {
 
 function drawMenuPanel(panel) {
   const { items, x, y, w, h, hover } = panel;
+  // 背景との分離用アウトライン (1px, 背景色) → 本体の順で描画
+  GPU.fillRoundRect(x - 1, y - 1, w + 2, h + 2, 1, 0);
   GPU.fillRoundRect(x, y, w, h, 1, 0);
   GPU.drawRoundRect(x, y, w, h, 1, 1);
 

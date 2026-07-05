@@ -249,6 +249,34 @@ function wmGetWorkAreaTop() {
   return workAreaTop;
 }
 
+/**
+ * 画面端からウィンドウ本体 (境界線) までの最小距離。
+ * 内訳: 背景との分離用アウトライン 1px + 背景透過マージン 1px。
+ */
+const WINDOW_EDGE_INSET = 2;
+
+/**
+ * ウィンドウ位置 (x, y) を、アウトライン+透過マージン込みで画面内に収まるよう補正する。
+ * w, h 自体は変更しない (呼び出し側の意図したサイズを尊重する)。
+ * スナップ・最大化・フルスクリーンは画面端に密着させる仕様のため対象外 (呼び出し側で個別処理)。
+ */
+function clampWindowPos(x, y, w, h) {
+  const waTop = wmGetWorkAreaTop();
+  const maxW = Math.max(0, Config.VRAM_WIDTH - WINDOW_EDGE_INSET * 2);
+  const maxH = Math.max(0, Config.VRAM_HEIGHT - waTop - WINDOW_EDGE_INSET * 2);
+  const effW = Math.min(w, maxW);
+  const effH = Math.min(h, maxH);
+  const cx = Math.max(
+    WINDOW_EDGE_INSET,
+    Math.min(x, Config.VRAM_WIDTH - WINDOW_EDGE_INSET - effW),
+  );
+  const cy = Math.max(
+    waTop + WINDOW_EDGE_INSET,
+    Math.min(y, Config.VRAM_HEIGHT - WINDOW_EDGE_INSET - effH),
+  );
+  return { x: cx, y: cy };
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  カスケード配置
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -560,11 +588,10 @@ Config.onResize(() => {
       win.w = snap.w;
       win.h = snap.h;
     } else {
-      // 通常ウィンドウ: はみ出しを制約
-      if (win.x + win.w > Config.VRAM_WIDTH)
-        win.x = Math.max(0, Config.VRAM_WIDTH - win.w);
-      if (win.y + win.h > Config.VRAM_HEIGHT)
-        win.y = Math.max(workAreaTop, Config.VRAM_HEIGHT - win.h);
+      // 通常ウィンドウ: はみ出しを制約 (アウトライン+透過マージン込み)
+      const c = clampWindowPos(win.x, win.y, win.w, win.h);
+      win.x = c.x;
+      win.y = c.y;
     }
     recalcLayout(win);
   }
@@ -959,15 +986,17 @@ function fitWindowToContent(win) {
     newW = c.w;
     newH = c.h;
   }
-  // 中心保持で新位置算出 → 画面内クランプ
+  // 中心保持で新位置算出 → 画面内クランプ (アウトライン+透過マージン込み)
   const cx = win.x + win.w / 2;
   const cy = win.y + win.h / 2;
-  let newX = Math.floor(cx - newW / 2);
-  let newY = Math.floor(cy - newH / 2);
-  newX = Math.max(0, Math.min(newX, Config.VRAM_WIDTH - newW));
-  newY = Math.max(workAreaTop, Math.min(newY, Config.VRAM_HEIGHT - newH));
-  win.x = newX;
-  win.y = newY;
+  const newPos = clampWindowPos(
+    Math.floor(cx - newW / 2),
+    Math.floor(cy - newH / 2),
+    newW,
+    newH,
+  );
+  win.x = newPos.x;
+  win.y = newPos.y;
   win.w = newW;
   win.h = newH;
   win.restoreRect = null;
@@ -1095,16 +1124,12 @@ export function wmOpen(
     }
   }
 
-  // クランプ: ウィンドウが画面内に収まるよう補正
-  const waTop = wmGetWorkAreaTop();
-  x = Math.max(
-    0,
-    Math.min(x, Config.VRAM_WIDTH - Math.min(w, Config.VRAM_WIDTH)),
-  );
-  y = Math.max(
-    waTop,
-    Math.min(y, Config.VRAM_HEIGHT - Math.min(h, Config.VRAM_HEIGHT - waTop)),
-  );
+  // クランプ: ウィンドウが画面内に収まるよう補正 (アウトライン+透過マージン込み)
+  {
+    const pos = clampWindowPos(x, y, w, h);
+    x = pos.x;
+    y = pos.y;
+  }
 
   const id = nextWinId++;
   const win = createWindow(
@@ -2173,6 +2198,8 @@ function drawWindowFrame(win) {
 
   const L = win._layout;
 
+  // 背景との分離用アウトライン (1px, 背景色)
+  GPU.fillRoundRect(win.x - 1, win.y - 1, win.w + 2, win.h + 2, 1, 0);
   // 内部領域を背景色 (0) で角丸塗りつぶし
   GPU.fillRoundRect(win.x + 1, win.y + 1, win.w - 2, win.h - 2, 1, 0);
   // 境界線を前景色 (1) で角丸描画
