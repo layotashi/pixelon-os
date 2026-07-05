@@ -619,6 +619,46 @@ export function invertRect(x, y, w, h) {
   }
 }
 
+/**
+ * 角丸矩形領域のピクセルを反転する。角丸形状は fillRoundRect と一致する。
+ * r=0 は invertRect と等価。角丸背景 (fillRoundRect) の上に選択反転を
+ * かける際、四隅が浮かないよう形を揃える用途。
+ * 各画素をちょうど 1 回ずつ反転する (XOR の二重適用による打ち消しを避ける)。
+ * @param {number} r  角丸の半径 (px)。0 で通常矩形。
+ */
+export function invertRoundRect(x0, y0, w, h, r) {
+  if (r <= 0) {
+    invertRect(x0, y0, w, h);
+    return;
+  }
+  const y1 = y0 + h - 1;
+  // 端から ry 行目の左右インセット (欠け幅) を Midpoint circle で求める
+  const inset = new Array(r).fill(r);
+  let cx = r;
+  let cy = 0;
+  let d = 1 - r;
+  while (cx >= cy) {
+    if (r - cy < r) inset[r - cy] = Math.min(inset[r - cy], r - cx);
+    if (r - cx < r) inset[r - cx] = Math.min(inset[r - cx], r - cy);
+    cy++;
+    if (d < 0) {
+      d += 2 * cy + 1;
+    } else {
+      cx--;
+      d += 2 * (cy - cx) + 1;
+    }
+  }
+  // 中央帯 (角丸の影響を受けない行) を一括反転
+  invertRect(x0, y0 + r, w, h - 2 * r);
+  // 上下の角丸行 (対称)。各行を 1 回だけ反転
+  for (let ry = 0; ry < r; ry++) {
+    const spanW = w - 2 * inset[ry];
+    if (spanW <= 0) continue;
+    invertRect(x0 + inset[ry], y0 + ry, spanW, 1);
+    invertRect(x0 + inset[ry], y1 - ry, spanW, 1);
+  }
+}
+
 // copyRect / scroll は参照ゼロのため削除 (使われていない描画プリミティブを
 // 予約として持たない方針)。必要になれば git 履歴から復元する。
 

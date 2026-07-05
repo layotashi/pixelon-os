@@ -35,7 +35,7 @@
  */
 
 import { VRAM_WIDTH, VRAM_HEIGHT, isInputOverlayEnabled } from "../config.js";
-import { fillRect } from "../core/gpu.js";
+import { fillRoundRect } from "../core/gpu.js";
 import { drawText, GLYPH_H, textWidth } from "../core/font.js";
 import { getInputLog } from "../core/input.js";
 
@@ -203,7 +203,7 @@ export function drawInputOverlay() {
   const bx = VRAM_WIDTH - MARGIN - boxW;
   const by = VRAM_HEIGHT - MARGIN - boxH;
 
-  fillRect(bx, by, boxW, boxH, 0);
+  fillRoundRect(bx, by, boxW, boxH, 1, 0);
 
   for (let i = 0; i < entries.length; i++) {
     const e = entries[i];

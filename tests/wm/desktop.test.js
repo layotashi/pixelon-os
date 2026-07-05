@@ -16,8 +16,10 @@ vi.mock("@/config.js", () => ({
 // ── モック: GPU (描画は no-op) ──
 vi.mock("@/core/gpu.js", () => ({
   fillRect: vi.fn(),
+  fillRoundRect: vi.fn(),
   drawRect: vi.fn(),
   invertRect: vi.fn(),
+  invertRoundRect: vi.fn(),
   pset: vi.fn(),
   pget: vi.fn(() => 0),
 }));

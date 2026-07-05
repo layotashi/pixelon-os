@@ -717,20 +717,19 @@ function drawDesktopIcon(entry, cx, cy, selected) {
   // ── アイコン描画 (3-level スプライト、未登録名は default にフォールバック) ──
   const iconX = cx + ((CELL_W - APP_ICON_W) >> 1);
   const iconY = cy + ICON_PAD_TOP;
-  drawAppIcon(entry.icon, iconX, iconY);
-  if (selected) {
-    GPU.invertRect(iconX - 1, iconY - 1, APP_ICON_W + 2, APP_ICON_H + 2);
-  }
+  // 選択時はアイコン自身を反転描画する (外周に箱を作らない)
+  drawAppIcon(entry.icon, iconX, iconY, selected);
 
   // ── ラベル描画 (単一行・アイコン下部中央寄せ) ──
   const line = truncateLabel(entry.label);
   const ly = cy + ICON_PAD_TOP + APP_ICON_H + ICON_LABEL_GAP;
   const labelW = line.length * FONT_STEP - 1;
   const labelX = cx + ((CELL_W - labelW) >> 1);
-  GPU.fillRect(labelX - 1, ly - 1, labelW + 2, GLYPH_H + 2, 0);
+  GPU.fillRoundRect(labelX - 2, ly - 2, labelW + 4, GLYPH_H + 4, 1, 0);
   drawText(labelX, ly, line, 1);
   if (selected) {
-    GPU.invertRect(labelX - 1, ly - 1, labelW + 2, GLYPH_H + 2);
+    // ラベル背景チップと同じ角丸形状で反転 (四隅が浮かないよう形を揃える)
+    GPU.invertRoundRect(labelX - 2, ly - 2, labelW + 4, GLYPH_H + 4, 1);
   }
 }
 
