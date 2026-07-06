@@ -12,11 +12,12 @@
  *     位相をずらして泳ぐ)。スプライトは左向きが基準で、右へ泳ぐ時のみ反転する。
  *   - クリックで餌を落とすと、近くの魚が寄ってきて食べる
  *   - 葉のある水草 + 上昇する気泡で水槽を演出
- *   - 水は前景色で塗りつぶし、魚・水草・気泡・餌は背景色でコントラストさせる
- *     (OS 標準の配色とは反転させ、水槽らしい濃色の水を表現)
+ *
+ * 水槽の縦構成 (ボディ内枠線の内側、上から):
+ *   1px 枠線 (FG) → 水上の空間 (FG, AIR_H px) → 水と魚 (BG) → 砂 (FG, 起伏あり, SAND_H px)
  */
 
-import { pset, fillRect } from "../core/gpu.js";
+import { pset, fillRect, drawRect, vline } from "../core/gpu.js";
 import { getFishFrame, FISH_W, FISH_H } from "../core/fish.js";
 import { wmOpen, wmRegister } from "../wm/index.js";
 
@@ -25,12 +26,19 @@ const APP_NAME = "AQUARIUM";
 const WIN_W = 200;
 const WIN_H = 140;
 
-// 水面をボディ上端から少し下げる (ヘッダー/ボディ区切り線との重なり回避)
-const WATER_TOP = 3;
+// ── 水槽レイアウト (ローカル座標、cr 起点) ──
+const BORDER = 1; // ボディ内枠線の太さ
+const AIR_H = 10; // 水上の空間の高さ
+const SAND_H = 10; // 水槽底の砂の厚み (基準値、起伏で ±数px 変動)
+const WATER_TOP_LOCAL = BORDER + AIR_H; // 水面 (この行から水)
 
-// 水 = 前景色、魚・水草・気泡・餌 = 背景色 (OS 標準配色の反転)
-const WATER_COLOR = 1;
-const DECOR_COLOR = 0;
+// 枠線・水上の空間・砂 = 前景色、水と魚 = 背景色
+const BORDER_COLOR = 1;
+const AIR_COLOR = 1;
+const WATER_COLOR = 0;
+const SAND_COLOR = 1;
+// 水草・気泡・餌・魚本体 = 前景色 (水=背景色に対してコントラスト)
+const DECOR_COLOR = 1;
 
 /**
  * エンゼルフィッシュの 1 フレームを描画する。
@@ -66,13 +74,29 @@ let food = [];
 let _crW = WIN_W;
 let _crH = WIN_H;
 
+/** 砂の基準上端 (ローカル座標、起伏を含まない平均値) */
+function _sandBaseTop() {
+  return _crH - BORDER - SAND_H;
+}
+
+/** 指定 x (ローカル座標) における砂表面のなだらかな起伏オフセット (px) */
+function _sandWaveAt(localX) {
+  return Math.round(
+    Math.sin(localX * 0.15) * 1.6 + Math.sin(localX * 0.05 + 1.7) * 1.0,
+  );
+}
+
 function _initFish() {
   fish = [];
   food = [];
+  const waterBottom = _sandBaseTop();
   for (let i = 0; i < 5; i++) {
     fish.push({
-      x: Math.random() * (_crW - FISH_W - 4) + 2,
-      y: Math.random() * (_crH - FISH_H - WATER_TOP - 5) + WATER_TOP + 1,
+      x: Math.random() * (_crW - FISH_W - BORDER * 2 - 2) + BORDER + 1,
+      y:
+        Math.random() * (waterBottom - WATER_TOP_LOCAL - FISH_H - 2) +
+        WATER_TOP_LOCAL +
+        1,
       vx: (Math.random() - 0.5) * 1.5,
       vy: (Math.random() - 0.5) * 0.5,
       phase: (Math.random() * 8) | 0, // 尾びれアニメの位相 (群れを desync)
@@ -81,9 +105,10 @@ function _initFish() {
 }
 
 function _tickFood() {
-  // 餌は沈み、底に達したら消える
+  // 餌は沈み、砂に達したら消える
   for (const p of food) p.y += 0.4;
-  food = food.filter((p) => p.y < _crH - 3);
+  const sandTop = _sandBaseTop();
+  food = food.filter((p) => p.y < sandTop);
 }
 
 function _tickFish() {
@@ -135,10 +160,10 @@ function _tickFish() {
     }
 
     // 壁反発
-    if (f.x < 2) f.vx += 0.1;
-    if (f.x > _crW - FISH_W - 2) f.vx -= 0.1;
-    if (f.y < WATER_TOP + 1) f.vy += 0.1;
-    if (f.y > _crH - FISH_H - 12) f.vy -= 0.1; // 下端は水草分の余裕
+    if (f.x < BORDER + 1) f.vx += 0.1;
+    if (f.x > _crW - FISH_W - BORDER - 1) f.vx -= 0.1;
+    if (f.y < WATER_TOP_LOCAL + 1) f.vy += 0.1;
+    if (f.y > _sandBaseTop() - FISH_H) f.vy -= 0.1; // 砂の手前で反転
 
     // 速度上限 + 摩擦
     const sp = Math.sqrt(f.vx * f.vx + f.vy * f.vy);
@@ -170,8 +195,32 @@ const SEAWEED = [
 
 let frame = 0;
 
+/**
+ * 水槽本体を描画する: 内枠線 (FG) → 水上の空間 (FG) → 水 (BG) → 砂 (FG, 起伏あり)。
+ * 砂は起伏で基準線より上下する分があるため、水は先に領域全体を塗ってから
+ * 砂で上書きする (起伏の谷間にも水色が正しく残る)。
+ */
+function drawTank(cr) {
+  drawRect(cr.x, cr.y, cr.w, cr.h, BORDER_COLOR);
+
+  const innerX = cr.x + BORDER;
+  const innerW = cr.w - BORDER * 2;
+  const innerTop = cr.y + BORDER;
+  const innerBottom = cr.y + cr.h - BORDER - 1; // 内側の最終行 (inclusive)
+  const airBottom = innerTop + AIR_H; // 水面 (この行から水)
+
+  fillRect(innerX, innerTop, innerW, AIR_H, AIR_COLOR);
+  fillRect(innerX, airBottom, innerW, innerBottom - airBottom + 1, WATER_COLOR);
+
+  const sandTopBase = cr.y + _sandBaseTop();
+  for (let x = innerX; x < innerX + innerW; x++) {
+    const top = sandTopBase + _sandWaveAt(x - cr.x);
+    vline(x, top, innerBottom, SAND_COLOR);
+  }
+}
+
 function drawSeaweed(cr) {
-  const baseY = cr.y + cr.h - 1;
+  const baseY = cr.y + _sandBaseTop();
   for (const w of SEAWEED) {
     const wx = cr.x + Math.floor(cr.w * w.xRatio);
     for (let dy = 0; dy < w.h; dy++) {
@@ -190,13 +239,15 @@ function drawSeaweed(cr) {
 
 function drawBubbles(cr) {
   const N = 6;
+  const bottomY = cr.y + _sandBaseTop(); // 発生位置 (砂の上)
+  const topY = cr.y + WATER_TOP_LOCAL; // 水面 (ここで消える)
+  const cycle = bottomY - topY + 30;
   for (let i = 0; i < N; i++) {
-    const cycle = cr.h + 30;
     const t = (frame * (0.5 + (i % 3) * 0.2) + i * 47) % cycle;
     const baseX = cr.x + Math.floor(cr.w * (0.12 + i * 0.14));
     const x = baseX + Math.round(Math.sin(t * 0.06 + i) * 3);
-    const y = cr.y + cr.h - 3 - t;
-    if (y > cr.y + WATER_TOP + 1 && y < cr.y + cr.h - 2) {
+    const y = bottomY - t;
+    if (y > topY + 1 && y < bottomY) {
       pset(x | 0, y | 0, DECOR_COLOR);
       if (i % 3 === 0) pset((x | 0) + 1, y | 0, DECOR_COLOR); // 大きめの泡
     }
@@ -221,9 +272,7 @@ function onDraw(cr) {
   _tickFood();
   _tickFish();
 
-  // 水面 (ボディ上端から少し下げて塗る。塗りの上端がそのまま水面線になる)
-  fillRect(cr.x, cr.y + WATER_TOP, cr.w, cr.h - WATER_TOP, WATER_COLOR);
-
+  drawTank(cr);
   drawSeaweed(cr);
   drawFood(cr);
   drawBubbles(cr);
@@ -238,12 +287,12 @@ function onDraw(cr) {
 
 function onInput(ev) {
   if (ev.type === "down") {
-    // クリックで餌を落とす (上限 8 個)
+    // クリックで餌を落とす (水面〜砂の手前のみ、上限 8 個)
     if (
-      ev.localX >= 0 &&
-      ev.localX < _crW &&
-      ev.localY >= WATER_TOP &&
-      ev.localY < _crH
+      ev.localX >= BORDER &&
+      ev.localX < _crW - BORDER &&
+      ev.localY >= WATER_TOP_LOCAL &&
+      ev.localY < _sandBaseTop()
     ) {
       food.push({ x: ev.localX, y: ev.localY });
       if (food.length > 8) food.shift();
