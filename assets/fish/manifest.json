@@ -1,0 +1,18 @@
+{
+  "format": {
+    "width": 12,
+    "height": 11,
+    "encoding": "3level",
+    "description": "White (R>=192) = foreground, gray (64<=R<192) = outline/background, black = transparent. AQUARIUM app's angelfish swim-animation frames."
+  },
+  "frames": {
+    "angelfish-1": {
+      "file": "angelfish_1.png",
+      "description": "Angelfish, tail fin raised"
+    },
+    "angelfish-2": {
+      "file": "angelfish_2.png",
+      "description": "Angelfish, tail fin lowered"
+    }
+  }
+}

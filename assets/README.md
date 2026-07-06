@@ -10,6 +10,7 @@ assets/
   icons/            UI アイコン + manifest.json
   icons-text/       テキスト表示用の特殊記号 (中点・改行矢印等) + manifest.json
   app-icons/        デスクトップ用アプリアイコン + manifest.json
+  fish/             AQUARIUM 用エンゼルフィッシュ・スプライト + manifest.json
   font/             ビットマップフォント PNG (どれを使うかは config.js の FONTS が参照)
   favicon.png       ブラウザタブ用アイコン
 ```
@@ -17,7 +18,7 @@ assets/
 ## manifest 駆動 (SSoT)
 
 各フォルダの `manifest.json` がアセット定義の唯一の出所。JS 側 (`core/cursor.js` /
-`icon.js` / `text_icon.js` / `app_icon.js`) はこれを `fetch` し、記載された PNG を動的に読む。
+`icon.js` / `text_icon.js` / `app_icon.js` / `fish.js`) はこれを `fetch` し、記載された PNG を動的に読む。
 
 - `format` — そのフォルダ共通の寸法 (`width`/`height`) とエンコーディング。
   **寸法・しきい値の正は manifest**。README には書き写さない。
