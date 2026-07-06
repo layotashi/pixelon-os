@@ -34,8 +34,8 @@ import {
 /** デスクトップアイコン用のアプリ登録名 */
 const APP_NAME = "DOLPHIN";
 
-/** ツールチップ (1 行表示) */
-export const DOLPHIN_TOOLTIP = "Totally not a virus. Trust me...im a dolphin";
+/** ツールチップ (ミームの改行を尊重, \n で明示的に改行) */
+export const DOLPHIN_TOOLTIP = "Totally not a\nvirus.Trust\nme...im a\ndolphin";
 
 // §1.8 一貫した内部論理: 起動回数に応じた反応の変化
 let _launchCount = 0;
