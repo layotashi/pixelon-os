@@ -12,6 +12,8 @@
  *     位相をずらして泳ぐ)。スプライトは左向きが基準で、右へ泳ぐ時のみ反転する。
  *   - クリックで餌を落とすと、近くの魚が寄ってきて食べる
  *   - 葉のある水草 + 上昇する気泡で水槽を演出
+ *   - NOTEPAD と同じ見た目の縦横スクロールバー + ステッパーボタンをボディ右端/下端に
+ *     装飾として表示する (AQUARIUM はスクロール不可のため常に 100% 表示・操作不可)
  *
  * 水槽の縦構成 (ボディ内枠線の内側、上から):
  *   1px 枠線 (BG) → 水上の空間 (BG, AIR_H px) → 水と魚 (FG) → 砂 (BG, 起伏あり, SAND_H px)
@@ -20,6 +22,7 @@
 import { pset, fillRect, drawRect, vline } from "../core/gpu.js";
 import { getFishFrame, FISH_W, FISH_H } from "../core/fish.js";
 import { wmOpen, wmRegister } from "../wm/index.js";
+import * as Scroll from "../ui/scrollbar.js";
 
 const APP_NAME = "AQUARIUM";
 
@@ -39,6 +42,10 @@ const WATER_COLOR = 1;
 const SAND_COLOR = 0;
 // 水草・気泡・餌・魚本体 = 背景色 (水=前景色に対してコントラスト)
 const DECOR_COLOR = 0;
+
+// NOTEPAD と同じ見た目の縦横スクロールバー (装飾のみ)。AQUARIUM はスクロール不可のため
+// content<=viewport の固定ダミー状態を使い、サムは常に 100% 表示・操作は受け付けない。
+const _decorScroll = Scroll.createScrollState(1, 1);
 
 /**
  * エンゼルフィッシュの 1 フレームを描画する。
@@ -280,24 +287,42 @@ function drawFood(cr) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function onDraw(cr) {
-  _crW = cr.w;
-  _crH = cr.h;
+  // 右端・下端に NOTEPAD と同じ縦横スクロールバースロット分の余白を確保し、
+  // 水槽本体はその内側に描く (tankRect)。
+  const SLOT = Scroll.SCROLLBAR_SLOT_WIDTH;
+  const tankW = cr.w - SLOT;
+  const tankH = cr.h - SLOT;
+  const tankRect = { x: cr.x, y: cr.y, w: tankW, h: tankH };
+
+  _crW = tankW;
+  _crH = tankH;
   frame++;
 
   _tickFood();
   _tickFish();
 
-  drawTank(cr);
-  drawSeaweed(cr);
-  drawFood(cr);
-  drawBubbles(cr);
+  drawTank(tankRect);
+  drawSeaweed(tankRect);
+  drawFood(tankRect);
+  drawBubbles(tankRect);
 
   for (const f of fish) {
     // 尾びれアニメ: 8 フレームごとにフレーム切替 (位相をずらして個体差)
     const wf = ((frame + f.phase * 4) >> 3) & 1;
     // スプライトは左向き基準 → 右へ泳ぐ時のみ反転
-    drawFishSprite(wf, cr.x + (f.x | 0), cr.y + (f.y | 0), f.vx >= 0);
+    drawFishSprite(wf, tankRect.x + (f.x | 0), tankRect.y + (f.y | 0), f.vx >= 0);
   }
+
+  // 縦横スクロールバー (見た目のみ。スクロール不可のため常に 100% 表示・操作不可)
+  const vSlotX = cr.x + tankW;
+  const vSlotY = cr.y;
+  const vSlotH = tankH;
+  const hSlotX = cr.x;
+  const hSlotY = cr.y + tankH;
+  const hSlotW = tankW;
+  Scroll.drawVScrollbarSlot(_decorScroll, vSlotX, vSlotY, vSlotH);
+  Scroll.drawHScrollbarSlot(_decorScroll, hSlotX, hSlotY, hSlotW);
+  Scroll.drawScrollCorner(_decorScroll, vSlotX, hSlotY);
 }
 
 function onInput(ev) {
