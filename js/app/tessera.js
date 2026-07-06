@@ -669,6 +669,7 @@ function _initWidgets() {
   });
   editor.showWhitespace = false; // コード編集では空白/改行マーカーを消す（読みやすさ）
   editor.guideCol = COLS; // 39桁ガイド（点線）＋超過行ティック。TESS の桁制約を可視化（D）
+  editor.showLineNumbers = true; // コード編集では行番号ガターを表示
   // 枠ぶんの余白を実測で導出（widthChars/visibleRows ⇄ px 変換に使う）。
   const charW = GLYPH_W + 1;
   const lineH = GLYPH_H + 3; // = Helpers.TEXTAREA_LINE_HEIGHT
