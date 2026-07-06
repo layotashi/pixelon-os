@@ -237,6 +237,20 @@ function drawSeaweed(cr) {
   }
 }
 
+// 泡の形状: '#' = 水と逆の色 (DECOR_COLOR), '-' = 水と同じ色 (WATER_COLOR, 泡の中を透けさせる)
+const BUBBLE_SHAPES = [["#"], ["##", "##"], ["###", "#-#", "###"]];
+
+function drawBubble(shape, x, y) {
+  for (let dy = 0; dy < shape.length; dy++) {
+    const row = shape[dy];
+    for (let dx = 0; dx < row.length; dx++) {
+      const ch = row[dx];
+      if (ch === "#") pset(x + dx, y + dy, DECOR_COLOR);
+      else if (ch === "-") pset(x + dx, y + dy, WATER_COLOR);
+    }
+  }
+}
+
 function drawBubbles(cr) {
   const N = 6;
   const bottomY = cr.y + _sandBaseTop(); // 発生位置 (砂の上)
@@ -248,8 +262,7 @@ function drawBubbles(cr) {
     const x = baseX + Math.round(Math.sin(t * 0.06 + i) * 3);
     const y = bottomY - t;
     if (y > topY + 1 && y < bottomY) {
-      pset(x | 0, y | 0, DECOR_COLOR);
-      if (i % 3 === 0) pset((x | 0) + 1, y | 0, DECOR_COLOR); // 大きめの泡
+      drawBubble(BUBBLE_SHAPES[i % BUBBLE_SHAPES.length], x | 0, y | 0);
     }
   }
 }
