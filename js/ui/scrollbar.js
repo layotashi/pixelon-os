@@ -329,6 +329,48 @@ function drawButton(dir, bx, by) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  サム グリップ装飾 (3 本線)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/** グリップ装飾を描くのに必要なサムの最小長 (px)。パターンが 7 セル分のため。 */
+const GRIP_SIZE = 7;
+
+/**
+ * 縦スクロールバーのサムに「三」型 (横 3 本線) のグリップを描く。
+ * サムの長辺 (h) 中央に 7px 分のパターンをセンタリングし、内側 1px 余白の
+ * 列 (x+1..x+w-2) に背景色の横線を 3 本刻む (行 1/3/5 が背景、0/2/4/6 が前景のまま)。
+ * サムが 7px 未満なら省略する (囲み罫線だけでは 3 本線が潰れて視認できないため)。
+ * @param {number} x  サム左端 X
+ * @param {number} y  サム上端 Y
+ * @param {number} w  サム幅 (= SCROLLBAR_W)
+ * @param {number} h  サム高さ (長辺)
+ */
+function drawVThumbGrip(x, y, w, h) {
+  if (h < GRIP_SIZE || w < GRIP_SIZE) return;
+  const gy = y + ((h - GRIP_SIZE) >> 1);
+  hline(x + 1, x + w - 2, gy + 1, 0);
+  hline(x + 1, x + w - 2, gy + 3, 0);
+  hline(x + 1, x + w - 2, gy + 5, 0);
+}
+
+/**
+ * 横スクロールバーのサムに「III」型 (縦 3 本線) のグリップを描く。
+ * 縦版の 90 度回転版: サムの長辺 (w) 中央に 7px 分のパターンをセンタリングし、
+ * 内側 1px 余白の行 (y+1..y+h-2) に背景色の縦線を 3 本刻む。
+ * @param {number} x  サム左端 X
+ * @param {number} y  サム上端 Y
+ * @param {number} w  サム幅 (長辺)
+ * @param {number} h  サム高さ (= SCROLLBAR_W)
+ */
+function drawHThumbGrip(x, y, w, h) {
+  if (w < GRIP_SIZE || h < GRIP_SIZE) return;
+  const gx = x + ((w - GRIP_SIZE) >> 1);
+  vline(gx + 1, y + 1, y + h - 2, 0);
+  vline(gx + 3, y + 1, y + h - 2, 0);
+  vline(gx + 5, y + 1, y + h - 2, 0);
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  描画
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -345,9 +387,11 @@ export function drawVScrollbar(s, x, y, h) {
   if (!geom) {
     // スクロール不要: トラック全体を明色で埋める (全コンテンツ表示中)
     fillRect(x, y, SCROLLBAR_W, h, 1);
+    drawVThumbGrip(x, y, SCROLLBAR_W, h);
     return;
   }
   fillRect(x, geom.pos, SCROLLBAR_W, geom.size, 1);
+  drawVThumbGrip(x, geom.pos, SCROLLBAR_W, geom.size);
 }
 
 /**
@@ -374,9 +418,11 @@ export function drawHScrollbar(s, x, y, w) {
   if (!geom) {
     // スクロール不要: トラック全体を明色で埋める
     fillRect(x, y, w, SCROLLBAR_W, 1);
+    drawHThumbGrip(x, y, w, SCROLLBAR_W);
     return;
   }
   fillRect(geom.pos, y, geom.size, SCROLLBAR_W, 1);
+  drawHThumbGrip(geom.pos, y, geom.size, SCROLLBAR_W);
 }
 
 /**
