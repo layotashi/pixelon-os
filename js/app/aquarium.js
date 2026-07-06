@@ -237,10 +237,11 @@ function drawSeaweed(cr) {
   }
 }
 
-// 泡の形状: '#' = 水と逆の色 (DECOR_COLOR), '-' = 水と同じ色 (WATER_COLOR, 泡の中を透けさせる)
-const BUBBLE_SHAPES = [["#"], ["##", "##"], ["###", "#-#", "###"]];
+// 泡・餌の形状: '#' = 水と逆の色 (DECOR_COLOR), '-' = 水と同じ色 (WATER_COLOR, 中を透けさせる)
+const BUBBLE_SHAPES = [["#"], ["##", "##"], ["-#-", "#-#", "-#-"]];
+const FOOD_SHAPE = ["###", "#-#", "###"];
 
-function drawBubble(shape, x, y) {
+function drawShape(shape, x, y) {
   for (let dy = 0; dy < shape.length; dy++) {
     const row = shape[dy];
     for (let dx = 0; dx < row.length; dx++) {
@@ -262,14 +263,15 @@ function drawBubbles(cr) {
     const x = baseX + Math.round(Math.sin(t * 0.06 + i) * 3);
     const y = bottomY - t;
     if (y > topY + 1 && y < bottomY) {
-      drawBubble(BUBBLE_SHAPES[i % BUBBLE_SHAPES.length], x | 0, y | 0);
+      drawShape(BUBBLE_SHAPES[i % BUBBLE_SHAPES.length], x | 0, y | 0);
     }
   }
 }
 
 function drawFood(cr) {
   for (const p of food) {
-    pset(cr.x + (p.x | 0), cr.y + (p.y | 0), DECOR_COLOR);
+    // 3x3 形状の中心が p.x/p.y (物理演算上の座標) に来るよう -1 オフセット
+    drawShape(FOOD_SHAPE, cr.x + (p.x | 0) - 1, cr.y + (p.y | 0) - 1);
   }
 }
 
