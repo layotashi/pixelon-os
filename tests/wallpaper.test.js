@@ -106,3 +106,4 @@ describe("image wallpaper fill bit", () => {
     expect(getSolidLevel()).toBe(16);
   });
 });
+

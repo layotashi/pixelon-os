@@ -255,7 +255,9 @@ export function drawWallpaper() {
     if (tessProgram) {
       if (!tessStatic) {
         const { fps, period } = tessConfig;
-        const frameIdx = Math.floor(((performance.now() - tessT0) / 1000) * fps);
+        const frameIdx = Math.floor(
+          ((performance.now() - tessT0) / 1000) * fps,
+        );
         if (frameIdx !== tessFrame || tessBits === null) {
           tessBits = renderTessFrame((frameIdx / fps) % period);
           tessFrame = frameIdx;
@@ -387,4 +389,3 @@ export function setImageFillBit(bit) {
 export function getImageFillBit() {
   return imageFillBit;
 }
-
