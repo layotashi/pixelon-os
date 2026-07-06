@@ -95,6 +95,8 @@ export function drawTooltip(modalOpen) {
   ty = Math.max(0, ty);
 
   // 描画 (GPU.fillRoundRect で四隅を透過)
+  // 背景との分離用アウトライン (1px, 背景色)
+  GPU.fillRoundRect(tx - 1, ty - 1, boxW + 2, boxH + 2, 1, 0);
   GPU.fillRoundRect(tx, ty, boxW, boxH, 1, 0);
   GPU.drawRoundRect(tx, ty, boxW, boxH, 1, 1);
   for (let i = 0; i < lines.length; i++) {
