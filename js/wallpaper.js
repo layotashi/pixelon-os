@@ -28,7 +28,7 @@ import * as Storage from "./core/storage.js";
 let wallpaperMode = "solid";
 
 /** Solid 背景の Bayer 階調レベル (4x4: 0–16, 8x8: 0–64) */
-let solidLevel = 0;
+let solidLevel = 16;
 
 /** Solid 背景の Bayer 行列モード */
 let solidBayerMode = "4x4";

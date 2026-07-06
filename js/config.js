@@ -53,7 +53,7 @@ export function configSetSaveCallback(cb) {
  * 16:9 = 横長 / デスクトップ用。1:1・4:3 = SNS 共有向け。
  * SNS 最適枠は書き出し幅を 1080px(SNS 再エンコードの安全幅)に当てる:
  * 幅 540 は CAPTURE X2、幅 360 は X3 で 1080(540x540 / 360x360 / 360x270)。
- * 480x360 は汎用 4:3 兼デフォルト。全寸を偶数に統一(MP4/GIF は偶数寸前提)。
+ * 360x270 は汎用 4:3 兼デフォルト。全寸を偶数に統一(MP4/GIF は偶数寸前提)。
  * 表示スケールはブラウザウィンドウに収まる最大整数倍を自動算出する。
  */
 export const RESOLUTIONS = [
@@ -69,11 +69,11 @@ export const RESOLUTIONS = [
 export const MAX_VRAM_WIDTH = 960;
 export const MAX_VRAM_HEIGHT = 540;
 
-/** 仮想画面 横ピクセル数 (localStorage から復元、デフォルト 480) */
-export let VRAM_WIDTH = load("vramW", 480);
+/** 仮想画面 横ピクセル数 (localStorage から復元、デフォルト 360) */
+export let VRAM_WIDTH = load("vramW", 360);
 
-/** 仮想画面 縦ピクセル数 (localStorage から復元、デフォルト 360) */
-export let VRAM_HEIGHT = load("vramH", 360);
+/** 仮想画面 縦ピクセル数 (localStorage から復元、デフォルト 270) */
+export let VRAM_HEIGHT = load("vramH", 270);
 
 /** 解像度変更時のコールバック一覧 */
 const _resizeCallbacks = [];
@@ -673,10 +673,10 @@ function rgb2hex(r, g, b) {
  * 現在のアクティブパレット名
  * "Custom" の場合はカスタムパレットが使われる。
  */
-let currentPaletteName = "plato";
+let currentPaletteName = "e_ink";
 
 /** カスタムパレットの HEX 値 (localStorage から復元) */
-let customPaletteHex = loadCustomPalette({ bg: "#201600", fg: "#fdb931" });
+let customPaletteHex = loadCustomPalette({ bg: "#000000", fg: "#ffffff" });
 
 /**
  * 反転表示 (reverse video) フラグ (localStorage から復元、デフォルト OFF)。
@@ -704,7 +704,7 @@ function _authoredRgb() {
       fg: hex2rgb(customPaletteHex.fg),
     };
   }
-  const p = PALETTES[currentPaletteName] || PALETTES.plato;
+  const p = PALETTES[currentPaletteName] || PALETTES.e_ink;
   return { bg: hex2rgb(p.bg), fg: hex2rgb(p.fg) };
 }
 
@@ -719,7 +719,7 @@ function _applyPalette() {
   palette.fg = _invert ? a.bg : a.fg;
 }
 
-// 初期パレットを確定 (currentPaletteName=plato + 復元済み _invert)
+// 初期パレットを確定 (currentPaletteName=e_ink + 復元済み _invert)
 _applyPalette();
 
 /**
@@ -796,10 +796,10 @@ export function getCustomPaletteRgb() {
 
 /** エフェクトパラメータのデフォルト値 */
 export const EFFECT_DEFAULTS = {
-  vignetteEnabled: true,
+  vignetteEnabled: false,
   vignetteStrength: 20,
   vignetteRadius: 40,
-  diagEnabled: true,
+  diagEnabled: false,
   diagDarkness: 5,
   diagSpeed: 5,
   diagSpacing: 4,

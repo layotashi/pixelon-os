@@ -98,4 +98,11 @@ describe("image wallpaper fill bit", () => {
       0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0,
     ]);
   });
+
+  it("デフォルトの solid 壁紙階調レベルは 16 で初期化される", async () => {
+    const { initWallpaper, getSolidLevel } = await loadWallpaperModule();
+    await initWallpaper();
+
+    expect(getSolidLevel()).toBe(16);
+  });
 });
