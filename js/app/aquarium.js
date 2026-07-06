@@ -14,7 +14,7 @@
  *   - 葉のある水草 + 上昇する気泡で水槽を演出
  *
  * 水槽の縦構成 (ボディ内枠線の内側、上から):
- *   1px 枠線 (FG) → 水上の空間 (FG, AIR_H px) → 水と魚 (BG) → 砂 (FG, 起伏あり, SAND_H px)
+ *   1px 枠線 (BG) → 水上の空間 (BG, AIR_H px) → 水と魚 (FG) → 砂 (BG, 起伏あり, SAND_H px)
  */
 
 import { pset, fillRect, drawRect, vline } from "../core/gpu.js";
@@ -32,13 +32,13 @@ const AIR_H = 10; // 水上の空間の高さ
 const SAND_H = 10; // 水槽底の砂の厚み (基準値、起伏で ±数px 変動)
 const WATER_TOP_LOCAL = BORDER + AIR_H; // 水面 (この行から水)
 
-// 枠線・水上の空間・砂 = 前景色、水と魚 = 背景色
-const BORDER_COLOR = 1;
-const AIR_COLOR = 1;
-const WATER_COLOR = 0;
-const SAND_COLOR = 1;
-// 水草・気泡・餌・魚本体 = 前景色 (水=背景色に対してコントラスト)
-const DECOR_COLOR = 1;
+// 枠線・水上の空間・砂 = 背景色、水と魚 = 前景色
+const BORDER_COLOR = 0;
+const AIR_COLOR = 0;
+const WATER_COLOR = 1;
+const SAND_COLOR = 0;
+// 水草・気泡・餌・魚本体 = 背景色 (水=前景色に対してコントラスト)
+const DECOR_COLOR = 0;
 
 /**
  * エンゼルフィッシュの 1 フレームを描画する。
