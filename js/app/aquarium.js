@@ -22,7 +22,6 @@
 import { pset, fillRect, drawRect, vline } from "../core/gpu.js";
 import { getFishFrame, FISH_W, FISH_H } from "../core/fish.js";
 import { wmOpen, wmRegister } from "../wm/index.js";
-import * as Scroll from "../ui/scrollbar.js";
 
 const APP_NAME = "AQUARIUM";
 
@@ -42,10 +41,6 @@ const WATER_COLOR = 1;
 const SAND_COLOR = 0;
 // 水草・気泡・餌・魚本体 = 背景色 (水=前景色に対してコントラスト)
 const DECOR_COLOR = 0;
-
-// NOTEPAD と同じ見た目の縦横スクロールバー (装飾のみ)。AQUARIUM はスクロール不可のため
-// content<=viewport の固定ダミー状態を使い、サムは常に 100% 表示・操作は受け付けない。
-const _decorScroll = Scroll.createScrollState(1, 1);
 
 /**
  * エンゼルフィッシュの 1 フレームを描画する。
@@ -287,15 +282,13 @@ function drawFood(cr) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function onDraw(cr) {
-  // 右端・下端に NOTEPAD と同じ縦横スクロールバースロット分の余白を確保し、
-  // 水槽本体はその内側に描く (tankRect)。
-  const SLOT = Scroll.SCROLLBAR_SLOT_WIDTH;
-  const tankW = cr.w - SLOT;
-  const tankH = cr.h - SLOT;
-  const tankRect = { x: cr.x, y: cr.y, w: tankW, h: tankH };
+  // 水槽本体はコンテンツ領域いっぱいに描く。縦横スクロールバー + ステッパー + コーナーは
+  // WM 標準 chrome が枠端 (コンテンツ領域の外側に確保されたスロット) に描画するため、
+  // アプリ側では一切扱わない。
+  const tankRect = { x: cr.x, y: cr.y, w: cr.w, h: cr.h };
 
-  _crW = tankW;
-  _crH = tankH;
+  _crW = cr.w;
+  _crH = cr.h;
   frame++;
 
   _tickFood();
@@ -312,17 +305,6 @@ function onDraw(cr) {
     // スプライトは左向き基準 → 右へ泳ぐ時のみ反転
     drawFishSprite(wf, tankRect.x + (f.x | 0), tankRect.y + (f.y | 0), f.vx >= 0);
   }
-
-  // 縦横スクロールバー (見た目のみ。スクロール不可のため常に 100% 表示・操作不可)
-  const vSlotX = cr.x + tankW;
-  const vSlotY = cr.y;
-  const vSlotH = tankH;
-  const hSlotX = cr.x;
-  const hSlotY = cr.y + tankH;
-  const hSlotW = tankW;
-  Scroll.drawVScrollbarSlot(_decorScroll, vSlotX, vSlotY, vSlotH);
-  Scroll.drawHScrollbarSlot(_decorScroll, hSlotX, hSlotY, hSlotW);
-  Scroll.drawScrollCorner(_decorScroll, vSlotX, hSlotY);
 }
 
 function onInput(ev) {
