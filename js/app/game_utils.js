@@ -175,6 +175,7 @@ export function tickParticles(parts, gravity = 0.06, friction = 1.0) {
  * @param {function(Object):void} [config.onDrawFooter] - フッター描画コールバック
  * @param {function():boolean} config.onBeforeClose - 閉じる前に呼ばれるリセット関数
  * @param {string} [config.category] - メニューカテゴリ (">" 区切りで N 階層対応。省略でトップレベル)
+ * @param {boolean} [config.dev] - 開発中フラグ (true で devフラグOFFの場合に非表示)
  * @returns {{ isPaused: () => boolean }}
  */
 export function registerGameApp(config) {
@@ -188,6 +189,7 @@ export function registerGameApp(config) {
     onDrawFooter,
     onBeforeClose,
     category,
+    dev,
   } = config;
 
   let winId = -1;
@@ -209,6 +211,7 @@ export function registerGameApp(config) {
   const regOpts = {};
   if (category) regOpts.category = category;
   if (shortName) regOpts.shortName = shortName;
+  if (dev) regOpts.dev = dev;
   wmRegister(
     name,
     () => {

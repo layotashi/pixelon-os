@@ -826,5 +826,6 @@ const app = GameUtils.registerGameApp({
   onDrawFooter,
   onBeforeClose,
   category: "GAMES",
+  dev: true,
 });
 
