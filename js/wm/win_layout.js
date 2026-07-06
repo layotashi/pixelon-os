@@ -148,6 +148,8 @@ export function recalcLayout(win) {
       sepY: -1,
       contentRect: { x: 0, y: 0, w: Config.VRAM_WIDTH, h: Config.VRAM_HEIGHT },
       scrollbarRect: null,
+      hScrollbarRect: null,
+      scrollCornerRect: null,
       footerSepY: 0,
       footerRect: null,
     };
@@ -188,45 +190,67 @@ export function recalcLayout(win) {
     fy + BORDER + HEADER_PADDING + ((HEADER_CONTENT_H - ICON_H) >> 1);
   const iconBaseX = fx + fw - BORDER - HEADER_PADDING;
 
-  // ── content (区切り線の下から CONTENT_PADDING を取った領域) ──
+  // ── body / content / スクロールバー領域 ──
   //
-  // scrollable=true の場合:
-  //   ボディ右端にスクロールバースロット (Scroll.SCROLLBAR_SLOT_WIDTH) が張り付く。
-  //   構成 (左→右): content | sep(1) | dark(1) | thumb | dark(1) | border
-  //   sbReserve = Scroll.SCROLLBAR_SLOT_WIDTH
-  //   contentW  = ボディ幅 - sbReserve - CONTENT_PADDING*2
+  // _chrome=true のウィンドウは、ボディ右端に縦スクロールバースロット、ボディ下端に
+  // 横スクロールバースロットを**常時**確保する (Pixera 標準 UI: スクロール可否に
+  // よらず縦横バー + ステッパー + コーナーを出す)。バーは「飾り」(コンテンツが収まって
+  // いれば 100% 表示・非操作) にも「機能」(_scrollable の WM 管理縦スクロール、または
+  // アプリが _vScroll/_hScroll を機能状態へ差し替えた場合) にもなる。
+  // SLOT = sep(1) + dark(1) + thumb(7) + dark(1)。
   //
-  // scrollable=false: sbReserve=0
+  //   構成 (横): content | pad | V-slot(SLOT) | border
+  //   構成 (縦): content | pad | H-slot(SLOT) | (footer | border)
+  //   V/H が交わる右下 SLOT×SLOT はコーナー飾り。footer は H バーの下に全幅で残る。
   //
-  // contentTop / contentBottom / contentH は calcWindowSize の逆演算。
-  const sbReserve = win._scrollable ? Scroll.SCROLLBAR_SLOT_WIDTH : 0;
-  const contentTop = sepY + SEPARATOR_HEIGHT + pad;
-  const contentBottom =
-    footerH > 0
-      ? fy + fh - BORDER - footerH - pad
-      : fy + fh - BORDER - pad;
-  const contentX = fx + BORDER + pad;
-  const contentY = contentTop;
-  const contentW = Math.max(0, fw - BORDER * 2 - pad * 2 - sbReserve);
-  const contentH = Math.max(0, contentBottom - contentTop);
+  // _chrome=false (モーダルダイアログ等) は従来どおりスロット無し (content がボディ全域)。
+  const SLOT = Scroll.SCROLLBAR_SLOT_WIDTH;
+  const reserve = win._chrome ? SLOT : 0;
 
-  // ── スクロールバー・スロット矩形 (scrollable=true) ──
-  // Scroll.drawVScrollbarSlot に渡すスロット領域。
-  // 内部で sep, dark margin, thumb を描画する。
+  // ボディ矩形 (枠内側・区切り線の下 〜 footer 区切り線 or 枠下辺)
+  const bodyLeft = fx + BORDER;
+  const bodyTop = sepY + SEPARATOR_HEIGHT;
+  const bodyRight = fx + fw - BORDER;
+  const bodyBottom = footerH > 0 ? fy + fh - BORDER - footerH : fy + fh - BORDER;
+  const bodyW = bodyRight - bodyLeft;
+  const bodyH = bodyBottom - bodyTop;
+
+  // content: ボディからスロット分 (右・下) と pad を除いた領域。
+  // contentW/H は calcWindowSize の逆演算。
+  const contentX = bodyLeft + pad;
+  const contentY = bodyTop + pad;
+  const contentW = Math.max(0, bodyW - reserve - pad * 2);
+  const contentH = Math.max(0, bodyH - reserve - pad * 2);
+
+  // ── スクロールバー・スロット / コーナー矩形 (_chrome=true のみ) ──
+  // Scroll.drawVScrollbarSlot / drawHScrollbarSlot / drawScrollCorner へ渡す。
+  // V スロットは下端を SLOT 分空け、H スロットは右端を SLOT 分空けて、交差部にコーナーを置く。
   let scrollbarRect = null;
-  if (win._scrollable) {
-    const slotTop = sepY + SEPARATOR_HEIGHT;
-    const slotBottom =
-      footerH > 0 ? fy + fh - BORDER - footerH : fy + fh - BORDER;
+  let hScrollbarRect = null;
+  let scrollCornerRect = null;
+  if (win._chrome) {
     scrollbarRect = {
-      x: fx + fw - BORDER - Scroll.SCROLLBAR_SLOT_WIDTH,
-      y: slotTop,
-      w: Scroll.SCROLLBAR_SLOT_WIDTH,
-      h: Math.max(0, slotBottom - slotTop),
+      x: bodyRight - SLOT,
+      y: bodyTop,
+      w: SLOT,
+      h: Math.max(0, bodyH - SLOT),
+    };
+    hScrollbarRect = {
+      x: bodyLeft,
+      y: bodyBottom - SLOT,
+      w: Math.max(0, bodyW - SLOT),
+      h: SLOT,
+    };
+    scrollCornerRect = {
+      x: bodyRight - SLOT,
+      y: bodyBottom - SLOT,
+      w: SLOT,
+      h: SLOT,
     };
   }
 
-  // ── スクロール状態の viewport 更新 ──
+  // ── WM 管理縦スクロール (_scrollable) の viewport 更新 ──
+  // 飾りバーやアプリ管理バー (NOTEPAD) の状態には触れない。
   if (win._scrollable && win._vScroll) {
     Scroll.scrollSetViewport(win._vScroll, contentH);
   }
@@ -264,8 +288,12 @@ export function recalcLayout(win) {
     sepY,
     // コンテンツ描画領域
     contentRect: { x: contentX, y: contentY, w: contentW, h: contentH },
-    // スクロールバー矩形 (scrollable=true の場合のみ, null = スクロール無効)
+    // 縦スクロールバースロット矩形 (_chrome=true のみ, null = chrome 無し)
     scrollbarRect,
+    // 横スクロールバースロット矩形 (_chrome=true のみ, null = chrome 無し)
+    hScrollbarRect,
+    // V/H 交差コーナー矩形 (_chrome=true のみ, null = chrome 無し)
+    scrollCornerRect,
     // footer 区切り線 Y (footer 有効時のみ)
     footerSepY,
     // footer 描画領域 (null = footer 無効)
@@ -278,15 +306,18 @@ export function recalcLayout(win) {
  * wmOpen / border ダブルクリック等で共通使用。
  *
  * 計算式 (recalcLayout の逆演算):
- *   w = cw + BORDER*2 + CONTENT_PADDING*2 + sbReserve
- *   h = ch + BORDER + SEPARATOR_HEIGHT + BORDER + HEADER_HEIGHT + CONTENT_PADDING*2 + (footer ? FOOTER_HEIGHT : 0)
+ *   w = cw + BORDER*2 + CONTENT_PADDING*2 + slotReserve
+ *   h = ch + BORDER + SEPARATOR_HEIGHT + BORDER + HEADER_HEIGHT + CONTENT_PADDING*2
+ *       + (footer ? FOOTER_HEIGHT : 0) + slotReserve
  *
- * scrollable=true の場合、ボディ右端のスクロールバースロット (Scroll.SCROLLBAR_SLOT_WIDTH) を加算する。
+ * chrome=true の場合、ボディ右端の縦スクロールバースロットと下端の横スクロールバー
+ * スロット (各 Scroll.SCROLLBAR_SLOT_WIDTH) を幅・高さ双方に加算する。これにより
+ * 標準 UI のバーを足してもコンテンツ描画領域が縮まない (ウィンドウが SLOT 分広がる)。
  *
  * @param {number} cw  コンテンツ幅
  * @param {number} ch  コンテンツ高さ
  * @param {boolean} [footer=false] footer 有効フラグ
- * @param {boolean} [scrollable=false] スクロール可能ウィンドウか
+ * @param {boolean} [chrome=false] 標準スクロールバー chrome を持つウィンドウか
  * @param {number} [contentPad=CONTENT_PADDING] ボディ内側パディング (padding:none は 0)
  * @returns {{ w:number, h:number }}
  */
@@ -294,16 +325,17 @@ export function calcWindowSize(
   cw,
   ch,
   footer = false,
-  scrollable = false,
+  chrome = false,
   contentPad = CONTENT_PADDING,
 ) {
-  const sbReserve = scrollable ? Scroll.SCROLLBAR_SLOT_WIDTH : 0;
+  const slotReserve = chrome ? Scroll.SCROLLBAR_SLOT_WIDTH : 0;
   const footerH = footer ? FOOTER_HEIGHT : 0;
   return {
-    w: Math.max(MIN_WIDTH, cw + FRAME_EXTRA_W + contentPad * 2 + sbReserve),
+    w: Math.max(MIN_WIDTH, cw + FRAME_EXTRA_W + contentPad * 2 + slotReserve),
     h: Math.max(
       MIN_HEIGHT,
-      ch + FRAME_EXTRA_H + HEADER_HEIGHT + contentPad * 2 + footerH,
+      ch + FRAME_EXTRA_H + HEADER_HEIGHT + contentPad * 2 + footerH + slotReserve,
     ),
   };
 }
+

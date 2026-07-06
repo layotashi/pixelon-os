@@ -36,14 +36,15 @@ beforeEach(() => {
 });
 
 /** 与えた外寸で win を作り recalcLayout してコンテンツ矩形を返す */
-function contentOf(w, h, footer, scrollable) {
+function contentOf(w, h, footer, chrome) {
   const win = {
     x: 0,
     y: 0,
     w,
     h,
     footer,
-    _scrollable: scrollable,
+    _chrome: chrome,
+    _scrollable: false,
     _vScroll: null,
     fullscreen: false,
   };
@@ -52,21 +53,21 @@ function contentOf(w, h, footer, scrollable) {
 }
 
 describe("calcWindowSize ⇄ recalcLayout の逆演算", () => {
-  // footer / scrollable の 4 組合せで、十分大きい cw/ch なら
+  // footer / chrome の 4 組合せで、十分大きい cw/ch なら
   // calcWindowSize の外寸から recalcLayout したコンテンツ寸法が cw/ch に戻る。
   const cases = [
-    { footer: false, scrollable: false },
-    { footer: true, scrollable: false },
-    { footer: false, scrollable: true },
-    { footer: true, scrollable: true },
+    { footer: false, chrome: false },
+    { footer: true, chrome: false },
+    { footer: false, chrome: true },
+    { footer: true, chrome: true },
   ];
 
-  for (const { footer, scrollable } of cases) {
-    it(`footer=${footer} scrollable=${scrollable} で cw/ch が保存される`, () => {
+  for (const { footer, chrome } of cases) {
+    it(`footer=${footer} chrome=${chrome} で cw/ch が保存される`, () => {
       const cw = 200;
       const ch = 150;
-      const { w, h } = calcWindowSize(cw, ch, footer, scrollable);
-      const cr = contentOf(w, h, footer, scrollable);
+      const { w, h } = calcWindowSize(cw, ch, footer, chrome);
+      const cr = contentOf(w, h, footer, chrome);
       expect(cr.w).toBe(cw);
       expect(cr.h).toBe(ch);
     });
@@ -80,11 +81,62 @@ describe("calcWindowSize ⇄ recalcLayout の逆演算", () => {
     expect(h).toBe(32);
   });
 
-  it("scrollable はスクロールバー幅ぶん外寸が広い", () => {
+  it("chrome はスクロールバースロット幅ぶん外寸が縦横とも広い", () => {
     const plain = calcWindowSize(200, 150, false, false);
-    const scroll = calcWindowSize(200, 150, false, true);
-    expect(scroll.w - plain.w).toBe(6); // SCROLLBAR_SLOT_WIDTH
-    expect(scroll.h).toBe(plain.h);
+    const chrome = calcWindowSize(200, 150, false, true);
+    // 右端の V スロット + 下端の H スロットで幅・高さ双方に SLOT を加算する。
+    expect(chrome.w - plain.w).toBe(6); // SCROLLBAR_SLOT_WIDTH
+    expect(chrome.h - plain.h).toBe(6); // SCROLLBAR_SLOT_WIDTH
+  });
+
+  it("chrome ウィンドウは V/H スロット + コーナー矩形を算出する", () => {
+    const { w, h } = calcWindowSize(200, 150, false, true);
+    const win = {
+      x: 0,
+      y: 0,
+      w,
+      h,
+      footer: false,
+      _chrome: true,
+      _scrollable: false,
+      _vScroll: null,
+      fullscreen: false,
+    };
+    recalcLayout(win);
+    const L = win._layout;
+    expect(L.scrollbarRect).not.toBeNull();
+    expect(L.hScrollbarRect).not.toBeNull();
+    expect(L.scrollCornerRect).not.toBeNull();
+    // V スロットは右端フラッシュ、H スロットは下端フラッシュ、コーナーは交差部。
+    expect(L.scrollbarRect.x).toBe(win.x + win.w - 1 - 6);
+    expect(L.hScrollbarRect.y).toBe(win.y + win.h - 1 - 6);
+    expect(L.scrollCornerRect.x).toBe(L.scrollbarRect.x);
+    expect(L.scrollCornerRect.y).toBe(L.hScrollbarRect.y);
+    // V スロットは下端を SLOT 分空け、H スロットは右端を SLOT 分空ける。
+    expect(L.scrollbarRect.h).toBe(L.hScrollbarRect.y - L.scrollbarRect.y);
+    expect(L.hScrollbarRect.w).toBe(L.scrollbarRect.x - L.hScrollbarRect.x);
+  });
+
+  it("chrome=false (モーダル等) はスロット矩形を持たない", () => {
+    const { w, h } = calcWindowSize(200, 150, false, false);
+    const cr = contentOf(w, h, false, false);
+    expect(cr.w).toBe(200);
+    // recalcLayout 経由でスロット矩形が null であることを確認
+    const win = {
+      x: 0,
+      y: 0,
+      w,
+      h,
+      footer: false,
+      _chrome: false,
+      _scrollable: false,
+      _vScroll: null,
+      fullscreen: false,
+    };
+    recalcLayout(win);
+    expect(win._layout.scrollbarRect).toBeNull();
+    expect(win._layout.hScrollbarRect).toBeNull();
+    expect(win._layout.scrollCornerRect).toBeNull();
   });
 
   it("footer は FOOTER_HEIGHT ぶん外寸が高い", () => {
@@ -127,3 +179,4 @@ describe("padding:none (win._noPad)", () => {
     expect(def.h - none.h).toBe(12);
   });
 });
+

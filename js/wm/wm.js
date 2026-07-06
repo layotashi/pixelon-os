@@ -185,7 +185,7 @@ function recalcAllWindows() {
           size.w,
           size.h,
           win.footer,
-          win._scrollable,
+          win._chrome,
           win._noPad ? 0 : CONTENT_PADDING,
         );
         // scrollable ウィンドウはユーザーが選んだサイズを維持する。
@@ -333,10 +333,13 @@ function nextCascadePos(winW, winH) {
  * @param {boolean} [opts.modal=false] モーダルウィンドウフラグ (他ウィンドウの入力をブロック)
  * @param {boolean} [opts.noResize=false] リサイズ無効
  * @param {boolean} [opts.noMaximize=false] 最大化無効
- * @param {boolean} [opts.scrollable=false] ウィンドウスクロール有効 (wmSetContentSize で仮想サイズを設定)。
+ * @param {boolean} [opts.scrollable=false] WM 管理の縦ウィンドウスクロール有効 (wmSetContentSize で仮想サイズを設定)。
  *   有効時は (a) 初期高さが自然サイズではなく work area 高さに自動クランプされ、
  *   (b) リサイズ下限が MIN_HEIGHT まで緩和され、
  *   (c) フォント/パディング変更時に自然サイズへ自動復元しなくなる。
+ * @param {boolean} [opts.chrome] 標準スクロールバー chrome (縦横バー + ステッパー + コーナーを常時表示)。
+ *   省略時はモーダル以外で ON。ボディ端にスロットを確保しウィンドウを SLOT 分広げる。
+ *   スクロール不要でも飾りとして表示し、_scrollable / wmAttachScroll で機能化される。
  * @param {function|null} [opts.onBeforeClose=null] 閉じる前コールバック (() => boolean, false で閉じをキャンセル)
  * @returns {object} ウィンドウオブジェクト
  */
@@ -377,13 +380,27 @@ function createWindow(id, x, y, w, h, title, onDraw, onInput, onMeasure, opts) {
     _aboutMode: false,
     // ── フォント変更時の再レイアウト (opt-in) ──
     onRelayout: o.onRelayout || null,
-    // ── スクロール (opt-in) ──
+    // ── スクロール / 標準スクロールバー chrome ──
+    // _chrome: Pixera 標準 UI。ボディ端に縦横スクロールバー + ステッパー + コーナーを
+    //   常時表示し、スロット分ウィンドウを広げる。既定はモーダル以外 ON (opts.chrome で上書き)。
+    // _vScroll/_hScroll: スクロール状態。既定は「飾り」(createScrollState(1,1) = 100%・非操作)。
+    //   _scrollable なら wmSetContentSize で縦を機能化、アプリは wmAttachScroll で差し替え可能。
+    // _vStep/_hStep: ステッパーボタン 1 クリックのスクロール量 (既定 px、行/桁単位のアプリは 1)。
     _scrollable: !!o.scrollable,
-    _vScroll: null, // ScrollState (wmSetContentSize で初期化)
-    _virtualH: 0, // 仮想コンテンツ高 (px)
+    _chrome: o.chrome !== undefined ? !!o.chrome : !o.modal || !!o.scrollable,
+    _vScroll: null,
+    _hScroll: null,
+    _vStep: WIN_SCROLL_BTN_STEP,
+    _hStep: WIN_SCROLL_BTN_STEP,
+    _virtualH: 0, // 仮想コンテンツ高 (px, _scrollable の WM 管理縦スクロール用)
     // ── レイアウトキャッシュ (recalcLayout で更新) ──
     _layout: null,
   };
+  if (win._chrome) {
+    // 飾りの縦横スクロールバー状態 (機能化されるまで 100% 表示・非操作)。
+    win._vScroll = Scroll.createScrollState(1, 1);
+    win._hScroll = Scroll.createScrollState(1, 1);
+  }
   recalcLayout(win);
   return win;
 }
@@ -802,9 +819,19 @@ function snapRectFor(state, edgeMargin = SCREEN_EDGE_HALO, centerMargin = 0) {
   const innerH = Config.VRAM_HEIGHT - waTop - edgeMargin * 2;
   switch (state) {
     case "maximized":
-      return { x: edgeMargin, y: y0, w: Config.VRAM_WIDTH - edgeMargin * 2, h: innerH };
+      return {
+        x: edgeMargin,
+        y: y0,
+        w: Config.VRAM_WIDTH - edgeMargin * 2,
+        h: innerH,
+      };
     case "snap-left":
-      return { x: edgeMargin, y: y0, w: mid - centerMargin - edgeMargin, h: innerH };
+      return {
+        x: edgeMargin,
+        y: y0,
+        w: mid - centerMargin - edgeMargin,
+        h: innerH,
+      };
     case "snap-right": {
       const x = mid + centerMargin;
       return { x, y: y0, w: Config.VRAM_WIDTH - edgeMargin - x, h: innerH };
@@ -932,15 +959,67 @@ function toLocalCoords(win, mx, my) {
   return { lx: mx - cr.x, ly: my - cr.y + scrollY };
 }
 
+/** 点 (x,y) が矩形 a に含まれるか (a が null/undefined なら false)。 */
+function ptInRect(a, x, y) {
+  return !!a && x >= a.x && x < a.x + a.w && y >= a.y && y < a.y + a.h;
+}
+
 /**
- * マウス座標がウィンドウスクロールバー領域内かどうかを判定する。
+ * 縦スクロールバースロットの当たり判定領域を返す (chrome 無し / スロット無しは null)。
  */
-function hitTestWindowScrollbar(win, mx, my) {
-  if (!win._scrollable || !win._vScroll) return false;
-  const sb = win._layout.scrollbarRect;
-  if (!sb) return false;
-  const th = Scroll.vScrollbarSlotThumbArea(sb.x, sb.y, sb.h);
-  return mx >= th.x && mx < th.x + th.w && my >= th.y && my < th.y + th.h;
+function vScrollHitArea(win) {
+  const sb = win._layout && win._layout.scrollbarRect;
+  return sb ? Scroll.vScrollbarSlotThumbArea(sb.x, sb.y, sb.h) : null;
+}
+
+/**
+ * 横スクロールバースロットの当たり判定領域を返す (chrome 無し / スロット無しは null)。
+ */
+function hScrollHitArea(win) {
+  const hb = win._layout && win._layout.hScrollbarRect;
+  return hb ? Scroll.hScrollbarSlotThumbArea(hb.x, hb.y, hb.w) : null;
+}
+
+/**
+ * ボディ down が標準スクロールバー chrome に当たったか判定し、当たれば入力を処理して
+ * true を返す (コンテンツへ伝播させない)。機能バー (scrollNeeded=true) はスクロールし、
+ * 飾りバー / コーナーはクリックを飲むだけで何もしない。
+ */
+function handleScrollbarDown(win, mx, my) {
+  if (!win._chrome || !win._layout) return false;
+  const va = vScrollHitArea(win);
+  if (ptInRect(va, mx, my)) {
+    if (win._vScroll && Scroll.scrollNeeded(win._vScroll)) {
+      Scroll.handleVScrollInput(
+        win._vScroll,
+        "down",
+        my,
+        va.y,
+        va.h,
+        win._vStep,
+      );
+      wmRequestCursor("drag-v");
+    }
+    return true;
+  }
+  const ha = hScrollHitArea(win);
+  if (ptInRect(ha, mx, my)) {
+    if (win._hScroll && Scroll.scrollNeeded(win._hScroll)) {
+      Scroll.handleHScrollInput(
+        win._hScroll,
+        "down",
+        mx,
+        ha.x,
+        ha.w,
+        win._hStep,
+      );
+      wmRequestCursor("drag-h");
+    }
+    return true;
+  }
+  // コーナー (押下不能の飾り) — クリックを飲むだけ
+  if (ptInRect(win._layout.scrollCornerRect, mx, my)) return true;
+  return false;
 }
 
 /**
@@ -1030,7 +1109,7 @@ function clampScrollableInitSize(w, h) {
 function fitWindowToContent(win) {
   if (!win.onMeasure || win.noResize) return;
   const size = win.onMeasure();
-  const fit = calcWindowSize(size.w, size.h, win.footer, win._scrollable);
+  const fit = calcWindowSize(size.w, size.h, win.footer, win._chrome);
   let newW = fit.w;
   let newH = fit.h;
   if (win._scrollable) {
@@ -1129,12 +1208,20 @@ export function wmOpen(
 ) {
   const footer = !!(opts && opts.footer);
   const scrollable = !!(opts && opts.scrollable);
+  const modal = !!(opts && opts.modal);
+  // 標準スクロールバー chrome の有無 (createWindow の _chrome と同じ導出)。
+  const chrome =
+    opts && opts.chrome !== undefined ? !!opts.chrome : !modal || scrollable;
   const contentPad = opts && opts.padding === "none" ? 0 : CONTENT_PADDING;
+  const SLOT = Scroll.SCROLLBAR_SLOT_WIDTH;
+  // 明示指定された外寸か (onMeasure 自動算出でない) を先に記録しておく。
+  const wExplicit = w !== 0;
+  const hExplicit = h !== 0;
   // w=0 or h=0 なら onMeasure で自動算出
   let scrollableClamped = false;
   if (onMeasure && (w === 0 || h === 0)) {
     const size = onMeasure();
-    const fit = calcWindowSize(size.w, size.h, footer, scrollable, contentPad);
+    const fit = calcWindowSize(size.w, size.h, footer, chrome, contentPad);
     if (w === 0) w = fit.w;
     if (h === 0) h = fit.h;
     if (scrollable) {
@@ -1143,6 +1230,12 @@ export function wmOpen(
       h = c.h;
       scrollableClamped = c.clamped;
     }
+  }
+  // 明示指定された外寸には標準 chrome のスロット分を加える (onMeasure 経由は
+  // calcWindowSize が加算済み)。chrome を足してもコンテンツ描画領域が縮まない。
+  if (chrome) {
+    if (wExplicit) w += SLOT;
+    if (hExplicit) h += SLOT;
   }
 
   // タイトルがヘッダのアイコン (×・最大化) と衝突しない最小幅を保証する。
@@ -1302,7 +1395,34 @@ export function wmSetContentSize(id, virtualH) {
 export function wmGetScroll(id) {
   const win = windows.find((w) => w.id === id);
   if (!win) return { x: 0, y: 0 };
-  return { x: 0, y: win._vScroll ? win._vScroll.offset : 0 };
+  return {
+    x: win._hScroll ? win._hScroll.offset : 0,
+    y: win._vScroll ? win._vScroll.offset : 0,
+  };
+}
+
+/**
+ * アプリ管理のスクロール状態を標準スクロールバー chrome に接続する。
+ *
+ * 自前のスクロール (行・桁単位など) を持つアプリ (例: NOTEPAD) が、WM の縦横バーへ
+ * その状態をそのまま描画・操作させるための橋渡し。WM はここで渡された ScrollState を
+ * 「表示・ドラッグ・ステッパー」のためだけに読み書きし、viewport / content の同期や
+ * ホイール・座標変換はアプリ側 (_scrollable=false のため WM が触れない) が担う。
+ *
+ * @param {number} id  ウィンドウ ID
+ * @param {object} [o] 接続オプション
+ * @param {object|null} [o.v]      縦スクロール状態 (ScrollState)。省略時は据え置き。
+ * @param {object|null} [o.h]      横スクロール状態 (ScrollState)。省略時は据え置き。
+ * @param {number} [o.vStep]  縦ステッパー 1 クリックの量 (単位はアプリ依存, 既定 1 行等)。
+ * @param {number} [o.hStep]  横ステッパー 1 クリックの量。
+ */
+export function wmAttachScroll(id, o = {}) {
+  const win = windows.find((w) => w.id === id);
+  if (!win) return;
+  if (o.v !== undefined) win._vScroll = o.v;
+  if (o.h !== undefined) win._hScroll = o.h;
+  if (o.vStep !== undefined) win._vStep = o.vStep;
+  if (o.hStep !== undefined) win._hStep = o.hStep;
 }
 
 /**
@@ -1661,21 +1781,8 @@ function handleBodyClick(i, mx, my) {
     return;
   }
 
-  // スクロールバー領域クリック → スクロールバー入力処理
-  if (hitTestWindowScrollbar(target, mx, my)) {
-    const sb = target._layout.scrollbarRect;
-    const th = Scroll.vScrollbarSlotThumbArea(sb.x, sb.y, sb.h);
-    Scroll.handleVScrollInput(
-      target._vScroll,
-      "down",
-      my,
-      th.y,
-      th.h,
-      WIN_SCROLL_BTN_STEP,
-    );
-    wmRequestCursor("drag-v");
-    return;
-  }
+  // スクロールバー chrome (縦/横/コーナー) クリック → 処理して伝播を止める
+  if (handleScrollbarDown(target, mx, my)) return;
 
   // footer クリック → onInputFooter があれば footer にルーティング
   if (hitTestFooter(target, mx, my) && target.onInputFooter) {
@@ -1782,7 +1889,7 @@ function handleDrag(mx, my) {
     let minH = MIN_HEIGHT;
     if (win.onMeasure) {
       const size = win.onMeasure();
-      const fit = calcWindowSize(size.w, size.h, win.footer, win._scrollable);
+      const fit = calcWindowSize(size.w, size.h, win.footer, win._chrome);
       minW = fit.w;
       minH = fit.h;
     }
@@ -1921,40 +2028,73 @@ function propagateBodyEvents(mx, my) {
     const popupOpen = hasOpenPopup();
     const tbFocus = hasTextInputFocus();
 
-    // ── スクロールバーのドラッグ追従 / リリース ──
-    if (
-      front._scrollable &&
+    // ── スクロールバーのドラッグ追従 / リリース (縦・横) ──
+    const vDragging =
+      front._chrome &&
       front._vScroll &&
-      Scroll.scrollIsDragging(front._vScroll)
-    ) {
-      const sb = front._layout.scrollbarRect;
-      const th = Scroll.vScrollbarSlotThumbArea(sb.x, sb.y, sb.h);
-      if (Input.mouseButtonHeld(0)) {
-        Scroll.handleVScrollInput(
-          front._vScroll,
-          "held",
-          my,
-          th.y,
-          th.h,
-          WIN_SCROLL_BTN_STEP,
-        );
+      Scroll.scrollIsDragging(front._vScroll);
+    const hDragging =
+      front._chrome &&
+      front._hScroll &&
+      Scroll.scrollIsDragging(front._hScroll);
+    if (vDragging || hDragging) {
+      if (vDragging) {
+        const va = vScrollHitArea(front);
+        if (va) {
+          if (Input.mouseButtonHeld(0)) {
+            Scroll.handleVScrollInput(
+              front._vScroll,
+              "held",
+              my,
+              va.y,
+              va.h,
+              front._vStep,
+            );
+          }
+          if (Input.mouseButtonUp(0)) {
+            Scroll.handleVScrollInput(front._vScroll, "up", my, va.y, va.h);
+          }
+        }
       }
-      if (Input.mouseButtonUp(0)) {
-        Scroll.handleVScrollInput(front._vScroll, "up", my, th.y, th.h);
+      if (hDragging) {
+        const ha = hScrollHitArea(front);
+        if (ha) {
+          if (Input.mouseButtonHeld(0)) {
+            Scroll.handleHScrollInput(
+              front._hScroll,
+              "held",
+              mx,
+              ha.x,
+              ha.w,
+              front._hStep,
+            );
+          }
+          if (Input.mouseButtonUp(0)) {
+            Scroll.handleHScrollInput(front._hScroll, "up", mx, ha.x, ha.w);
+          }
+        }
       }
-      wmRequestCursor("drag-v");
+      wmRequestCursor(vDragging ? "drag-v" : "drag-h");
       return; // スクロールバードラッグ中はコンテンツ入力をブロック
     }
 
-    // ── スクロールバーホバー → drag-v カーソル ──
-    if (
-      front._scrollable &&
-      front._vScroll &&
-      hitTestWindowScrollbar(front, mx, my) &&
-      !Input.mouseButtonDown(0) &&
-      !Input.mouseButtonHeld(0)
-    ) {
-      wmRequestCursor("drag-v");
+    // ── スクロールバーホバー → drag-v / drag-h カーソル (機能バーのみ) ──
+    if (front._chrome && !Input.mouseButtonDown(0) && !Input.mouseButtonHeld(0)) {
+      const va = vScrollHitArea(front);
+      const ha = hScrollHitArea(front);
+      if (
+        ptInRect(va, mx, my) &&
+        front._vScroll &&
+        Scroll.scrollNeeded(front._vScroll)
+      ) {
+        wmRequestCursor("drag-v");
+      } else if (
+        ptInRect(ha, mx, my) &&
+        front._hScroll &&
+        Scroll.scrollNeeded(front._hScroll)
+      ) {
+        wmRequestCursor("drag-h");
+      }
     }
 
     // ── footer イベントルーティング (onInputFooter がある場合) ──
@@ -2165,7 +2305,6 @@ function updateCursorShape(mx, my) {
   contentCursorOverride = null;
 }
 
-
 /**
  * 全ウィンドウを描画する。背面 (配列先頭) から前面 (末尾) へ順に描く。
  */
@@ -2319,11 +2458,23 @@ function drawWindowFrame(win) {
     }
   }
 
-  // ── ウィンドウスクロールバー描画 (opt-in) ──
-  // scrollbarRect はスロット矩形 — Scroll.drawVScrollbarSlot が sep + dark + thumb を描画
-  if (win._scrollable && win._vScroll && L.scrollbarRect) {
-    const sb = L.scrollbarRect;
-    Scroll.drawVScrollbarSlot(win._vScroll, sb.x, sb.y, sb.h);
+  // ── 標準スクロールバー chrome 描画 (縦・横・コーナー) ──
+  // _chrome ウィンドウは常に縦横バー + ステッパー + コーナーを描く。バーは飾り
+  // (win._vScroll/_hScroll が 100% 状態) か機能 (スクロール状態が機能化済み) かに
+  // よらず drawVScrollbarSlot / drawHScrollbarSlot が同じ見た目で描画する。
+  if (win._chrome && !win.fullscreen) {
+    if (L.scrollbarRect) {
+      const sb = L.scrollbarRect;
+      Scroll.drawVScrollbarSlot(win._vScroll, sb.x, sb.y, sb.h);
+    }
+    if (L.hScrollbarRect) {
+      const hb = L.hScrollbarRect;
+      Scroll.drawHScrollbarSlot(win._hScroll, hb.x, hb.y, hb.w);
+    }
+    if (L.scrollCornerRect) {
+      const cc = L.scrollCornerRect;
+      Scroll.drawScrollCorner(win._vScroll, cc.x, cc.y);
+    }
   }
 
   // ── footer 描画 (opt-in) ──
