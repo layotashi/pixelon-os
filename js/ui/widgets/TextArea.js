@@ -32,7 +32,8 @@ export class TextArea extends FocusableWidget {
     const innerH = visibleRows * lineH - 1;
     const w =
       innerW + Helpers.BUTTON_PADDING * 2 + Scroll.SCROLLBAR_SLOT_WIDTH + 4;
-    const h = innerH + Helpers.BUTTON_PADDING * 2 + 4;
+    const h =
+      innerH + Helpers.BUTTON_PADDING * 2 + Scroll.SCROLLBAR_SLOT_WIDTH + 4;
     super(x, y, w, h);
     this.widthChars = widthChars;
     this.visibleRows = visibleRows;
@@ -42,6 +43,8 @@ export class TextArea extends FocusableWidget {
       visibleRows,
       onChange,
     });
+    /** @private 横スクロールバー状態（view.scrollX へ橋渡し。NotePad の editor と同じ橋渡し方式）。 */
+    this._hScroll = Scroll.createScrollState(1, 1);
   }
 
   // ── 公開 API は view へ委譲（notepad 等の後方互換 + 汎用ウィジェットの API） ──
@@ -59,6 +62,8 @@ export class TextArea extends FocusableWidget {
   set showWhitespace(v) { this.view.showWhitespace = v; }
   get uppercaseInput() { return this.view.uppercaseInput; }
   set uppercaseInput(v) { this.view.uppercaseInput = v; }
+  get showLineNumbers() { return this.view.showLineNumbers; }
+  set showLineNumbers(v) { this.view.showLineNumbers = v; }
 
   getText() { return this.view.getText(); }
   selectedCharCount() { return this.view.selectedCharCount(); }
@@ -75,7 +80,8 @@ export class TextArea extends FocusableWidget {
     const innerH = this.visibleRows * Helpers.TEXTAREA_LINE_HEIGHT - 1;
     this.w =
       innerW + Helpers.BUTTON_PADDING * 2 + Scroll.SCROLLBAR_SLOT_WIDTH + 4;
-    this.h = innerH + Helpers.BUTTON_PADDING * 2 + 4;
+    this.h =
+      innerH + Helpers.BUTTON_PADDING * 2 + Scroll.SCROLLBAR_SLOT_WIDTH + 4;
   }
 
   /** @override */
@@ -91,10 +97,45 @@ export class TextArea extends FocusableWidget {
   /** @override */
   resetDragState() {
     this.view.resetDragState();
+    Scroll.scrollDragReset(this._hScroll);
+  }
+
+  /**
+   * @private 横スクロールバー状態を view.scrollX と最長行から同期する。
+   * NotePad の editor-as-body と同じ橋渡し方式 (詳細は notepad_editor.js を参照)。
+   */
+  _syncHScroll() {
+    let maxLen = 0;
+    const lines = this.view.lines;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].length > maxLen) maxLen = lines[i].length;
+    }
+    this._hScroll.viewport = this.view.widthChars;
+    Scroll.scrollSetContent(this._hScroll, maxLen);
+    if (Scroll.scrollIsDragging(this._hScroll)) {
+      this.view.scrollX = this._hScroll.offset;
+    } else {
+      Scroll.scrollTo(this._hScroll, this.view.scrollX);
+    }
+  }
+
+  /** @private スクロールバースロット矩形群 (絶対座標)。draw/update で共有する幾何。 */
+  _scrollGeom(absX, absY) {
+    const SLOT = Scroll.SCROLLBAR_SLOT_WIDTH;
+    return {
+      vSlotX: absX + this.w - 1 - SLOT,
+      vSlotY: absY + 1,
+      vSlotH: this.h - 2 - SLOT,
+      hSlotX: absX + 1,
+      hSlotY: absY + this.h - 1 - SLOT,
+      hSlotW: this.w - 2 - SLOT,
+      cornerX: absX + this.w - 1 - SLOT,
+      cornerY: absY + this.h - 1 - SLOT,
+    };
   }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  //  描画（枠 + 本文 + 縦スクロールバー）
+  //  描画（枠 + 本文 + 縦横スクロールバー）
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   /** @override */
@@ -108,16 +149,18 @@ export class TextArea extends FocusableWidget {
     const innerY = absY + 2 + Helpers.BUTTON_PADDING;
     const innerW =
       this.w - 4 - Helpers.BUTTON_PADDING * 2 - Scroll.SCROLLBAR_SLOT_WIDTH;
-    const innerH = this.h - 4 - Helpers.BUTTON_PADDING * 2;
+    const innerH =
+      this.h - 4 - Helpers.BUTTON_PADDING * 2 - Scroll.SCROLLBAR_SLOT_WIDTH;
     const focused = Helpers.getFocused() === this;
 
+    this._syncHScroll();
     this.view.drawContent(innerX, innerY, innerW, innerH, focused);
 
-    // 縦スクロールバー
-    const slotX = absX + this.w - 1 - Scroll.SCROLLBAR_SLOT_WIDTH;
-    const slotY = absY + 1;
-    const slotH = this.h - 2;
-    Scroll.drawVScrollbarSlot(this.view._vScroll, slotX, slotY, slotH);
+    // 縦横スクロールバー + コーナー
+    const g = this._scrollGeom(absX, absY);
+    Scroll.drawVScrollbarSlot(this.view._vScroll, g.vSlotX, g.vSlotY, g.vSlotH);
+    Scroll.drawHScrollbarSlot(this._hScroll, g.hSlotX, g.hSlotY, g.hSlotW);
+    Scroll.drawScrollCorner(this.view._vScroll, g.cornerX, g.cornerY);
   }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -128,18 +171,26 @@ export class TextArea extends FocusableWidget {
   update(ev) {
     const hit = this.hitTest(ev.localX, ev.localY);
 
-    // ── 縦スクロールバー ──
-    const scrollbar = Scroll.vScrollbarSlotThumbArea(
-      this.x + this.w - 1 - Scroll.SCROLLBAR_SLOT_WIDTH,
-      this.y + 1,
-      this.h - 2,
-    );
+    // ── 縦横スクロールバー ──
+    // ev.localX/Y は親コンテナ基準のローカル座標 (widget 自身の原点ではない) なので、
+    // draw() の絶対座標計算と同じく this.x/this.y のオフセットを渡す必要がある。
+    // これを渡し忘れると当たり判定がズレ、H バークリックが V バーの判定と誤って
+    // 重なって誤発火する (縦スクロールが最下部まで飛ぶバグの原因だった)。
+    const g = this._scrollGeom(this.x, this.y);
+    const scrollbar = Scroll.vScrollbarSlotThumbArea(g.vSlotX, g.vSlotY, g.vSlotH);
+    const hScrollbar = Scroll.hScrollbarSlotThumbArea(g.hSlotX, g.hSlotY, g.hSlotW);
     const vScroll = this.view._vScroll;
+    const hScroll = this._hScroll;
     const inScrollbar =
       ev.localX >= scrollbar.x &&
       ev.localX < scrollbar.x + scrollbar.w &&
       ev.localY >= scrollbar.y &&
       ev.localY < scrollbar.y + scrollbar.h;
+    const inHScrollbar =
+      ev.localX >= hScrollbar.x &&
+      ev.localX < hScrollbar.x + hScrollbar.w &&
+      ev.localY >= hScrollbar.y &&
+      ev.localY < hScrollbar.y + hScrollbar.h;
 
     if (
       inScrollbar &&
@@ -160,7 +211,30 @@ export class TextArea extends FocusableWidget {
     ) {
       Helpers.wmRequestCursor("drag-v");
     }
-    if (Scroll.scrollIsDragging(vScroll)) return;
+
+    if (
+      inHScrollbar &&
+      (ev.type === "down" || ev.type === "held" || ev.type === "up")
+    ) {
+      Scroll.handleHScrollInput(hScroll, ev.type, ev.localX, hScrollbar.x, hScrollbar.w);
+      this.view.scrollX = hScroll.offset;
+    }
+    if (ev.type === "held" && Scroll.scrollIsDragging(hScroll) && !inHScrollbar) {
+      Scroll.handleHScrollInput(hScroll, ev.type, ev.localX, hScrollbar.x, hScrollbar.w);
+      this.view.scrollX = hScroll.offset;
+    }
+    if (ev.type === "up" && Scroll.scrollIsDragging(hScroll)) {
+      Scroll.scrollDragReset(hScroll);
+    }
+    // 横スクロールバー領域では drag-h カーソル
+    if (
+      (inHScrollbar || Scroll.scrollIsDragging(hScroll)) &&
+      (ev.type === "hover" || ev.type === "held" || ev.type === "down")
+    ) {
+      Helpers.wmRequestCursor("drag-h");
+    }
+
+    if (Scroll.scrollIsDragging(vScroll) || Scroll.scrollIsDragging(hScroll)) return;
 
     // ── 本文領域のマウス ──
     // スクロールバー領域を本文ヒットから除外する。除外しないと、内容が収まって
@@ -168,7 +242,7 @@ export class TextArea extends FocusableWidget {
     // 下スクロールしてしまう（ドラッグ継続は _dragging 側で扱うので down のみ影響）。
     const innerX = this.x + 2 + Helpers.BUTTON_PADDING;
     const innerY = this.y + 2 + Helpers.BUTTON_PADDING;
-    this.view.handleTextMouse(ev, hit && !inScrollbar, innerX, innerY);
+    this.view.handleTextMouse(ev, hit && !inScrollbar && !inHScrollbar, innerX, innerY);
   }
 
   /** @override */

@@ -29,10 +29,10 @@ export class TextEditView {
    * @param {number} [opts.visibleRows=0] 表示行数
    * @param {function} [opts.onChange]    テキスト変更コールバック (newText) => void
    */
-  constructor(text, maxLines, { widthChars = 0, visibleRows = 0, onChange = null } = {}) {
+  constructor(text, maxLines, { widthChars = 0, visibleRows = 0, onChange = null, showLineNumbers = false } = {}) {
     /** 文書 + カーソル + 選択 + Undo の純粋モデル */
     this.model = new TextEditModel(text, maxLines);
-    /** 表示幅 (文字数) */
+    /** 表示幅 (文字数)。行番号ガター表示中はここから桁分を差し引いた幅が本文に使われる。 */
     this.widthChars = widthChars;
     /** 表示行数 */
     this.visibleRows = visibleRows;
@@ -54,6 +54,28 @@ export class TextEditView {
      * 行は右端を実線ティックで強調する（TESS の 40桁制約を可視化＝折り返しの目安）。
      */
     this.guideCol = null;
+    /**
+     * 行番号ガターを表示するか。コード編集 (NotePad / Tessera) では true、
+     * フォーム部品的な複数行入力では false が既定 (常時表示ではなくオプション)。
+     */
+    this.showLineNumbers = showLineNumbers;
+  }
+
+  /**
+   * 行番号ガターの表示幅 (文字数。数字桁 + 区切りスペース 1 文字)。無効なら 0。
+   * 桁数は総行数 (現在の最大行番号) の桁数を基準にする。これにより行番号は右寄せで
+   * 桁が揃い、総行数が桁上がりすると (9→10 行など) 少ない桁の行番号が自動的に
+   * 字下げされる。表示中の行だけでなく総行数で決めるため、スクロールしても
+   * ガター幅が揺れない。
+   */
+  get lineNumberGutterChars() {
+    if (!this.showLineNumbers) return 0;
+    return String(Math.max(1, this.lines.length)).length + 1;
+  }
+
+  /** @private 本文 (行番号を除いた実効表示幅、文字数)。ガター分を差し引く。 */
+  get _textWidthChars() {
+    return Math.max(1, this.widthChars - this.lineNumberGutterChars);
   }
 
   // ── 文書状態は model へ委譲（handleKey / drawContent から従来名で読み書きできるよう） ──
@@ -136,8 +158,8 @@ export class TextEditView {
     if (this.cursorCol < this.scrollX) {
       this.scrollX = this.cursorCol;
     }
-    if (this.cursorCol > this.scrollX + this.widthChars) {
-      this.scrollX = this.cursorCol - this.widthChars;
+    if (this.cursorCol > this.scrollX + this._textWidthChars) {
+      this.scrollX = this.cursorCol - this._textWidthChars;
     }
   }
 
@@ -191,6 +213,10 @@ export class TextEditView {
    */
   drawContent(innerX, innerY, innerW, innerH, focused) {
     const charW = Ports.GLYPH_W + 1;
+    const gutterChars = this.lineNumberGutterChars;
+    const gutterDigits = gutterChars > 0 ? gutterChars - 1 : 0;
+    const textX = innerX + gutterChars * charW; // 本文の実際の描画開始 X (ガター分だけ右へ)
+    const textWidthChars = this._textWidthChars;
 
     Ports.pushClip(innerX, innerY, innerW, innerH);
 
@@ -201,8 +227,14 @@ export class TextEditView {
       const lineIdx = this._vScroll.offset + viewRow;
       if (lineIdx >= this.lines.length) break;
       const line = this.lines[lineIdx];
-      const visible = line.slice(this.scrollX, this.scrollX + this.widthChars);
+      const visible = line.slice(this.scrollX, this.scrollX + textWidthChars);
       const lineY = innerY + viewRow * Helpers.TEXTAREA_LINE_HEIGHT;
+
+      // 行番号ガター（右寄せ。総行数の桁数に応じて桁が揃うよう左側を空白で字下げ）
+      if (gutterChars > 0) {
+        const numStr = String(lineIdx + 1).padStart(gutterDigits, " ");
+        Ports.drawText(innerX, lineY, numStr, 1);
+      }
 
       // 選択範囲ハイライト
       if (selection && lineIdx >= selection[0] && lineIdx <= selection[2]) {
@@ -214,11 +246,11 @@ export class TextEditView {
             : line.length + (isLastLine ? 0 : 1);
         const selVisStart = Math.max(lineSelStart, this.scrollX) - this.scrollX;
         const selVisEnd =
-          Math.min(lineSelEnd, this.scrollX + this.widthChars + 1) -
+          Math.min(lineSelEnd, this.scrollX + textWidthChars + 1) -
           this.scrollX;
 
-        this._drawLineChars(visible, innerX, lineY, charW);
-        this._drawNewlineIcon(line, lineIdx, innerX, lineY, charW);
+        this._drawLineChars(visible, textX, lineY, charW);
+        this._drawNewlineIcon(line, lineIdx, textX, lineY, charW, textWidthChars);
 
         // 選択下線
         if (selVisStart < selVisEnd) {
@@ -226,20 +258,20 @@ export class TextEditView {
           const isLast = lineIdx === this.lines.length - 1;
           const clampedEnd = Math.min(selVisEnd, line.length + (isLast ? 0 : 1));
           for (let i = selVisStart; i < clampedEnd; i++) {
-            const charX = innerX + i * charW;
+            const charX = textX + i * charW;
             Ports.hline(charX, charX + (Ports.GLYPH_W - 1), underlineY, 1);
           }
         }
       } else {
-        this._drawLineChars(visible, innerX, lineY, charW);
-        this._drawNewlineIcon(line, lineIdx, innerX, lineY, charW);
+        this._drawLineChars(visible, textX, lineY, charW);
+        this._drawNewlineIcon(line, lineIdx, textX, lineY, charW, textWidthChars);
       }
     }
 
     // 桁ガイド + オーバーフロー（D）。guideCol 設定時のみ。点線ガイド＋超過行は実線ティック。
     if (this.guideCol != null) {
-      const gx = innerX + (this.guideCol - this.scrollX) * charW - 1;
-      if (gx >= innerX && gx < innerX + innerW) {
+      const gx = textX + (this.guideCol - this.scrollX) * charW - 1;
+      if (gx >= textX && gx < innerX + innerW) {
         for (let yy = innerY; yy < innerY + innerH; yy += 3) Ports.pset(gx, yy, 1);
         // 超過行は 2px 実線ティックで強調（点線ガイドと明確に区別）。
         for (let viewRow = 0; viewRow < this.visibleRows; viewRow++) {
@@ -266,9 +298,9 @@ export class TextEditView {
         const underlineY = lineY + Ports.GLYPH_H + 1;
         const selVisStart = Math.max(box.c0, this.scrollX) - this.scrollX;
         const selVisEnd =
-          Math.min(box.c1, this.scrollX + this.widthChars) - this.scrollX;
+          Math.min(box.c1, this.scrollX + textWidthChars) - this.scrollX;
         for (let i = selVisStart; i < selVisEnd; i++) {
-          const charX = innerX + i * charW;
+          const charX = textX + i * charW;
           Ports.hline(charX, charX + (Ports.GLYPH_W - 1), underlineY, 1);
         }
       }
@@ -281,7 +313,7 @@ export class TextEditView {
         const screenRow = this.cursorRow - this._vScroll.offset;
         const screenCol = this.cursorCol - this.scrollX;
         if (screenRow >= 0 && screenRow < this.visibleRows) {
-          const charX = innerX + screenCol * charW;
+          const charX = textX + screenCol * charW;
           const underlineY =
             innerY +
             screenRow * Helpers.TEXTAREA_LINE_HEIGHT +
@@ -311,11 +343,11 @@ export class TextEditView {
   }
 
   /** 行末改行アイコンを描画する (private) */
-  _drawNewlineIcon(line, lineIdx, innerX, lineY, charW) {
+  _drawNewlineIcon(line, lineIdx, innerX, lineY, charW, widthChars) {
     if (!this.showWhitespace) return; // 改行マーカー（↓）を消す
     if (lineIdx < this.lines.length - 1) {
       const nlScreenCol = line.length - this.scrollX;
-      if (nlScreenCol >= 0 && nlScreenCol < this.widthChars) {
+      if (nlScreenCol >= 0 && nlScreenCol < widthChars) {
         Ports.drawTextIcon("newline", innerX + nlScreenCol * charW, lineY, 1);
       }
     }
@@ -335,12 +367,13 @@ export class TextEditView {
    */
   handleTextMouse(ev, hit, innerX, innerY) {
     const charW = Ports.GLYPH_W + 1;
+    const gutterPx = this.lineNumberGutterChars * charW; // 本文は行番号ガター分だけ右にずれている
 
     // 左クリック
     if (ev.type === "down" && hit) {
       this.boxSelection = null;
       this._middleButtonDragging = false;
-      const relX = ev.localX - innerX;
+      const relX = ev.localX - innerX - gutterPx;
       const relY = ev.localY - innerY;
       const row = Math.max(
         0,
@@ -372,7 +405,7 @@ export class TextEditView {
 
     // ドラッグ
     if (ev.type === "held" && this._dragging) {
-      const relX = ev.localX - innerX;
+      const relX = ev.localX - innerX - gutterPx;
       const relY = ev.localY - innerY;
       const row = Math.max(
         0,
@@ -404,7 +437,7 @@ export class TextEditView {
 
     // 中ボタンドラッグ: 矩形選択
     if (ev.type === "mdown" && hit) {
-      const relX = ev.localX - innerX;
+      const relX = ev.localX - innerX - gutterPx;
       const relY = ev.localY - innerY;
       const row = Math.max(
         0,
@@ -415,7 +448,7 @@ export class TextEditView {
       );
       const col = Math.max(
         0,
-        Math.min(this.widthChars, this.scrollX + Math.round(relX / charW)),
+        Math.min(this._textWidthChars, this.scrollX + Math.round(relX / charW)),
       );
       this.selectionAnchorRow = null;
       this.selectionAnchorCol = null;
@@ -431,7 +464,7 @@ export class TextEditView {
       this._blinkTimer = 0;
     }
     if (ev.type === "mheld" && this._middleButtonDragging) {
-      const relX = ev.localX - innerX;
+      const relX = ev.localX - innerX - gutterPx;
       const relY = ev.localY - innerY;
       const row = Math.max(
         0,
@@ -442,7 +475,7 @@ export class TextEditView {
       );
       const col = Math.max(
         0,
-        Math.min(this.widthChars, this.scrollX + Math.round(relX / charW)),
+        Math.min(this._textWidthChars, this.scrollX + Math.round(relX / charW)),
       );
       this.boxSelection.cursorRow = row;
       this.boxSelection.cursorCol = col;
