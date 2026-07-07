@@ -502,7 +502,7 @@ export function drawHScrollbarSlot(s, x, y, w) {
 }
 
 /**
- * V/H スクロールバーが交わる右下コーナー (SLOT×SLOT) を描く。押下不能の飾りで、
+ * V/H スクロールバーが交わる右下コーナー (SLOT×SLOT) を描く。押下不能の交差部フィラーで、
  * これが無いと下/右ボタンが浮いて見える。V/H の sep を継いだ左辺・上辺 + 1px 余白 +
  * 前景の市松模様 (7x7) で埋め、ボタン (7x7 前景) と枠を揃える。
  * @param {object} s  ScrollState (未使用だが API 対称のため受ける)

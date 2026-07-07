@@ -80,49 +80,57 @@ index.js      → wm.js, desktop.js (re-export のみ)
 
 - `modal` — モーダル (他ウィンドウへの入力をブロック)。標準 chrome は既定 OFF。
 - `noResize` — リサイズ無効
-- `noMaximize` — 最大化無効
+- `noMaximize` — 最大化無効。最大化ボタン・ヘッダのダブルクリック・右クリックメニューに加え、
+  画面端へのドラッグによる snap タイル（maximized / snap-left / snap-right）も無効化する
+  ＝「システム管理サイズ」への全ジェスチャを一括で禁止する権限
 - `chrome` — 標準スクロールバー chrome (縦横バー + ステッパー + コーナー) の明示指定。
   省略時はモーダル以外 ON。→ 「標準スクロールバー chrome」節を参照
-- `scrollable` — WM 管理の縦スクロール有効 (`wmSetContentSize` で仮想高さ設定)。
-  最小高さが `MIN_HEIGHT` まで緩和され、初期高さは work area に自動クランプ。
-  chrome の縦バーが「機能」になる (横は飾りのまま)
+- `scrollable` — WM 管理の縦横スクロール。省略時は chrome 窓で ON。仮想寸法は `onMeasure`
+  (自然サイズ) から導出し、ウィンドウが自然サイズより小さい軸でバーが機能してスクロールする。
+  リサイズ下限は `MIN_WIDTH` / `MIN_HEIGHT`、初期/再フィット時は work area にクランプ。
+  アプリ自前スクロール時は `wmAttachScroll` が `false` へ移譲する
 - `onBeforeClose` — 閉じる前フック。`false` を返すとキャンセル
 
 ## 標準スクロールバー chrome
 
-Pixera 標準 UI: 通常のアプリウィンドウ (モーダル以外) は、スクロール可否に**よらず**
-ボディ端に縦スクロールバー・横スクロールバー・ステッパーボタン・交差コーナーを**常時**
-表示する。1bit 表現で「ここはウィンドウ」という手掛かりを一貫して与えるのが狙い。
+Pixera 標準 UI: 通常のアプリウィンドウ (モーダル以外) は、ボディ端に縦スクロールバー・
+横スクロールバー・ステッパーボタン・交差コーナーを**常時**表示する。縦横スクロールバーは
+レトロ GUI を象徴する意匠であり、どのウィンドウにも出すのが既定 (＝これが本来の意図)。
+ただしバーは飾りではなく**常に機能し得る**: コンテンツが収まっていれば 100% 全長
+(今スクロール不要)、はみ出せばその軸でスクロールする。
 
 - 実体は `ui/scrollbar.js` の slot API (`drawVScrollbarSlot` / `drawHScrollbarSlot` /
   `drawScrollCorner`)。レイアウトは `win_layout.js` が `scrollbarRect` /
   `hScrollbarRect` / `scrollCornerRect` として算出し、wm.js が描画・入力を一元処理する。
-- **飾り / 機能の 2 モード**: 各軸のスクロール状態 (`win._vScroll` / `win._hScroll`) が
-  `scrollNeeded=false` なら「飾り」(100% 表示・非操作・ドラッグカーソル無し)、
-  `true` なら「機能」(サム・ドラッグ・ステッパー・オートリピート)。既定は飾り
-  (`createScrollState(1,1)`)。`scrollable` (WM 管理縦) や `wmAttachScroll` で機能化する。
+- **休止 / 稼働の 2 状態** (見た目は同一): 各軸のスクロール状態 (`win._vScroll` /
+  `win._hScroll`) が `scrollNeeded=false` なら休止 (100% 全長・非操作＝今スクロール不要)、
+  `true` なら稼働 (サム・ドラッグ・ステッパー・オートリピート)。全長サムは「非機能な飾り」
+  ではなく「今は巡るものが無い」状態。`scrollable` (WM 管理) や `wmAttachScroll` で content を
+  与えると、はみ出した軸が自動的に稼働する。
 - **コンテンツ領域は縮まない**: chrome の分だけウィンドウ外寸を SLOT 広げる
   (`calcWindowSize` / `wmOpen`)。既存アプリは `contentRect` に描くだけで自動対応する。
 - ステッパー 1 クリックの量は `wmAttachScroll` の `vStep` / `hStep` (既定 px、行/桁
   単位のアプリは 1)。
 
-### WM 管理の縦スクロール (`scrollable`)
+### WM 管理の縦横スクロール (`scrollable`, 既定 ON)
 
-仮想コンテンツ高さが物理サイズより大きいとき、縦バーが機能化してスクロールする。
+仮想コンテンツ寸法 (= `onMeasure` の自然サイズ) が表示領域より大きい軸で、そのバーが
+稼働してスクロールする。縦横対称に扱う。
 
-- 通常ホイールは WM が消費、**Ctrl+ホイールはアプリに透過** (ズーム等)。
-- `onInput` の `localY` はスクロール加算済み (仮想座標)。
-- `scrollable` は「コンテンツ自然サイズ」と「ウィンドウ最小サイズ」を分離する。
-  初期は work area の一定比率にクランプ、リサイズ下限は `MIN_HEIGHT` まで緩和
-  (幅は水平スクロール非対応のため `onMeasure` 幅で縛る)。
-- フォント/パディング変更時は現在の高さを維持 (自然サイズへ勝手に巻き戻さない)。
+- 仮想寸法は毎フレーム `onMeasure` から同期 (`syncScrollContent`)。動的コンテンツも追従する。
+- 通常ホイールは WM が消費 (縦=`deltaY` / 横=`deltaX` または Shift+ホイール)、
+  **Ctrl+ホイールはアプリに透過** (ズーム等)。
+- `onInput` の `localX` / `localY`、`onDraw` の `contentRect` はスクロール平行移動済み (仮想座標)。
+- リサイズ下限は `MIN_WIDTH` / `MIN_HEIGHT` まで緩和 (内容はスクロールで巡るので切れない)。
+  初期/再フィットは work area にクランプ (自然サイズが収まれば fit-to-content = maximize と一致)。
+- フォント/パディング変更時は自然サイズへ再フィット (work area クランプ付き)。
 
 ### アプリ管理のスクロール (`wmAttachScroll`)
 
-自前のスクロール (行・桁単位など) を持つアプリ (例: NOTEPAD) は、その `ScrollState` を
-`wmAttachScroll(id, { v, h, vStep, hStep })` で chrome の縦横バーへ接続する。WM は表示・
-ドラッグ・ステッパーのみを担い、viewport / content 同期・ホイール・座標変換はアプリ側
-(`_scrollable=false` のため WM が触れない) が担う。
+自前のスクロール (行・桁単位や巨大文書の仮想化など) を持つアプリ (例: NOTEPAD) は、その
+`ScrollState` を `wmAttachScroll(id, { v, h, vStep, hStep })` で chrome の縦横バーへ接続する。
+接続すると WM 管理スクロールは無効化され (`_scrollable=false`)、WM は表示・ドラッグ・
+ステッパーのみを担い、viewport / content 同期・ホイール・座標変換はアプリ側が担う。
 
 ## 設計原則
 
