@@ -1582,7 +1582,7 @@ export function wmUpdate() {
   const frontFullscreen =
     windows.length > 0 && windows[windows.length - 1].fullscreen;
   if (!frontFullscreen) {
-    Desktop.desktopUpdate(mx, my);
+    Desktop.desktopUpdate(mx, my, wmOpenByName);
     handleDesktopHover(mx, my);
   }
 

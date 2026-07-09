@@ -109,19 +109,19 @@ function drawFishSprite(frameIdx, x, y, flipX) {
 // 動かした瞬間に、既に泳いでいる魚の挙動へ途切れなく反映される (魚を作り直さない)。
 
 const TUNING_DEFAULTS = {
-  speed: 0.5, // 基準最高速
-  separation: 0.25, // 個体間反発 (パーソナルスペース) の強さ
-  alignment: 0.1, // 整列 (近傍の平均速度への追従) の重み
-  cohesion: 0.011, // 結束 (近傍の重心への追従) の重み
-  wallAvoid: 0.6, // 壁 / 画面端の回避力
-  centerPull: 0.0015, // 中央への引力 (弱いほど中央への一極集中を防げる)
-  wanderSpeed: 0.1, // 低周波ノイズ (遊泳方向) が変化する速さ
+  speed: 0.4, // 基準最高速
+  separation: 0.4, // 個体間反発 (パーソナルスペース) の強さ
+  alignment: 0.15, // 整列 (近傍の平均速度への追従) の重み
+  cohesion: 0.012, // 結束 (近傍の重心への追従) の重み
+  wallAvoid: 0.8, // 壁 / 画面端の回避力
+  centerPull: 0.0012, // 中央への引力 (弱いほど中央への一極集中を防げる)
+  wanderSpeed: 0.05, // 低周波ノイズ (遊泳方向) が変化する速さ
   wanderAmp: 0.05, // 低周波ノイズによる揺らぎの強さ
-  moodDepth: 0.9, // 結束の呼吸 = 一時的な分裂/再集合の深さ (0=一定 / 1=最大)
-  individuality: 2, // 個体差の大きさ (0=全員ほぼ同一 / 2=非常にばらつく)
+  moodDepth: 0.3, // 結束の呼吸 = 一時的な分裂/再集合の深さ (0=一定 / 1=最大)
+  individuality: 0.1, // 個体差の大きさ (0=全員ほぼ同一 / 2=非常にばらつく)
   maverickChance: 0.18, // 気まぐれ個体が生まれる確率 (出生時に決定)
-  leaderFollow: 0.15, // リーダーへの追従力
-  startleChance: 0, // 想定外の急な動きが起こる確率 (1 フレームあたり)
+  leaderFollow: 0.2, // リーダーへの追従力
+  startleChance: 0.01, // 想定外の急な動きが起こる確率 (1 フレームあたり)
 };
 
 /** @type {typeof TUNING_DEFAULTS} 現在のチューニング値。Preferences ウィンドウが直接書き換える。 */
@@ -270,7 +270,10 @@ function stepSchool(arr, bounds, cx, cy, foodArr, t) {
     let maxSpeed = Math.max(0.05, _traitValue(TUNING.speed, 0.35, f.tSpeed));
     let personalSpace = _traitValue(14, 3, f.tPersonalSpace);
     let perception = _traitValue(38, 10, f.tPerception);
-    let rearAwareness = Math.max(0, Math.min(1, _traitValue(0.4, 0.2, f.tRear)));
+    let rearAwareness = Math.max(
+      0,
+      Math.min(1, _traitValue(0.4, 0.2, f.tRear)),
+    );
     let cohesionBase = Math.max(
       0,
       _traitValue(TUNING.cohesion, TUNING.cohesion * 0.45, f.tCohesion),
@@ -315,7 +318,10 @@ function stepSchool(arr, bounds, cx, cy, foodArr, t) {
     const pr2 = personalSpace * personalSpace;
     const per2 = perception * perception;
     let neighborWeight = 0;
-    let sumX = 0, sumY = 0, sumVx = 0, sumVy = 0;
+    let sumX = 0,
+      sumY = 0,
+      sumVx = 0,
+      sumVy = 0;
 
     for (let j = 0; j < arr.length; j++) {
       if (i === j) continue;
@@ -338,7 +344,8 @@ function stepSchool(arr, bounds, cx, cy, foodArr, t) {
         let w = 1;
         if (heading) {
           const dist = Math.sqrt(d2);
-          const dot = (-dxAway / dist) * heading.x + (-dyAway / dist) * heading.y;
+          const dot =
+            (-dxAway / dist) * heading.x + (-dyAway / dist) * heading.y;
           w = rearAwareness + (1 - rearAwareness) * Math.max(0, dot);
         }
         neighborWeight += w;
@@ -590,7 +597,12 @@ function onDraw(cr) {
     // 尾びれアニメ: 8 フレームごとにフレーム切替 (位相をずらして個体差)
     const wf = ((frame + f.phase * 4) >> 3) & 1;
     // スプライトは左向き基準 → 右へ泳ぐ時のみ反転
-    drawFishSprite(wf, tankRect.x + (f.x | 0), tankRect.y + (f.y | 0), f.vx >= 0);
+    drawFishSprite(
+      wf,
+      tankRect.x + (f.x | 0),
+      tankRect.y + (f.y | 0),
+      f.vx >= 0,
+    );
   }
 }
 
@@ -702,7 +714,8 @@ const TUNING_SLIDER_SPECS = [
     max: 1.0,
     decimals: 2,
     wheelStep: 0.05,
-    tooltip: "Average top swimming speed.\nLower = lazier drifting, higher = darting around.",
+    tooltip:
+      "Average top swimming speed.\nLower = lazier drifting, higher = darting around.",
   },
   {
     key: "wallAvoid",
@@ -834,7 +847,8 @@ const TUNING_SLIDER_SPECS = [
     max: 0.02,
     decimals: 4,
     wheelStep: 0.0005,
-    tooltip: "Probability, per frame, that a fish makes a sudden unexpected burst of speed.",
+    tooltip:
+      "Probability, per frame, that a fish makes a sudden unexpected burst of speed.",
   },
 ];
 
@@ -852,17 +866,27 @@ function _buildPreferencesUI() {
   const rows = [];
   const sliderRefs = [];
 
-  const labels = TUNING_SLIDER_SPECS.map((spec) => new Label(0, 0, spec.label + ":"));
+  const labels = TUNING_SLIDER_SPECS.map(
+    (spec) => new Label(0, 0, spec.label + ":"),
+  );
   const maxLabelW = Math.max(...labels.map((l) => l.w));
   for (const l of labels) l.w = maxLabelW;
 
   for (let i = 0; i < TUNING_SLIDER_SPECS.length; i++) {
     const spec = TUNING_SLIDER_SPECS[i];
     const valLbl = new Label(0, 0, _fmtTuning(TUNING[spec.key], spec.decimals));
-    const slider = new Slider(0, 0, 90, spec.min, spec.max, TUNING[spec.key], (v) => {
-      TUNING[spec.key] = v;
-      valLbl.text = _fmtTuning(v, spec.decimals);
-    });
+    const slider = new Slider(
+      0,
+      0,
+      90,
+      spec.min,
+      spec.max,
+      TUNING[spec.key],
+      (v) => {
+        TUNING[spec.key] = v;
+        valLbl.text = _fmtTuning(v, spec.decimals);
+      },
+    );
     slider.defaultValue = TUNING_DEFAULTS[spec.key];
     slider.wheelStep = spec.wheelStep;
     slider.tooltip = spec.tooltip;
@@ -885,7 +909,8 @@ function _buildPreferencesUI() {
     if (fish.length > 0) _initFish();
     if (deskFish.length > 0) _initDesktopFish();
   });
-  btnRespawn.tooltip = "Re-roll the currently swimming school (leader/maverick roles, traits)";
+  btnRespawn.tooltip =
+    "Re-roll the currently swimming school (leader/maverick roles, traits)";
 
   const root = VBox([
     new SectionLabel(0, 0, "SCHOOLING"),
@@ -1004,7 +1029,11 @@ function buildIconMenu(entry) {
   ];
   if (_isRunning(entry)) {
     items.push({ type: "sep" });
-    items.push({ type: "action", label: "EXIT", action: () => exitAquaria(entry) });
+    items.push({
+      type: "action",
+      label: "EXIT",
+      action: () => exitAquaria(entry),
+    });
   }
   return items;
 }
@@ -1031,3 +1060,4 @@ wmRegister(
   // launch: ダブルクリック起動を launchMode 尊重にする (factory の代わりに呼ばれる)。
   { category: "EXPERIMENT", iconMenu: buildIconMenu, launch: runAquaria },
 );
+

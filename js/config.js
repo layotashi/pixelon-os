@@ -24,7 +24,7 @@ import { loadCustomPalette, load } from "./core/storage.js";
  *   true  — DEMO 系アプリや未完成機能がメニュー・デスクトップに表示される。
  *   false — ベータ / 本番公開用。dev フラグ付きアプリは非表示になる。
  */
-export const DEV_MODE = false;
+export const DEV_MODE = true;
 
 // ── 永続化コールバック (責務分離) ──
 

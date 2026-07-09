@@ -46,7 +46,7 @@ import { DOLPHIN_TOOLTIP } from "./dolphin.js";
 // 全ウィンドウモジュールが wmRegister を実行した後にレジストリを読む。
 // モーダルウィンドウはデスクトップアイコンに表示しない。
 // label は shortName が定義されていればそれを使用し、なければ name をそのまま渡す
-//   (desktop.js 側で MAX_LABEL_CHARS=7 に切り捨てる)。
+//   (desktop.js 側で 7 文字幅に収める。8 文字以上は末尾を省略マーク … に置換)。
 // icon フィールドは name を小文字化して設定する。
 // 対応する PNG が無い場合は app_icon.js が "default" にフォールバックする。
 
@@ -66,6 +66,17 @@ desktopIconEntries.push({
   label: "DOLPHIN",
   icon: "dolphin",
   tooltip: DOLPHIN_TOOLTIP,
+});
+
+// ── 表示確認用スタブ: 8 文字以上のファイル名の省略表示 (AMETHY…) を確認する ──
+// アプリ実体は持たない (ダブルクリックで起動するアプリは無い)。ユーザーが将来
+// デスクトップに作成しうる長名ファイルの見た目を検証するためのダミー。
+// icon は既定アイコンを流用 (専用 PNG は不要)。
+desktopIconEntries.push({
+  name: "AMETHYST",
+  label: "AMETHYST",
+  icon: "default",
+  tooltip: "AMETHYST",
 });
 
 desktopSetIcons(desktopIconEntries);
