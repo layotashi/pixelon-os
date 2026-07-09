@@ -35,13 +35,11 @@
   - `about` — バージョン情報
 - **GAMES**
   - `life` — ライフゲーム / `bricker` — ブロック崩し
-  - `graze` — 弾幕サバイバル / `dungeon` — 1-bit ローグライク
+  - `dungeon` — 1-bit ローグライク
 - **EXPERIMENT**
   - `oscillo` — 音声反応ビジュアル / `glypher` — フォントエディタ
-  - `aquaria` / `astral` — 「映える画面」
+  - `aquaria` — 「映える画面」
   - `telex` — テレタイプ演出 / `oracle` — 隠しテキストアドベンチャー
-- **DEMO** (dev) — `easing_demo` / `ascii_art_demo` / `gradient_demo`
-  (プリミティブ動作確認)
 - **hidden** — `dolphin` (イースターエッグ)
 
 ## 非ウィンドウ・システムモジュール

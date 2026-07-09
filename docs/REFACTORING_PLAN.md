@@ -18,7 +18,7 @@
 - core/ の純粋モジュール (dither / field_render / gif / mp4 / wav / pbm /
   anim / display_fx) は依存ゼロでテスト可能。手を入れる必要はない。
 - lang/ は薄く整理されており、現時点で分割・変更の必要はない。
-- ゲーム類 (bricker / graze / dungeon / life) は自己完結の
+- ゲーム類 (bricker / dungeon / life) は自己完結の
   1 ファイルアプリとして妥当。game_utils.js への共通化も済んでいる。
 
 問題は主に 3 種類:
