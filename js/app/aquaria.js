@@ -1000,14 +1000,13 @@ function exitAquaria(entry) {
 }
 
 /**
- * アイコン右クリックのコンテキストメニュー項目を返す。
- * 右クリックのたびに現在状態で再構築される (1-bit のため無効項目は
- * グレーアウトせず、Exit は起動中のみ出す = 表示/非表示で状態を伝える)。
+ * アイコン右クリックメニューの AQUARIA 固有項目を返す (共通基盤へ渡す追加分)。
+ * 起動 (RUN) と終了 (CLOSE) は共通基盤が担うため、ここではモード切替と
+ * PREFERENCES のみ。右クリックのたびに現在状態で再構築される
+ * (1-bit のためモードはチェックマークで示す)。
  */
-function buildIconMenu(entry) {
-  const items = [
-    { type: "action", label: "RUN", action: () => runAquaria(entry) },
-    { type: "sep" },
+function buildIconMenu() {
+  return [
     {
       type: "action",
       label: "WINDOW MODE",
@@ -1027,15 +1026,6 @@ function buildIconMenu(entry) {
     { type: "sep" },
     { type: "action", label: "PREFERENCES", action: () => openPreferences() },
   ];
-  if (_isRunning(entry)) {
-    items.push({ type: "sep" });
-    items.push({
-      type: "action",
-      label: "EXIT",
-      action: () => exitAquaria(entry),
-    });
-  }
-  return items;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1056,8 +1046,16 @@ wmRegister(
       padding: "none", // 水面・水草を枠端まで描く（ボディ内側の余白を消す）
     });
   },
-  // iconMenu: アイコン右クリックで Window/Desktop モードを切り替え・起動・終了。
-  // launch: ダブルクリック起動を launchMode 尊重にする (factory の代わりに呼ばれる)。
-  { category: "EXPERIMENT", iconMenu: buildIconMenu, launch: runAquaria },
+  // openLabel: 共通メニューの主アクションを "RUN" に。launch: ダブルクリック/RUN 起動を
+  // launchMode 尊重にする (factory の代わりに呼ばれる)。iconMenu: Window/Desktop モード切替と
+  // PREFERENCES の固有項目。isRunning/onClose: CLOSE の判定と終了 (デスクトップモードの魚も止める)。
+  {
+    category: "EXPERIMENT",
+    openLabel: "RUN",
+    launch: runAquaria,
+    iconMenu: buildIconMenu,
+    isRunning: _isRunning,
+    onClose: exitAquaria,
+  },
 );
 

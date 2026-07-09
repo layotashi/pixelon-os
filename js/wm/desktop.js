@@ -913,15 +913,27 @@ function hitTestIcon(mx, my) {
 }
 
 /**
- * マウス座標上のアイコンのアプリ名を返す (アイコン別コンテキストメニュー用)。
- * wm.js が右クリック時に呼び、ヒットしたアプリの iconMenu を開くのに使う。
+ * 右クリック対象アイコンを選択し、そのアプリ名を返す (共通コンテキストメニュー用)。
+ * wm.js が右クリック時に呼ぶ。ヒットしたアイコンを選択状態にしてから開くことで、
+ * 「右クリックしても選択されない」違和感を解消する。
+ *   - 未選択のアイコン → 単一選択に切替 (左クリックと同じ規則)。
+ *   - 既に複数選択の一員 → その選択集合を保持 (まとめて操作できるように)。
+ * いずれもキーボードカーソルを対象へ合わせ、デスクトップにフォーカスを移す。
  * @param {number} mx
  * @param {number} my
- * @returns {string|null} アプリ名 (ヒットなしは null)
+ * @returns {string|null} アプリ名 (作業領域外・ヒットなしは null)
  */
-export function hitTestIconName(mx, my) {
+export function desktopRightClickSelect(mx, my) {
+  if (my < _workAreaTop) return null;
+  _desktopFocused = true;
   const idx = hitTestIcon(mx, my);
-  return idx >= 0 ? iconEntries[idx].name : null;
+  if (idx < 0) return null;
+  if (!selectedSet.has(idx)) {
+    selectedSet.clear();
+    selectedSet.add(idx);
+  }
+  _focusIdx = idx;
+  return iconEntries[idx].name;
 }
 
 // ── ドラッグ＆ドロップ ──

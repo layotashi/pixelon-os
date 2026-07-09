@@ -514,8 +514,15 @@ const registry = [];
  *                                  ">" で区切ると N 階層のサブメニューになる。省略でトップレベル。
  * @param {boolean} [opts.dev]      開発専用アプリ。DEV_MODE=false 時にメニュー・アイコンから非表示。
  * @param {boolean} [opts.hidden]   メニューに表示しない（デスクトップアイコンのみ）。
- * @param {(entry:object)=>object[]} [opts.iconMenu] デスクトップアイコン右クリック時の
- *   コンテキストメニュー項目を返す関数。省略時は従来どおりランチャーメニューを開く。
+ * @param {string}  [opts.openLabel] デスクトップアイコン右クリックメニューの主アクション
+ *   (起動) のラベル。省略時は "OPEN"。アプリの性質に合わせて上書きする (例: AQUARIA="RUN")。
+ * @param {(entry:object)=>object[]} [opts.iconMenu] デスクトップアイコン右クリックメニューに
+ *   追加するアプリ固有項目を返す関数。共通基盤が組む OPEN と CLOSE の間に挿入される
+ *   (メニュー全体を返すのではなく、固有項目のみ)。
+ * @param {(entry:object)=>boolean} [opts.isRunning] アプリが起動中かの判定。省略時は
+ *   entry.winId !== null。CLOSE 項目の表示可否に使う (例: AQUARIA はデスクトップモードも含める)。
+ * @param {(entry:object)=>void} [opts.onClose] CLOSE 項目の終了処理。省略時は
+ *   起動中ウィンドウを wmClose する。固有の後始末が要るアプリで上書きする。
  * @param {(entry:object)=>void} [opts.launch] 起動ハンドラ。指定するとダブルクリック
  *   (wmOpenByName) 時に factory ではなくこれを呼ぶ (モード付き起動などに使う)。
  */
@@ -529,7 +536,10 @@ export function wmRegister(name, factory, opts = null) {
     category: (opts && opts.category) || null,
     dev: (opts && opts.dev) || false,
     hidden: (opts && opts.hidden) || false,
+    openLabel: (opts && opts.openLabel) || null,
     iconMenu: (opts && opts.iconMenu) || null,
+    isRunning: (opts && opts.isRunning) || null,
+    onClose: (opts && opts.onClose) || null,
     launch: (opts && opts.launch) || null,
   });
 }
@@ -1226,6 +1236,52 @@ function buildWindowContextMenu(win) {
 }
 
 /**
+ * デスクトップアイコン右クリック用のコンテキストメニューを構築する (全アイコン共通)。
+ * 構成: 主アクション (起動) → アプリ固有項目 → CLOSE (起動中のみ)。
+ *   - 主アクション: ラベルは entry.openLabel || "OPEN"。ダブルクリックと同じ
+ *     wmOpenByName 経由で起動する (entry.launch を尊重するため)。
+ *   - アプリ固有項目: entry.iconMenu(entry) が返す配列 (あれば) をセパレーター付きで挿入。
+ *   - CLOSE: entry.isRunning (省略時 winId!==null) が真のときのみ。終了処理は
+ *     entry.onClose (省略時 wmClose(winId))。
+ * registry に無いアイコン (表示スタブ等) は entry=undefined でも OPEN のみで成立する。
+ * @param {string} name  デスクトップアイコンのアプリ名
+ * @param {object|undefined} entry  対応する registry エントリ (無ければ undefined)
+ */
+function buildIconContextMenu(name, entry) {
+  const items = [
+    {
+      type: "action",
+      label: (entry && entry.openLabel) || "OPEN",
+      action: () => wmOpenByName(name),
+    },
+  ];
+
+  if (entry && entry.iconMenu) {
+    const extra = entry.iconMenu(entry);
+    if (extra && extra.length > 0) items.push({ type: "sep" }, ...extra);
+  }
+
+  const running = entry
+    ? entry.isRunning
+      ? entry.isRunning(entry)
+      : entry.winId !== null
+    : false;
+  if (running) {
+    items.push(
+      { type: "sep" },
+      {
+        type: "action",
+        label: "CLOSE",
+        action: () =>
+          entry.onClose ? entry.onClose(entry) : wmClose(entry.winId),
+      },
+    );
+  }
+
+  return items;
+}
+
+/**
  * ウィンドウを追加する。配列の末尾が最前面。
  * w, h に 0 を指定すると onMeasure から自動算出する。
  * x, y に負値を指定するとカスケード自動配置になる。
@@ -1642,15 +1698,13 @@ function handleRightClick(mx, my) {
     }
   }
 
-  // ウィンドウ外 → デスクトップアイコン上ならアプリ別コンテキストメニュー、
-  // 空白ならランチャーメニュー。
-  const iconName = Desktop.hitTestIconName(mx, my);
+  // ウィンドウ外 → デスクトップアイコン上なら共通コンテキストメニュー
+  // (対象アイコンを選択してから開く)、空白ならランチャーメニュー。
+  const iconName = Desktop.desktopRightClickSelect(mx, my);
   if (iconName) {
     const entry = registry.find((e) => e.name === iconName);
-    if (entry && entry.iconMenu) {
-      openContextMenu(entry.iconMenu(entry), mx, my);
-      return;
-    }
+    openContextMenu(buildIconContextMenu(iconName, entry), mx, my);
+    return;
   }
   openMenu(mx, my);
 }

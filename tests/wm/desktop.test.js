@@ -78,6 +78,7 @@ import {
   desktopIsDragging,
   desktopBlur,
   desktopDraw,
+  desktopRightClickSelect,
   _testing,
 } from "@/wm/desktop.js";
 import * as GPUMock from "@/core/gpu.js";
@@ -280,6 +281,61 @@ describe("desktopHandleInput — 選択", () => {
     const openByName = vi.fn();
     desktopHandleInput(c0.x, c0.y, openByName);
     expect(openByName).toHaveBeenCalledWith("app0");
+    expect(_testing.selectedSet.size).toBe(0);
+  });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  desktopRightClickSelect — 右クリック選択
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+describe("desktopRightClickSelect — 右クリック選択", () => {
+  beforeEach(() => {
+    desktopSetIcons(makeEntries(4));
+  });
+
+  it("アイコン上で単一選択になり、その名前を返す", () => {
+    const c = cellCenter(0, 1);
+    const name = desktopRightClickSelect(c.x, c.y);
+    expect(name).toBe("app1");
+    expect(_testing.selectedSet.has(1)).toBe(true);
+    expect(_testing.selectedSet.size).toBe(1);
+  });
+
+  it("既に別アイコンを選択済みでも右クリック対象へ単一選択が切り替わる", () => {
+    _testing.selectedSet.add(0);
+    const c = cellCenter(0, 2);
+    const name = desktopRightClickSelect(c.x, c.y);
+    expect(name).toBe("app2");
+    expect(_testing.selectedSet.has(0)).toBe(false);
+    expect(_testing.selectedSet.has(2)).toBe(true);
+    expect(_testing.selectedSet.size).toBe(1);
+  });
+
+  it("既に複数選択の一員を右クリックすると選択集合を保持する", () => {
+    _testing.selectedSet.add(0);
+    _testing.selectedSet.add(1);
+    _testing.selectedSet.add(2);
+    const c = cellCenter(0, 1); // 選択集合内のアイコン
+    const name = desktopRightClickSelect(c.x, c.y);
+    expect(name).toBe("app1");
+    expect(_testing.selectedSet.size).toBe(3);
+    expect(_testing.selectedSet.has(0)).toBe(true);
+    expect(_testing.selectedSet.has(1)).toBe(true);
+    expect(_testing.selectedSet.has(2)).toBe(true);
+  });
+
+  it("空白 (ヒットなし) は null を返し、選択を変えない", () => {
+    _testing.selectedSet.add(0);
+    const name = desktopRightClickSelect(600, 200);
+    expect(name).toBeNull();
+    expect(_testing.selectedSet.has(0)).toBe(true);
+    expect(_testing.selectedSet.size).toBe(1);
+  });
+
+  it("workAreaTop より上 (タスクバー領域) は null を返す", () => {
+    const name = desktopRightClickSelect(10, WORK_AREA_TOP - 1);
+    expect(name).toBeNull();
     expect(_testing.selectedSet.size).toBe(0);
   });
 });
