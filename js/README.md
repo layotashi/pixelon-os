@@ -62,7 +62,9 @@ app/  →  wm/  →  ui/  →  core/  →  lang/
 - **言語**: ES Modules (ES2020+)、ビルドツールなし
 - **描画**: `Uint8Array` VRAM (1-bit) → `display_fx` で RGBA 展開 → `Canvas putImageData`
 - **音声**: Web Audio API (`OscillatorNode` + `GainNode`)
-- **書き出し**: GIF89a / WAV / PBM は自前コーデック、MP4 は WebCodecs、動画録画は MediaRecorder
+- **書き出し**: GIF89a / WAV / PBM は自前コーデック、MP4 は WebCodecs + 自前 muxer
+  (動画録画も同経路。A/V はオーディオのサンプル時計に揃える → `core/av_sync.js`。
+  WebCodecs 非対応環境のみ MediaRecorder にフォールバック)
 - **永続化**: `localStorage` (設定 + VFS + ユーザーフォント)
 - **エントリ**: `index.html` → `<script type="module" src="./js/kernel.js">`
 

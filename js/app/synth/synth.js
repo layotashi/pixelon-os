@@ -17,7 +17,7 @@
  *   , / .  … オクターブ ∓    [ / ]  … ベロシティ ± 10    /  … 波形順送り
  */
 
-import { fillRect } from "../../core/gpu.js";
+import { fillRect, isCapturing } from "../../core/gpu.js";
 import { drawText, textWidth, GLYPH_H } from "../../core/font.js";
 import { keyDown, keyHeld } from "../../core/input.js";
 import { wmOpen, wmRegister, wmIsFocused } from "../../wm/index.js";
@@ -280,7 +280,9 @@ function drawRow(cr, name, y, value, unit) {
 
 function drawSynth(cr) {
   _initWidgets();
-  handleKeyboard();
+  // CAPTURE のウィンドウ単体撮影/録画は同じフレーム内で onDraw をもう一度走らせる。
+  // keyDown() はフレーム単位のラッチなので、そこで演奏キーを読むと , . [ ] / が二度発火する。
+  if (!isCapturing()) handleKeyboard();
 
   // セクション見出し
   drawBand(cr, "OSC", L.oscBandY);

@@ -438,30 +438,34 @@ async function pickCodec(w, h, fps, bitrate) {
   return null;
 }
 
+/** H.264 は偶数寸法が前提。最小 2px で偶数に丸める。 */
+function evenDim(n) {
+  const v = Math.max(2, Math.round(n));
+  return v & 1 ? v + 1 : v;
+}
+
 /**
- * 1bit フレーム列 (+任意の PCM 音声) を H.264(+AAC)/MP4 にエンコードする。
+ * ストリーミング H.264 エンコーダを作る。フレームを渡すたびに即エンコードするので、
+ * 生フレームを溜め込まずに長時間の録画ができる (メモリは圧縮後のサイズに比例)。
  *
- * @param {Uint8Array[]} frames  各要素が 0/1 の画素 (length = w*h)
- * @param {number} w  フレーム幅 (画素)
- * @param {number} h  フレーム高さ (画素)
- * @param {number[]} bgRgb  背景色 [r,g,b]
- * @param {number[]} fgRgb  前景色 [r,g,b]
+ * フレーム i のタイムスタンプは必ず `i / fps` に固定する (CFR)。呼び側は
+ * 「今あるべきフレーム番号」まで addFrame を繰り返して追いつかせること
+ * (core/av_sync.js の framesDueAt)。こうすると rAF のジッタやコマ落ちがあっても
+ * 映像の時間軸は fps どおりに刻まれ、同じ原点を持つ音声と定義上ずれない。
+ *
+ * @param {number} w  出力幅 (偶数に丸められる)
+ * @param {number} h  出力高さ (偶数に丸められる)
  * @param {number} fps  フレームレート
- * @param {number} scale  拡大率 (出力解像度 = w*scale × h*scale、偶数に丸め)
- * @param {{samples:Float32Array, sampleRate:number}|null} [audio]  PCM 音声 (モノラル)。
- *   AAC 非対応環境やエンコード失敗時は音声を落とし映像のみで書き出す。
- * @returns {Promise<Blob>}  MP4 Blob
+ * @returns {Promise<{width:number, height:number, frameCount:number,
+ *   addFrame:(src:CanvasImageSource)=>void,
+ *   finish:(audio?:{samples:Float32Array, sampleRate:number}|null)=>Promise<Blob>,
+ *   abort:()=>void}>}
  */
-export async function encodeMp4(frames, w, h, bgRgb, fgRgb, fps, scale, audio = null) {
+export async function createMp4Encoder(w, h, fps) {
   if (!isMp4Supported()) throw new Error("WebCodecs unavailable");
-  if (!frames || frames.length === 0) throw new Error("no frames");
 
-  // H.264 は偶数寸法が前提
-  let outW = Math.max(2, Math.round(w * scale));
-  let outH = Math.max(2, Math.round(h * scale));
-  if (outW & 1) outW++;
-  if (outH & 1) outH++;
-
+  const outW = evenDim(w);
+  const outH = evenDim(h);
   const bitrate = Math.min(
     60_000_000,
     Math.max(4_000_000, Math.round(outW * outH * fps * 0.3)),
@@ -469,21 +473,12 @@ export async function encodeMp4(frames, w, h, bgRgb, fgRgb, fps, scale, audio = 
   const codec = await pickCodec(outW, outH, fps, bitrate);
   if (!codec) throw new Error("H.264 encode unsupported for this size");
 
-  // 1bit → RGBA → 拡大描画用のキャンバス
-  const src = document.createElement("canvas");
-  src.width = w;
-  src.height = h;
-  const sctx = src.getContext("2d");
-  const img = sctx.createImageData(w, h);
-  const out = document.createElement("canvas");
-  out.width = outW;
-  out.height = outH;
-  const octx = out.getContext("2d");
-  octx.imageSmoothingEnabled = false; // ニアレストネイバー (1bit のドットを保つ)
-
   const samples = [];
   let description = null;
   let encErr = null;
+  let n = 0;
+  let closed = false;
+
   const encoder = new VideoEncoder({
     output: (chunk, meta) => {
       const desc = meta && meta.decoderConfig && meta.decoderConfig.description;
@@ -506,8 +501,114 @@ export async function encodeMp4(frames, w, h, bgRgb, fgRgb, fps, scale, audio = 
   });
 
   const frameDur = Math.round(1_000_000 / fps); // マイクロ秒
+
+  return {
+    width: outW,
+    height: outH,
+    get frameCount() {
+      return n;
+    },
+    get error() {
+      return encErr;
+    },
+
+    /** 1 フレーム投入する。提示時刻は投入順 (= フレーム番号 / fps) で決まる。 */
+    addFrame(src) {
+      if (encErr || closed) return;
+      const vf = new VideoFrame(src, {
+        timestamp: n * frameDur,
+        duration: frameDur,
+      });
+      // 1 秒ごとにキーフレーム (シーク/ループ復帰が安定)
+      encoder.encode(vf, { keyFrame: n % fps === 0 });
+      vf.close();
+      n++;
+    },
+
+    /**
+     * エンコードを締めて MP4 Blob を返す。
+     * @param {{samples:Float32Array, sampleRate:number}|null} [audio]  モノラル PCM。
+     *   映像と同じ原点・同じ長さであること (core/av_sync.js の fitPcmToVideo)。
+     */
+    async finish(audio = null) {
+      if (closed) throw new Error("encoder already finished");
+      closed = true;
+      try {
+        await encoder.flush();
+      } finally {
+        // flush が失敗しても VideoEncoder は必ず閉じる (キュー中のフレームを解放する)
+        try {
+          encoder.close();
+        } catch (_) {
+          /* already closed */
+        }
+      }
+
+      if (encErr) throw encErr;
+      if (samples.length === 0) throw new Error("encoder produced no samples");
+      if (!description) throw new Error("missing avcC description");
+
+      // 音声 (任意): AAC 化に失敗しても映像は書き出す (ライブ用途で export を殺さない)
+      let aac = null;
+      if (audio && audio.samples && audio.samples.length > 0) {
+        try {
+          aac = await encodeAacMono(audio.samples, audio.sampleRate);
+        } catch (e) {
+          console.warn("[mp4] AAC encode failed, exporting video only:", e);
+        }
+      }
+      return muxMp4(samples, description, outW, outH, fps, aac);
+    },
+
+    /** 書き出さずに破棄する (録画キャンセル時 / finish 失敗後の後始末) */
+    abort() {
+      closed = true;
+      try {
+        encoder.close();
+      } catch (_) {
+        /* already closed */
+      }
+    },
+  };
+}
+
+/**
+ * 1bit フレーム列 (+任意の PCM 音声) を H.264(+AAC)/MP4 にエンコードする。
+ * フレームを全部持っているオフライン書き出し用 (TESSERA)。
+ * ライブ録画は createMp4Encoder を使うこと。
+ *
+ * @param {Uint8Array[]} frames  各要素が 0/1 の画素 (length = w*h)
+ * @param {number} w  フレーム幅 (画素)
+ * @param {number} h  フレーム高さ (画素)
+ * @param {number[]} bgRgb  背景色 [r,g,b]
+ * @param {number[]} fgRgb  前景色 [r,g,b]
+ * @param {number} fps  フレームレート
+ * @param {number} scale  拡大率 (出力解像度 = w*scale × h*scale、偶数に丸め)
+ * @param {{samples:Float32Array, sampleRate:number}|null} [audio]  PCM 音声 (モノラル)。
+ *   AAC 非対応環境やエンコード失敗時は音声を落とし映像のみで書き出す。
+ * @returns {Promise<Blob>}  MP4 Blob
+ */
+export async function encodeMp4(frames, w, h, bgRgb, fgRgb, fps, scale, audio = null) {
+  if (!isMp4Supported()) throw new Error("WebCodecs unavailable");
+  if (!frames || frames.length === 0) throw new Error("no frames");
+
+  const enc = await createMp4Encoder(w * scale, h * scale, fps);
+  const { width: outW, height: outH } = enc;
+
+  // 1bit → RGBA → 拡大描画用のキャンバス
+  const src = document.createElement("canvas");
+  src.width = w;
+  src.height = h;
+  const sctx = src.getContext("2d");
+  const img = sctx.createImageData(w, h);
+  const out = document.createElement("canvas");
+  out.width = outW;
+  out.height = outH;
+  const octx = out.getContext("2d");
+  octx.imageSmoothingEnabled = false; // ニアレストネイバー (1bit のドットを保つ)
+
   for (let i = 0; i < frames.length; i++) {
-    if (encErr) break;
+    if (enc.error) break;
     const f = frames[i];
     const d = img.data;
     for (let p = 0, j = 0; p < f.length; p++, j += 4) {
@@ -524,28 +625,8 @@ export async function encodeMp4(frames, w, h, bgRgb, fgRgb, fps, scale, audio = 
     }
     sctx.putImageData(img, 0, 0);
     octx.drawImage(src, 0, 0, w, h, 0, 0, outW, outH);
-    const vf = new VideoFrame(out, { timestamp: i * frameDur, duration: frameDur });
-    // 1 秒ごとにキーフレーム (短いループでもシーク/ループ復帰が安定)
-    encoder.encode(vf, { keyFrame: i % fps === 0 });
-    vf.close();
+    enc.addFrame(out);
   }
 
-  await encoder.flush();
-  encoder.close();
-
-  if (encErr) throw encErr;
-  if (samples.length === 0) throw new Error("encoder produced no samples");
-  if (!description) throw new Error("missing avcC description");
-
-  // 音声 (任意): AAC 化に失敗しても映像は書き出す (ライブ用途で export を殺さない)
-  let aac = null;
-  if (audio && audio.samples && audio.samples.length > 0) {
-    try {
-      aac = await encodeAacMono(audio.samples, audio.sampleRate);
-    } catch (e) {
-      console.warn("[mp4] AAC encode failed, exporting video only:", e);
-    }
-  }
-
-  return muxMp4(samples, description, outW, outH, fps, aac);
+  return enc.finish(audio);
 }

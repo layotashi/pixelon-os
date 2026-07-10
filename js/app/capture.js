@@ -14,6 +14,21 @@
  * 同時実行を禁止する (_isContinuousRecordingBusy)。
  * リサイズ検出: ウィンドウ単体録画中にサイズ変更を検出した場合は自動停止する。
  *
+ * ── 動画録画の A/V 同期 ──
+ * 録画の時間基準は **オーディオのサンプル時計ひとつだけ** とする。
+ *   映像フレーム i の提示時刻 = i / RECORD_FPS   (CFR。落ちたフレームは直前の絵を複製)
+ *   PCM サンプル k の時刻     = k / sampleRate
+ * 両者は同じ原点 (PCM 収録開始時のオーディオ時刻) を持つので、原点も速度も一致する。
+ * 毎フレーム「今あるべきフレーム番号」を getPcmElapsed() から逆算して追いつかせ
+ * (core/av_sync.js)、映像は WebCodecs で、音声は AudioWorklet の PCM タップで拾い、
+ * core/mp4.js の自前 muxer で明示的なタイムスタンプとして書き込む。
+ *
+ * 以前は canvas.captureStream + MediaStreamAudioDestinationNode を MediaRecorder に
+ * 渡していた。この場合、映像は compositor の時計・音声は AudioContext の時計で刻まれ、
+ * 両者の対応づけは UA の内部実装任せになる。こちらからタイムスタンプは見えず、ずれの
+ * 測定も補正もできない (固定の遅延値を足しても環境依存で合わない)。この経路は
+ * WebCodecs / AudioWorklet 非対応環境のフォールバックとしてのみ残す。
+ *
  * update/draw から参照される状態を export する。
  */
 
@@ -24,7 +39,16 @@ import { drawIcon, ICON_W, ICON_H } from "../core/icon.js";
 import { drawText, textWidth, GLYPH_H } from "../core/font.js";
 import * as WM from "../wm/index.js";
 import * as UI from "../ui/index.js";
-import { initAudio, getAudioStream } from "../core/audio.js";
+import {
+  initAudio,
+  getAudioStream,
+  startPcmCapture,
+  stopPcmCapture,
+  getPcmElapsed,
+  isPcmCaptureSupported,
+} from "../core/audio.js";
+import { createMp4Encoder, isMp4Supported } from "../core/mp4.js";
+import { framesDueAt, fitPcmToVideo } from "../core/av_sync.js";
 import { triggerDownload } from "../core/art_export.js";
 import { renderWallpaperBuffer } from "../wallpaper.js";
 
@@ -56,20 +80,36 @@ let screenshotScale = 2; // 撮影倍率 (1-10 の整数)
 let matteEnabled = false; // マット (額装) の ON/OFF
 let mattePadding = MATTE_DEFAULT_PAD; // マット余白 (px, 各辺)
 
+// ── 動画撮影設定 ──
+/** 録画フレームレート (固定)。録画の時間軸はこの値で刻む (CFR) */
+const RECORD_FPS = 60;
+/** 1 tick で追いつかせる最大フレーム数 (タブ復帰直後の暴走を防ぐ。数 tick で収束する) */
+const RECORD_MAX_CATCHUP = RECORD_FPS * 5;
+
 // ── 動画撮影状態 ──
 let isRecording = false;
-let mediaRecorder = null;
-let recordChunks = [];
-let recordStartTime = 0;
 let recordCanvas = null;
 let recordCtx = null;
 let recordTimerEnd = 0;
 let recordPending = false;
-let recordMimeType = "";
+let recordStarting = false; // エンコーダ/PCM タップの起動待ち (非同期)
+let recordFinishing = false; // 停止後のエンコード・書き出し中
 let recordTargetId = -1; // 録画開始時にロック
 let recordCapW = 0; // 録画開始時のキャプチャ幅 (リサイズ検出用, コンテンツ実寸)
 let recordCapH = 0; // 録画開始時のキャプチャ高さ (リサイズ検出用, コンテンツ実寸)
 let recordPad = 0; // 録画開始時にロックしたマット余白 (px, 0 = マット無し)
+
+// ── 決定的録画 (WebCodecs + 自前 muxer) ──
+// 映像と音声を「オーディオのサンプル時計」という単一の時間基準に揃える経路。
+let recordEncoder = null; // createMp4Encoder() の戻り。null なら MediaRecorder 経路
+let recordFrames = 0; // 投入済みフレーム数 = 録画の時間基準 (recordFrames / RECORD_FPS 秒)
+
+// ── MediaRecorder フォールバック (WebCodecs / AudioWorklet 非対応環境) ──
+// この経路の A/V 整合は UA 任せで、こちらからは検証も補正もできない。
+let mediaRecorder = null;
+let recordChunks = [];
+let recordMimeType = "";
+let recordStartTime = 0; // フォールバック経路の経過表示用 (performance.now)
 
 // ── GIF ループ撮影状態 ──
 let isGifRecording = false;
@@ -98,6 +138,8 @@ function _isContinuousRecordingBusy() {
     isRecording ||
     recordTimerEnd > 0 ||
     recordPending ||
+    recordStarting ||
+    recordFinishing ||
     isGifRecording ||
     gifTimerEnd > 0 ||
     gifPending ||
@@ -242,8 +284,23 @@ function formatElapsed(ms) {
   return `${min}:${String(sec).padStart(2, "0")}`;
 }
 
+/** タイムスタンプ付きファイル名 */
+function stampedName(ext) {
+  const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  return `recording_${ts}.${ext}`;
+}
+
+/**
+ * 決定的録画 (映像と音声が単一の時間基準を共有する経路) が使えるか。
+ * WebCodecs で映像を自前エンコード + AudioWorklet で PCM を直接収録する。
+ */
+function canRecordDeterministic() {
+  return isMp4Supported() && isPcmCaptureSupported();
+}
+
 /** 録画フォーマットラベル (MP4 / WebM) */
 function recordFormatLabel() {
+  if (canRecordDeterministic()) return "(MP4)";
   if (!recordMimeType) recordMimeType = detectRecordingMimeType();
   if (!recordMimeType) return "(N/A)";
   return recordMimeType.startsWith("video/mp4") ? "(MP4)" : "(WebM)";
@@ -274,11 +331,12 @@ function toggleRecording() {
   }
 }
 
-/** 録画を実際に開始 */
-function doStartRecording() {
-  if (isRecording) return;
-
-  // 録画開始時にターゲットをロック
+/**
+ * 録画ターゲット (ウィンドウ / Full screen) とフレーム寸法を確定し、
+ * 合成用オフスクリーン canvas を用意する。
+ * @returns {{outW:number, outH:number}}
+ */
+function lockRecordTarget() {
   recordTargetId = screenshotTargetId;
   let capW, capH;
   if (recordTargetId < 0) {
@@ -301,19 +359,74 @@ function doStartRecording() {
   // マット余白を録画開始時にロック (Full screen は対象外)
   recordPad = recordTargetId >= 0 && matteEnabled ? mattePadding : 0;
 
-  // 録画用オフスクリーン canvas (マット込みフレーム × 追加スケーリング)
-  const outW = (capW + recordPad * 2) * screenshotScale;
-  const outH = (capH + recordPad * 2) * screenshotScale;
+  // 録画用オフスクリーン canvas (マット込みフレーム × 追加スケーリング)。
+  // H.264 は偶数寸法が前提なので、エンコーダの丸めと canvas を一致させる。
+  let outW = (capW + recordPad * 2) * screenshotScale;
+  let outH = (capH + recordPad * 2) * screenshotScale;
+  if (outW & 1) outW++;
+  if (outH & 1) outH++;
+
   recordCanvas = document.createElement("canvas");
   recordCanvas.width = outW;
   recordCanvas.height = outH;
   recordCtx = recordCanvas.getContext("2d");
   recordCtx.imageSmoothingEnabled = false;
+  return { outW, outH };
+}
 
-  // 映像ストリーム (60fps)
-  const videoStream = recordCanvas.captureStream(60);
+/** 録画用 canvas / エンコーダ / PCM タップを解放する */
+function releaseRecordResources() {
+  recordCanvas = null;
+  recordCtx = null;
+  recordEncoder = null;
+  recordFrames = 0;
+}
 
-  // 合成ストリーム (映像 + 音声)
+/** 録画を実際に開始 (非同期 — エンコーダ設定と PCM タップの起動を待つ) */
+async function doStartRecording() {
+  if (isRecording || recordStarting) return;
+  recordStarting = true;
+  try {
+    const { outW, outH } = lockRecordTarget();
+
+    if (canRecordDeterministic()) {
+      try {
+        recordEncoder = await createMp4Encoder(outW, outH, RECORD_FPS);
+        await startPcmCapture();
+        recordFrames = 0;
+        isRecording = true;
+        return;
+      } catch (e) {
+        console.warn("[capture] deterministic recording unavailable:", e);
+        if (recordEncoder) recordEncoder.abort();
+        recordEncoder = null;
+      }
+    }
+
+    if (!startMediaRecorderFallback()) {
+      labelRecordStatus.text = "ERR";
+      releaseRecordResources();
+    }
+  } catch (e) {
+    console.error("[capture] failed to start recording:", e);
+    labelRecordStatus.text = "ERR";
+    releaseRecordResources();
+  } finally {
+    recordStarting = false;
+  }
+}
+
+/**
+ * MediaRecorder 経路で開始する (WebCodecs / AudioWorklet が無い環境の保険)。
+ * 映像は canvas の captureStream、音声は MediaStreamAudioDestinationNode。
+ * 両者のタイムスタンプは UA が独立に付けるため、A/V の整合はこちらでは保証できない。
+ * @returns {boolean} 開始できたか
+ */
+function startMediaRecorderFallback() {
+  recordMimeType = detectRecordingMimeType();
+  if (!recordMimeType) return false;
+
+  const videoStream = recordCanvas.captureStream(RECORD_FPS);
   const combinedStream = new MediaStream();
   videoStream.getVideoTracks().forEach((t) => combinedStream.addTrack(t));
   const audioStream = getAudioStream();
@@ -321,17 +434,11 @@ function doStartRecording() {
     audioStream.getAudioTracks().forEach((t) => combinedStream.addTrack(t));
   }
 
-  // MIME タイプ決定 (MP4 優先、WebM フォールバック)
-  recordMimeType = detectRecordingMimeType();
-  if (!recordMimeType) {
-    labelRecordStatus.text = "ERR";
-    recordCanvas = null;
-    recordCtx = null;
-    return;
-  }
-
   // 高ビットレートでピクセルパーフェクトを維持
-  const bitrate = Math.max(outW * outH * 30, 10_000_000);
+  const bitrate = Math.max(
+    recordCanvas.width * recordCanvas.height * 30,
+    10_000_000,
+  );
 
   mediaRecorder = new MediaRecorder(combinedStream, {
     mimeType: recordMimeType,
@@ -342,30 +449,95 @@ function doStartRecording() {
   mediaRecorder.ondataavailable = (e) => {
     if (e.data.size > 0) recordChunks.push(e.data);
   };
-  mediaRecorder.onstop = doRecordingDownload;
+  mediaRecorder.onstop = () => {
+    const ext = recordMimeType.startsWith("video/mp4") ? "mp4" : "webm";
+    const blob = new Blob(recordChunks, { type: recordMimeType });
+    triggerDownload(blob, stampedName(ext));
+    recordChunks = [];
+    releaseRecordResources();
+  };
   mediaRecorder.start();
 
   isRecording = true;
+  recordFrames = 0;
   recordStartTime = performance.now();
+  return true;
 }
 
-/** 録画を停止 */
+/** 録画を停止し、書き出す */
 function stopRecording() {
-  if (!isRecording || !mediaRecorder) return;
-  mediaRecorder.stop();
+  if (!isRecording) return;
   isRecording = false;
-  labelRecordStatus.text = recordFormatLabel();
+
+  if (!recordEncoder) {
+    if (mediaRecorder) mediaRecorder.stop();
+    mediaRecorder = null;
+    labelRecordStatus.text = recordFormatLabel();
+    return;
+  }
+  finishDeterministicRecording();
 }
 
-/** 録画ファイルをダウンロード (MediaRecorder.onstop コールバック) */
-function doRecordingDownload() {
-  const ext = recordMimeType.startsWith("video/mp4") ? "mp4" : "webm";
-  const blob = new Blob(recordChunks, { type: recordMimeType });
-  const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  triggerDownload(blob, `recording_${ts}.${ext}`);
-  recordChunks = [];
-  recordCanvas = null;
-  recordCtx = null;
+/**
+ * 決定的録画を締める。PCM を映像の長さちょうどに揃えてから mux する。
+ *
+ * PCM の先頭サンプルと映像フレーム 0 は同じオーディオ時刻を原点に持つ
+ * (startPcmCapture が返す startTime)。停止は最後のフレーム描画より必ず後になるので、
+ * fitPcmToVideo は通常「末尾を数 ms 切る」方向に働く。
+ */
+async function finishDeterministicRecording() {
+  const encoder = recordEncoder;
+  const frames = recordFrames;
+  recordEncoder = null;
+  recordFinishing = true;
+  labelRecordStatus.text = "Encoding...";
+
+  try {
+    const { samples, sampleRate } = await stopPcmCapture();
+    if (frames === 0) throw new Error("no frames captured");
+    const pcm = fitPcmToVideo(samples, frames, RECORD_FPS, sampleRate);
+    const blob = await encoder.finish({ samples: pcm, sampleRate });
+    triggerDownload(blob, stampedName("mp4"));
+    labelRecordStatus.text = recordFormatLabel();
+  } catch (e) {
+    console.error("[capture] recording export failed:", e);
+    encoder.abort();
+    labelRecordStatus.text = "ERR";
+  } finally {
+    recordFinishing = false;
+    releaseRecordResources();
+  }
+}
+
+/**
+ * 現在の画面 (or 対象ウィンドウ) を録画用 canvas に合成する。
+ * @returns {boolean} 合成できたか (false = ウィンドウが閉じられた/リサイズされた)
+ */
+function composeRecordFrame() {
+  if (recordTargetId < 0) {
+    // Full screen
+    recordCtx.drawImage(
+      GPU.getCanvas(),
+      0,
+      0,
+      recordCanvas.width,
+      recordCanvas.height,
+    );
+    return true;
+  }
+  // ウィンドウ単体: オフスクリーンキャプチャ (マット付きなら額装)
+  const r = WM.wmGetWindowRect(recordTargetId);
+  if (!r || r.w !== recordCapW || r.h !== recordCapH) return false;
+  beginWindowCapture(recordTargetId, recordCapW, recordCapH, recordPad);
+  const frameCanvas = GPU.endCapture(1);
+  recordCtx.drawImage(
+    frameCanvas,
+    0,
+    0,
+    recordCanvas.width,
+    recordCanvas.height,
+  );
+  return true;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -794,7 +966,12 @@ export function updateRecordingTimer() {
     }
   }
   if (isRecording) {
-    labelRecordStatus.text = formatElapsed(performance.now() - recordStartTime);
+    // 経過表示も録画の時間基準そのもの (書き出されるフレーム数 / fps) から出す。
+    // 決定的経路では recordFrames が唯一の「録画時間」で、performance.now() は使わない。
+    const elapsedMs = recordEncoder
+      ? (recordFrames / RECORD_FPS) * 1000
+      : performance.now() - recordStartTime;
+    labelRecordStatus.text = formatElapsed(elapsedMs);
   }
 }
 
@@ -815,36 +992,48 @@ export function drawRecordingOverlay() {
 
 /**
  * draw() 末尾 (flush 後) から呼ぶ:
- * 予約された録画を開始し、録画中は毎フレーム録画 canvas にコピー。
+ * 予約された録画を開始し、録画中は毎フレーム録画 canvas に合成してエンコーダへ投入する。
  * ウィンドウ単体録画中にウィンドウが閉じられた/リサイズされた場合は自動停止する。
+ *
+ * ── 同期の要点 ──
+ * 映像フレームの投入本数は「収録中の PCM と同じオーディオ時計」で決める
+ * (getPcmElapsed → framesDueAt)。rAF が遅れてもフレーム番号は時刻から逆算されるので、
+ * 出力の映像時間軸 (フレーム i の提示時刻 = i / RECORD_FPS) と音声時間軸
+ * (サンプル k の時刻 = k / sampleRate) は原点も速度も一致する。
+ *
+ * canvas.captureStream + MediaRecorder に任せていた頃は、映像を compositor の時計で、
+ * 音声を AudioContext の時計で刻み、両者の対応づけを UA に委ねていた。こちらからは
+ * タイムスタンプが見えず、ずれの測定も補正もできなかった (フォールバック経路には残る)。
  */
 export function commitRecording() {
   if (recordPending) {
     recordPending = false;
+    // 非同期に開始する (エンコーダ設定 + worklet 読み込み)。完了までフレームは進めない。
     doStartRecording();
   }
-  if (isRecording && recordCtx) {
-    if (recordTargetId < 0) {
-      // Full screen
-      const src = GPU.getCanvas();
-      recordCtx.drawImage(src, 0, 0, recordCanvas.width, recordCanvas.height);
-    } else {
-      // ウィンドウ単体: オフスクリーンキャプチャ (マット付きなら額装)
-      const r = WM.wmGetWindowRect(recordTargetId);
-      if (!r || r.w !== recordCapW || r.h !== recordCapH) {
-        stopRecording(); // ウィンドウが閉じられた or リサイズされた
-        return;
-      }
-      beginWindowCapture(recordTargetId, recordCapW, recordCapH, recordPad);
-      const frameCanvas = GPU.endCapture(1);
-      recordCtx.drawImage(
-        frameCanvas,
-        0,
-        0,
-        recordCanvas.width,
-        recordCanvas.height,
-      );
-    }
+  if (!isRecording || !recordCtx) return;
+
+  // MediaRecorder 経路: canvas を更新するだけで UA が好きなタイミングで拾う
+  if (!recordEncoder) {
+    if (!composeRecordFrame()) stopRecording();
+    return;
+  }
+
+  // 今あるべきフレーム番号を音の時計から逆算する。まだ次のフレームの時刻に達していなければ
+  // 何もしない (rAF が 60Hz を超えるディスプレイでも、書き出す本数は RECORD_FPS のまま)。
+  const due = framesDueAt(getPcmElapsed(), RECORD_FPS);
+  if (recordFrames >= due) return;
+
+  if (!composeRecordFrame()) {
+    stopRecording(); // ウィンドウが閉じられた or リサイズされた
+    return;
+  }
+
+  // 取りこぼしたぶんは直前の絵を複製して埋め、フレーム番号と時刻の対応を保つ (CFR)。
+  const limit = Math.min(due, recordFrames + RECORD_MAX_CATCHUP);
+  while (recordFrames < limit) {
+    recordEncoder.addFrame(recordCanvas);
+    recordFrames++;
   }
 }
 

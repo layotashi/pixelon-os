@@ -749,6 +749,18 @@ export function beginCapture(w, h, initBuf = null) {
   clipY1 = h;
 }
 
+/**
+ * オフスクリーンキャプチャ中か (レンダーターゲットが画面 VRAM ではない)。
+ *
+ * CAPTURE はウィンドウ単体の撮影/録画で wmDrawSingleWindow() を呼び、アプリの onDraw を
+ * そのフレーム内でもう一度走らせる。onDraw の中で入力を読むアプリは、これを見て
+ * 二重処理を避けること (keyDown() 等のエッジ検出はフレーム単位のラッチのため)。
+ * @returns {boolean}
+ */
+export function isCapturing() {
+  return activeBuffer !== vram;
+}
+
 /** レンダーターゲットを通常の vram に戻す (各 endCapture* 共通)。 */
 function _restoreRenderTarget() {
   activeBuffer = vram;

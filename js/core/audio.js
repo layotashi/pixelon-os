@@ -97,6 +97,9 @@ let masterGain = null;
 /** 録画用 MediaStreamDestination (limiter → mediaDest) */
 let mediaDest = null;
 
+/** マスターチェーン末端のリミッター。録画用 PCM タップの取り出し口 */
+let limiter = null;
+
 /** ノイズ用バッファ (全チャンネル共有) */
 let noiseBuffer = null;
 
@@ -301,7 +304,7 @@ export function initAudio() {
   dcBlocker.Q.value = 0.707; // Butterworth
 
   // ブリックウォールリミッター (クリッピング防止)
-  const limiter = ctx.createDynamicsCompressor();
+  limiter = ctx.createDynamicsCompressor();
   limiter.threshold.value = -0.3;
   limiter.knee.value = 0;
   limiter.ratio.value = 20;
@@ -1438,9 +1441,172 @@ export function getMasterGain() {
 /**
  * 録画用の音声 MediaStream を返す。
  * initAudio() 後に有効。未初期化時は null。
+ *
+ * MediaRecorder フォールバック経路専用。このトラックのタイムスタンプは UA が付けるため、
+ * 映像トラックとの整合を我々が保証できない。同期が要る経路では startPcmCapture() を使うこと。
  * @returns {MediaStream|null}
  */
 export function getAudioStream() {
   return mediaDest ? mediaDest.stream : null;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  録画用 PCM キャプチャ (マスターバスのタップ)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * 録画中の PCM 収集状態。
+ * @type {{node:AudioWorkletNode, sink:GainNode, chunks:Float32Array[], frames:number,
+ *         startTime:number, onStopped:((v:any)=>void)|null}|null}
+ */
+let pcmCap = null;
+
+/** worklet モジュールの addModule() Promise (一度きり) */
+let pcmModuleReady = null;
+
+/** PCM キャプチャ (AudioWorklet) が使えるか */
+export function isPcmCaptureSupported() {
+  return (
+    typeof AudioWorkletNode === "function" &&
+    typeof AudioContext !== "undefined" &&
+    "audioWorklet" in AudioContext.prototype
+  );
+}
+
+/** PCM キャプチャ実行中か */
+export function isPcmCapturing() {
+  return pcmCap !== null;
+}
+
+/**
+ * 録画開始からの経過を **オーディオのサンプル時計** で返す (秒)。
+ * 映像フレーム番号はこの値から導く (core/av_sync.js の framesDueAt)。
+ * performance.now() ではなく ctx.currentTime を使うのが要点 — 収録した PCM と
+ * 同じ時計なので、両者は定義上ずれない。
+ * @returns {number} 秒 (キャプチャしていなければ 0)
+ */
+export function getPcmElapsed() {
+  if (!pcmCap || !ctx) return 0;
+  return Math.max(0, ctx.currentTime - pcmCap.startTime);
+}
+
+/**
+ * マスターバス (limiter) の出力をモノラル PCM として収集しはじめる。
+ * 最初のサンプルのオーディオ時刻が確定した時点で解決する。
+ *
+ * @returns {Promise<{sampleRate:number, startTime:number}>}
+ * @throws {Error} AudioWorklet 非対応、または既にキャプチャ中
+ */
+export async function startPcmCapture() {
+  if (pcmCap) throw new Error("PCM capture already running");
+  if (!isPcmCaptureSupported()) throw new Error("AudioWorklet unavailable");
+  if (!ctx) initAudio();
+  if (ctx.state === "suspended") await ctx.resume();
+
+  if (!pcmModuleReady) {
+    pcmModuleReady = ctx.audioWorklet.addModule(
+      new URL("./pcm_recorder_worklet.js", import.meta.url).href,
+    );
+    // 失敗を記憶しない (次の録画で再試行できるように)
+    pcmModuleReady.catch(() => {
+      pcmModuleReady = null;
+    });
+  }
+  await pcmModuleReady;
+
+  const node = new AudioWorkletNode(ctx, "pcm-recorder", {
+    numberOfInputs: 1,
+    numberOfOutputs: 1,
+    outputChannelCount: [1],
+  });
+  // worklet は destination まで繋がないと process() が呼ばれない。
+  // 出力は常に無音だが、念のため gain 0 を挟んで二重再生の余地を断つ。
+  const sink = ctx.createGain();
+  sink.gain.value = 0;
+
+  const cap = {
+    node,
+    sink,
+    chunks: [],
+    frames: 0,
+    startTime: ctx.currentTime,
+    onStopped: null,
+  };
+
+  // 最初の process() が来るまで (= サンプル 0 の時刻が確定するまで) 待つ。
+  // 来なければ録画を始めても同期の原点が取れないので、失敗として扱う。
+  const started = new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error("PCM worklet did not start")),
+      1000,
+    );
+    node.port.onmessage = (e) => {
+      const msg = e.data;
+      if (msg.type === "start") {
+        cap.startTime = msg.startTime;
+        clearTimeout(timer);
+        resolve();
+      } else if (msg.type === "pcm") {
+        cap.chunks.push(msg.samples);
+        cap.frames += msg.samples.length;
+      } else if (msg.type === "stopped" && cap.onStopped) {
+        cap.onStopped();
+      }
+    };
+  });
+
+  limiter.connect(node);
+  node.connect(sink);
+  sink.connect(ctx.destination);
+  pcmCap = cap;
+
+  try {
+    await started;
+  } catch (e) {
+    pcmCap = null;
+    _teardownPcmNodes(cap);
+    throw e;
+  }
+  return { sampleRate: ctx.sampleRate, startTime: cap.startTime };
+}
+
+/** PCM タップのノードをグラフから外す */
+function _teardownPcmNodes(cap) {
+  try {
+    limiter.disconnect(cap.node);
+    cap.node.disconnect();
+    cap.sink.disconnect();
+  } catch (_) {
+    /* already disconnected */
+  }
+  cap.node.port.onmessage = null;
+}
+
+/**
+ * PCM キャプチャを終了し、収集したモノラル PCM を返す。
+ * worklet 側の残りを flush してから連結するため、末尾サンプルも欠けない。
+ * @returns {Promise<{samples:Float32Array, sampleRate:number, startTime:number}>}
+ */
+export async function stopPcmCapture() {
+  const cap = pcmCap;
+  if (!cap) return { samples: new Float32Array(0), sampleRate: ctx ? ctx.sampleRate : 0, startTime: 0 };
+  pcmCap = null;
+
+  await new Promise((resolve) => {
+    cap.onStopped = resolve;
+    cap.node.port.postMessage("stop");
+    // worklet が応答しない環境で録画を殺さないための保険 (末尾が数 ms 欠けるだけ)
+    setTimeout(resolve, 250);
+  });
+
+  _teardownPcmNodes(cap);
+
+  const samples = new Float32Array(cap.frames);
+  let off = 0;
+  for (const c of cap.chunks) {
+    samples.set(c, off);
+    off += c.length;
+  }
+  return { samples, sampleRate: ctx.sampleRate, startTime: cap.startTime };
 }
 
