@@ -22,6 +22,7 @@ import { drawText, textWidth, GLYPH_H } from "../../core/font.js";
 import { keyDown, keyHeld } from "../../core/input.js";
 import { wmOpen, wmRegister, wmIsFocused } from "../../wm/index.js";
 import { createPolySynth } from "../../core/audio.js";
+import { initMidiInput, getMidiInputCount } from "../../core/midi_input.js";
 import {
   WidgetGroup,
   Slider,
@@ -79,6 +80,10 @@ let octave = 4;
 let velocity = 100;
 /** 押下中の物理キー → 発音した MIDI (押下時の音程で noteOff するため保持) */
 const heldKeys = new Map();
+/** SYNTH ウィンドウが開いているか。MIDI 入力のゲート (外部デバイスはフォーカスに依らず有効) */
+let winOpen = false;
+/** MIDI で発音中のノート (閉じるとき止めるため保持) */
+const midiHeld = new Set();
 
 /** オクターブ内の半音オフセット (C からの) → MIDI (C4 = 60) */
 function offsetToMidi(offset) {
@@ -150,6 +155,21 @@ function _initWidgets() {
   ]);
 
   computeLayout();
+
+  // Web MIDI 入力 (非対応環境では自動で無効 → PC 鍵盤にフォールバック)。
+  // フォーカスに依らず winOpen の間だけ発音する (外部 MIDI 鍵盤の自然な挙動)。
+  initMidiInput({
+    onNoteOn: (m, v) => {
+      if (!winOpen) return;
+      midiHeld.add(m);
+      synth().noteOn(m, v);
+    },
+    onNoteOff: (m) => {
+      if (!winOpen) return;
+      midiHeld.delete(m);
+      synth().noteOff(m);
+    },
+  });
 }
 
 /** ADSR の一部を更新して PolySynth に反映する */
@@ -268,6 +288,18 @@ function drawSynth(cr) {
   drawBand(cr, "AMP", L.ampBandY);
   drawBand(cr, "PLAY", L.playBandY);
 
+  // MIDI デバイス接続時、PLAY 見出しバンドの右端に表示 (接続時のみ = show/hide)
+  const midiN = getMidiInputCount();
+  if (midiN > 0) {
+    const t = "MIDI " + midiN;
+    drawText(
+      cr.x + PANEL_W - SECTION_PAD - textWidth(t),
+      cr.y + L.playBandY + SECTION_PAD,
+      t,
+      0,
+    );
+  }
+
   // OSC の WAVE ラベル (DropDown 自体は group が描画)
   drawText(cr.x + PAD_X, cr.y + L.oscTextY, "WAVE", 1);
 
@@ -350,6 +382,7 @@ function silence() {
   if (_synth) _synth.allNotesOff();
   if (keyboard) keyboard.reset();
   heldKeys.clear();
+  midiHeld.clear();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -360,6 +393,7 @@ wmRegister(
   APP_NAME,
   () => {
     _initWidgets();
+    winOpen = true;
     return wmOpen(-1, -1, 0, 0, APP_NAME, drawSynth, onSynthInput, measureSynth, {
       about:
         "A polyphonic software synthesizer. Pick a waveform, shape the ADSR " +
@@ -367,6 +401,7 @@ wmRegister(
         "PC keyboard (Z row = current octave, Q row = +1, I-P = +2). Use , . to " +
         "change octave, [ ] for velocity, / to cycle the waveform.",
       onBeforeClose: () => {
+        winOpen = false;
         silence();
         return true;
       },
