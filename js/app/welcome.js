@@ -21,15 +21,43 @@
 
 import * as Config from "../config.js";
 import * as Storage from "../core/storage.js";
+import { GLYPH_W } from "../core/font.js";
 import { BUILD } from "../build_info.js";
 import { wmOpen, wmOpenByName, wmRegister } from "../wm/index.js";
+import { wrapText } from "../wm/text_wrap.js";
 import { Label, WidgetGroup, VBox } from "../ui/index.js";
 
 const APP_NAME = "WELCOME";
-const PAD = 10;
+
+/** ウィジェットグループの内側パディング (px) */
+const PAD = 8;
+
+/** カード両側に確保したい最小余白 (px)。画面端に張り付かせない */
+const SIDE_MARGIN = 22;
+
+/**
+ * 枠が本文の周囲に足す非テキスト幅の概算 (px)。
+ * 外枠 + コンテンツパディング + スクロールバー slot + PAD + フォーカス余白。
+ * 余白を保つため気持ち大きめ (contentPad を広げても破綻しない)。
+ */
+const FRAME_OVERHEAD = 48;
+
+/** 折り返し幅の下限・上限 (文字) */
+const MIN_COLS = 20;
+const MAX_COLS = 40;
 
 /** WHAT'S NEW に表示する最大件数 */
 const MAX_NOTES = 5;
+
+/**
+ * 現在の解像度で「両側に余白を残して収まる」本文の折り返し幅 (文字) を返す。
+ * VRAM 既定幅 360 で美しく、狭い解像度でも画面端に張り付かないよう自動で縮む。
+ */
+function contentCols() {
+  const px = Config.VRAM_WIDTH - 2 * SIDE_MARGIN - FRAME_OVERHEAD;
+  const cols = Math.floor((px + 1) / (GLYPH_W + 1)); // textWidth(n) = n*(GLYPH_W+1)-1
+  return Math.max(MIN_COLS, Math.min(MAX_COLS, cols));
+}
 
 /**
  * 初回シード (手書き・一度きり)。build_info.js は自動生成で上書きされるためここに置く。
@@ -70,19 +98,27 @@ function nextClosingLine() {
   return CLOSING_LINES[i % CLOSING_LINES.length];
 }
 
-/** ウィンドウ本文テキストを組み立てる (開くたびに締め文が変わる) */
+/**
+ * ウィンドウ本文テキストを組み立てる (開くたびに締め文が変わる)。
+ * 全行を折り返し幅 cols 以内に収め、全幅ルールでカード幅を一定化する。
+ * 長い note は単語境界で折り返し、継続行は 2 スペースでぶら下げる。
+ */
 function buildText() {
-  const lines = [
+  const cols = contentCols();
+  const rule = "-".repeat(cols);
+  const out = [
     Config.APP_NAME,
     Config.APP_CHANNEL,
     "BUILD " + BUILD.date + " (" + BUILD.hash + ")",
-    "",
+    rule,
     "WHAT'S NEW",
-    ...whatsNew().map((t) => "- " + t),
-    "",
-    nextClosingLine(),
   ];
-  return lines.join("\n");
+  for (const t of whatsNew()) {
+    const wrapped = wrapText(t, cols - 2); // "- " / "  " ぶら下げ分を確保
+    wrapped.forEach((ln, i) => out.push((i === 0 ? "- " : "  ") + ln));
+  }
+  out.push(rule, nextClosingLine());
+  return out.join("\n");
 }
 
 // ── ウィジェット (遅延初期化) ──
