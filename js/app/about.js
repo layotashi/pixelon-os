@@ -2,11 +2,13 @@
  * @module app/about
  * about.js — ABOUT ダイアログ
  *
- * アプリケーション情報を表示するモーダルウィンドウ。
+ * アプリケーション情報 (identity) を表示する非モーダルウィンドウ。
  * ASCII アートロゴ + テキストを単一ラベルとして左揃え描画。
+ * 「いつ・何が変わったか」は WELCOME (app/welcome.js) が担う。
  */
 
 import * as Config from "../config.js";
+import { BUILD } from "../build_info.js";
 import { wmOpen, wmRegister } from "../wm/index.js";
 import { Label, WidgetGroup, VBox } from "../ui/index.js";
 
@@ -21,10 +23,10 @@ const aboutText = [
   "",
   Config.APP_DESCRIPTION,
   "",
-  "Version " + Config.APP_VERSION,
-  Config.APP_DATE,
+  Config.APP_CHANNEL,
+  "BUILD " + BUILD.date + " (" + BUILD.hash + ")",
   "",
-  "(C) " + Config.APP_DATE.slice(0, 4) + " " + Config.APP_AUTHOR,
+  "(C) " + BUILD.date.slice(0, 4) + " " + Config.APP_AUTHOR,
   "All Rights Reserved.",
   "",
   Config.APP_URL,
@@ -60,7 +62,6 @@ wmRegister(
   () => {
     _initWidgets();
     return wmOpen(-1, -1, 0, 0, APP_NAME, onDraw, null, onMeasure, {
-      modal: true,
       noResize: true,
       noMaximize: true,
       center: true,
@@ -70,6 +71,6 @@ wmRegister(
       },
     });
   },
-  { modal: true },
+  { noIcon: true },
 );
 

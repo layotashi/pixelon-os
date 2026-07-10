@@ -24,6 +24,7 @@ import "./notepad.js";
 import "./synesta/synesta.js";
 // synesta/synth_panel.js, synesta/piano_roll.js は synesta.js 経由で読み込まれる
 import "./about.js";
+import "./welcome.js";
 import "./life.js";
 import "./files.js";
 import "./paint.js";
@@ -47,6 +48,7 @@ import { DOLPHIN_TOOLTIP } from "./dolphin.js";
 
 const desktopIconEntries = wmGetRegistry()
   .filter((e) => !e.modal)
+  .filter((e) => !e.noIcon)
   .filter((e) => !e.dev || DEV_MODE)
   .map((e) => ({
     name: e.name,

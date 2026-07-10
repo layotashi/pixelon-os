@@ -514,6 +514,8 @@ const registry = [];
  *                                  ">" で区切ると N 階層のサブメニューになる。省略でトップレベル。
  * @param {boolean} [opts.dev]      開発専用アプリ。DEV_MODE=false 時にメニュー・アイコンから非表示。
  * @param {boolean} [opts.hidden]   メニューに表示しない（デスクトップアイコンのみ）。
+ * @param {boolean} [opts.noIcon]   デスクトップアイコンを作らない（ランチャメニューのみ）。
+ *                                  OS 情報窓 (ABOUT / WELCOME) 等、デスクトップに常駐させない窓に使う。
  * @param {string}  [opts.openLabel] デスクトップアイコン右クリックメニューの主アクション
  *   (起動) のラベル。省略時は "OPEN"。アプリの性質に合わせて上書きする (例: AQUARIA="RUN")。
  * @param {(entry:object)=>object[]} [opts.iconMenu] デスクトップアイコン右クリックメニューに
@@ -536,6 +538,7 @@ export function wmRegister(name, factory, opts = null) {
     category: (opts && opts.category) || null,
     dev: (opts && opts.dev) || false,
     hidden: (opts && opts.hidden) || false,
+    noIcon: (opts && opts.noIcon) || false,
     openLabel: (opts && opts.openLabel) || null,
     iconMenu: (opts && opts.iconMenu) || null,
     isRunning: (opts && opts.isRunning) || null,
@@ -1097,6 +1100,7 @@ export function wmGetRegistry() {
     modal: e.modal,
     category: e.category,
     dev: e.dev,
+    noIcon: e.noIcon,
   }));
 }
 

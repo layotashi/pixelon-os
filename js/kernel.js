@@ -37,6 +37,7 @@ import * as textIconModule from "./core/text_icon.js";
 import * as ditherModule from "./core/dither.js";
 import { initWallpaper } from "./wallpaper.js";
 import { update, draw, appIconNames } from "./app/app.js";
+import { maybeAutoOpenWelcome } from "./app/welcome.js";
 import { updateVramDump } from "./app/vram_dump.js";
 // input_overlay.js は app.js 内で named import — initInputOverlay は不要
 // (セマンティックイベントログは input.js が生成する)
@@ -235,6 +236,9 @@ async function boot() {
     // 全画面中の Alt+Tab でフォーカスを失うと resize イベントが縮小値で発火するが
     // autoScale() 側でスキップする。復帰時にここで正しい値に再計算する。
     window.addEventListener("focus", () => Config.autoScale());
+
+    // ── WELCOME 自動表示 (初回、または新しい Note: があるときだけ) ──
+    maybeAutoOpenWelcome();
 
     mainLoop();
   } catch (e) {

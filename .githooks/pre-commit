@@ -1,0 +1,14 @@
+#!/bin/sh
+# PIXERA OS pre-commit hook.
+#
+# js/build_info.js を再生成してコミットに同梱する (ビルド刻印 + Note: 収穫)。
+# 有効化: リポジトリ直下で `git config core.hooksPath .githooks` を一度実行する。
+#
+# 生成に失敗してもコミットは止めない (規約: フックで機械的に弾かない)。
+ROOT=$(git rev-parse --show-toplevel)
+if sh "$ROOT/tools/gen_build_info.sh"; then
+  git add "$ROOT/js/build_info.js"
+else
+  echo "pre-commit: build_info の生成に失敗。刻印を更新せずコミットします" >&2
+fi
+exit 0

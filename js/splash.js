@@ -18,14 +18,16 @@
  *   - core/gpu.js   — cls, fillRect, flush, vram
  *   - core/font.js  — drawText, GLYPH_W, GLYPH_H
  *   - core/dither.js — BAYER_4x4
- *   - config.js     — VRAM_WIDTH, VRAM_HEIGHT, APP_VERSION, APP_DATE, APP_AUTHOR,
+ *   - config.js     — VRAM_WIDTH, VRAM_HEIGHT, APP_CHANNEL, APP_AUTHOR,
  *                     APP_ASCII_LOGO
+ *   - build_info.js — BUILD (date/hash)
  */
 
 import { cls, fillRect, flush, vram } from "./core/gpu.js";
 import { drawText, GLYPH_W, GLYPH_H } from "./core/font.js";
 import { BAYER_4x4 } from "./core/dither.js";
 import * as Config from "./config.js";
+import { BUILD } from "./build_info.js";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  定数
@@ -183,13 +185,16 @@ export async function runSplash() {
     drawText(alignedX, rowY(i), Config.APP_ASCII_LOGO[i], 1);
   }
 
-  // バージョン (行 APP_LOGO_ROWS+1 = 空行1つ挟む)
-  const verStr = centerPad("V" + Config.APP_VERSION, APP_LOGO_COLS);
+  // ビルド (行 APP_LOGO_ROWS+1 = 空行1つ挟む)
+  const verStr = centerPad(
+    Config.APP_CHANNEL + "  " + BUILD.date,
+    APP_LOGO_COLS,
+  );
   drawText(alignedX, rowY(APP_LOGO_ROWS + 1), verStr, 1);
 
   // 著作権
   const crStr = centerPad(
-    "(C) " + Config.APP_DATE.slice(0, 4) + " " + Config.APP_AUTHOR,
+    "(C) " + BUILD.date.slice(0, 4) + " " + Config.APP_AUTHOR,
     APP_LOGO_COLS,
   );
   drawText(alignedX, rowY(APP_LOGO_ROWS + 2), crStr, 1);

@@ -14,6 +14,7 @@
  */
 
 import { loadCustomPalette, load } from "./core/storage.js";
+import { BUILD } from "./build_info.js";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  Dev / Production モード
@@ -219,8 +220,11 @@ export function onScaleChange(cb) {
 /** 製品名 */
 export const APP_NAME = "PIXERA OS";
 
-/** バージョン番号 (semver) */
-export const APP_VERSION = "0.2.2";
+/**
+ * リリースチャンネル (滅多に変えない粗いラベル)。
+ * 版・日付・ハッシュは自動生成の build_info.js (BUILD) が持つ。
+ */
+export const APP_CHANNEL = "BETA";
 
 // ── アセットのキャッシュバスティング ──
 
@@ -234,8 +238,9 @@ let _assetToken = null;
  *
  *   - 開発時 (localhost / file://): ブート毎のトークンで毎回フレッシュに再取得
  *     → 編集した PNG 等がリロードで確実に反映される
- *   - 本番: APP_VERSION で版ごとにキャッシュを分離
- *     → キャッシュを効かせつつ、リリース (版更新) で確実に更新される
+ *   - 本番: BUILD.hash でビルドごとにキャッシュを分離
+ *     → 継続デプロイのたびにトークンが変わり、古いアセットのキャッシュを確実に更新する
+ *       (以前は APP_VERSION 固定で、版を上げない限りアセットが更新されなかった)
  *
  * @param {string} url  アセット URL
  * @returns {string} クエリ付き URL
@@ -248,13 +253,10 @@ export function assetUrl(url) {
       host === "localhost" ||
       host === "127.0.0.1" ||
       host === "[::1]";
-    _assetToken = isDev ? `dev${Date.now()}` : APP_VERSION;
+    _assetToken = isDev ? `dev${Date.now()}` : BUILD.hash;
   }
   return url + (url.includes("?") ? "&" : "?") + "v=" + _assetToken;
 }
-
-/** ビルド / リリース日 */
-export const APP_DATE = "2026-04-24";
 
 /** 説明文 (改行区切り) */
 export const APP_DESCRIPTION =
