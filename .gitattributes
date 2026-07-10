@@ -1,0 +1,5 @@
+# シェルスクリプトと git フックは LF 固定にする。
+# core.autocrlf=true 環境で CRLF に変換されるとシバン (#!/bin/sh) が壊れ、
+# pre-commit フックや生成スクリプトが実行できなくなるため。
+*.sh        text eol=lf
+.githooks/** text eol=lf
