@@ -1,5 +1,9 @@
 # audio/ — SYNESTA 専用オーディオ層
 
+> **アーカイブ**: SYNESTA (旧 DAW) は再設計のためアーカイブされ、`kernel.js` / `app.js`
+> からの読み込みを外した。このディレクトリは参照用に残す (実行時には読み込まれない)。
+> 音声**基盤** (`core/audio.js`) は現役で、新しい音楽アプリ (`app/synth/` 等) が利用する。
+
 SYNESTA (DAW) 固有の再生エンジンとトランスポート UI。オーディオ**基盤**
 (AudioContext・SynthChannel・波形生成・SFX・音楽ユーティリティ) は `core/audio.js`
 にあり、このディレクトリは SYNESTA 固有のモジュールのみ。

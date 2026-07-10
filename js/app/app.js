@@ -15,14 +15,12 @@ import { drawWallpaper } from "../wallpaper.js";
 import * as Capture from "./capture.js";
 import { updateInputOverlay, drawInputOverlay } from "./input_overlay.js";
 import { drawVramDumpOverlay } from "./vram_dump.js";
-import { updateTransport } from "../audio/transport.js";
 
 // ── 各ウィンドウモジュール (副作用: wmRegister を実行) ──
 import "./settings.js"; // TUNING を統合 (DISPLAY/EFFECTS/THEME/SYSTEM タブ)
 import "./notepad.js";
 // capture.js は上で named import 済み
-import "./synesta/synesta.js";
-// synesta/synth_panel.js, synesta/piano_roll.js は synesta.js 経由で読み込まれる
+// SYNESTA (旧 DAW) はアーカイブ済み。app/synesta/ と audio/ は参照用に残すが読み込まない。
 import "./synth/synth.js"; // SYNTH — ポリフォニック・ソフトシンセ (音楽機能の再設計・第1弾)
 // WELCOME / ABOUT はランチャ最下部の system セクションに並ぶ。
 // import 順が並び順を決めるため、WELCOME を先に読み込む (メニュー: WELCOME → ABOUT)。
@@ -94,9 +92,6 @@ export const appIconNames = [
  * 毎フレーム呼ばれるロジック更新。
  */
 export function update() {
-  // ── 再生エンジン更新 (Space キーなど、マウス位置に依存しない処理) ──
-  updateTransport();
-
   // ── 入力オーバーレイ更新 ──
   updateInputOverlay();
 

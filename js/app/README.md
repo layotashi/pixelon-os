@@ -26,7 +26,7 @@
 - `about` — ヘッダ右クリック → ABOUT パネルの説明文 (宣言したアプリのみ)。
 
 - **CREATIVE**
-  - `synesta/` — 音楽 DAW (dev)
+  - `synesta/` — 音楽 DAW (**アーカイブ**: 参照用に残すが `app.js` から未読込。音楽制作は `synth/` 等に再設計)
   - `tessera` — 生成的アート言語 Tessera のエディタ + 出力
   - `paint` — 1-bit ピクセルペイント
 - **トップレベル** (カテゴリ無し = OS ユーティリティ)

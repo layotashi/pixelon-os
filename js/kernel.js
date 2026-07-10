@@ -43,11 +43,7 @@ import { updateVramDump } from "./app/vram_dump.js";
 // (セマンティックイベントログは input.js が生成する)
 import * as WM from "./wm/index.js";
 import { WidgetGroup, initPorts } from "./ui/index.js";
-import {
-  transportSetPianoRollCallbacks,
-  transportSetIsHostFocused,
-} from "./audio/transport.js";
-import { tracks, setPlayheadPos } from "./app/synesta/piano_roll.js";
+// SYNESTA (旧 DAW) はアーカイブ済み。audio/ と app/synesta/ は参照用に残すが読み込まない。
 import * as Storage from "./core/storage.js";
 import * as Config from "./config.js";
 import { runSplash, fadeInDesktop } from "./splash.js";
@@ -108,15 +104,6 @@ async function boot() {
       setTooltip: WM.wmSetTooltip,
       requestCursor: WM.wmRequestCursor,
     });
-
-    // ── transport → piano_roll コールバック接続 (層逆転回避) ──
-    transportSetPianoRollCallbacks({
-      getTracks: () => tracks,
-      setPlayheadPos,
-    });
-
-    // ── transport ホストフォーカス判定 (SYNESTA ウィンドウ依存) ──
-    transportSetIsHostFocused(() => WM.wmIsFocused("SYNESTA"));
 
     // ── システム SFX フック注入 ──
     initSystemSfxHooks();
