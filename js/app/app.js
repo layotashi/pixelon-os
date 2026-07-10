@@ -23,6 +23,7 @@ import "./notepad.js";
 // capture.js は上で named import 済み
 import "./synesta/synesta.js";
 // synesta/synth_panel.js, synesta/piano_roll.js は synesta.js 経由で読み込まれる
+import "./synth/synth.js"; // SYNTH — ポリフォニック・ソフトシンセ (音楽機能の再設計・第1弾)
 // WELCOME / ABOUT はランチャ最下部の system セクションに並ぶ。
 // import 順が並び順を決めるため、WELCOME を先に読み込む (メニュー: WELCOME → ABOUT)。
 import "./welcome.js";
