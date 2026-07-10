@@ -343,6 +343,35 @@ export function getAudioContext() {
   return ctx;
 }
 
+/** MIDI 入力のジッタ吸収用ルックアヘッド (秒)。メインスレッドの描画ループで
+ *  ハンドラ実行が遅れても、この幅ぶん未来にずらすことで発音時刻をイベント時刻に
+ *  固定できる。大きいほどジッタに強いが固定レイテンシが増える (8ms は聴感上の妥協点)。 */
+export const MIDI_LOOKAHEAD = 0.008;
+
+/**
+ * Web MIDI イベントの timeStamp (performance.now 系・ms) を AudioContext の発音時刻
+ * (秒) に変換する。OS の毎フレーム描画でハンドラ実行が遅れても、ノート開始を
+ * 「イベント発生時刻 + ルックアヘッド」に固定し、フレーム境界起因のジッタを吸収する。
+ *
+ *   ハンドラ遅延 delay = performance.now() - eventTimeStamp
+ *   発音時刻     = now + LOOKAHEAD - delay   (現在時刻より過去にはしない)
+ *
+ * timeStamp が無い/0 の環境では now + LOOKAHEAD を返す (従来どおり即時＋一定遅延)。
+ *
+ * @param {number} eventTimeStampMs  MIDIMessageEvent.timeStamp (ms)
+ * @param {number} [lookahead=MIDI_LOOKAHEAD]  ルックアヘッド (秒)
+ * @returns {number} AudioContext.currentTime ベースの発音時刻 (秒)。ctx 無しは 0
+ */
+export function midiEventAudioTime(eventTimeStampMs, lookahead = MIDI_LOOKAHEAD) {
+  if (!ctx) return 0;
+  const now = ctx.currentTime;
+  if (!eventTimeStampMs || typeof performance === "undefined") {
+    return now + lookahead;
+  }
+  const delay = Math.max(0, (performance.now() - eventTimeStampMs) / 1000);
+  return Math.max(now, now + lookahead - delay);
+}
+
 /**
  * DC ブロッカ（一極ハイパス）。純関数——書き出しなどのオフライン処理向け。
  * 再生時のマスターチェーン（initAudio の dcBlocker: HP 20Hz）と同じ意図で、非対称
@@ -906,8 +935,10 @@ export class PolySynth {
    * ボイス数が上限に達していればスティールする。
    * @param {number} midi  MIDI ノート番号 (0〜127)
    * @param {number} [vel=1.0]  ベロシティ (0.0〜1.0)
+   * @param {number} [time]  発音開始時刻 (AudioContext.currentTime ベース)。
+   *   MIDI のジッタ吸収スケジューリング用。省略時は「今すぐ」。過去指定は今にクランプ。
    */
-  noteOn(midi, vel) {
+  noteOn(midi, vel, time) {
     const v = vel !== undefined ? Math.max(0, Math.min(1, vel)) : 1.0;
 
     // retrigger: 同ノートが押鍵中なら旧ボイスを停止
@@ -919,7 +950,11 @@ export class PolySynth {
     while (this._voiceCount() >= this._maxVoices) this._steal();
 
     const hasAudio = this._ensureAudio();
-    const startTime = ctx ? ctx.currentTime : 0;
+    const startTime = ctx
+      ? time !== undefined && time > ctx.currentTime
+        ? time
+        : ctx.currentTime
+      : 0;
     let source = null;
     let envGain = null;
 
@@ -961,8 +996,10 @@ export class PolySynth {
   /**
    * ノートオフ。指定 MIDI ノートのボイスに Release を適用して停止する。
    * @param {number} midi  MIDI ノート番号
+   * @param {number} [time]  消音開始時刻 (AudioContext.currentTime ベース)。
+   *   MIDI のジッタ吸収スケジューリング用。省略時は「今すぐ」。過去指定は今にクランプ。
    */
-  noteOff(midi) {
+  noteOff(midi, time) {
     const voice = this._held.get(midi);
     if (!voice) return;
     this._held.delete(midi);
@@ -970,7 +1007,8 @@ export class PolySynth {
     // 音ノードが無い (テスト環境) なら帳簿更新のみ
     if (!ctx || !voice.source || !voice.envGain) return;
 
-    const now = ctx.currentTime;
+    const now =
+      time !== undefined && time > ctx.currentTime ? time : ctx.currentTime;
     const { source, envGain } = voice;
 
     if (typeof envGain.gain.cancelAndHoldAtTime === "function") {

@@ -50,8 +50,11 @@ export function parseMidiMessage(data) {
  * MIDI 入力を初期化し、note on/off を購読する。
  * 非対応・失敗時は false で解決 (例外を投げない)。二度目以降は既存アクセスを再利用。
  *
- * @param {{ onNoteOn?:(midi:number, vel:number)=>void,
- *           onNoteOff?:(midi:number)=>void,
+ * コールバックには MIDIMessageEvent.timeStamp (performance.now 系・ms) も渡す。
+ * 発音側はこれを AudioContext 時刻に変換してジッタを吸収できる (省略可)。
+ *
+ * @param {{ onNoteOn?:(midi:number, vel:number, eventTime:number)=>void,
+ *           onNoteOff?:(midi:number, eventTime:number)=>void,
  *           onStateChange?:()=>void }} cbs
  * @returns {Promise<boolean>} 有効化できたら true
  */
@@ -91,10 +94,12 @@ function _bindInputs() {
 function _handleMessage(ev) {
   const msg = parseMidiMessage(ev.data);
   if (!msg) return;
+  // ev.timeStamp = メッセージ受信時刻 (performance.now 系)。ハンドラ実行が遅れても
+  // 発音時刻をこの時刻に固定できるよう、そのまま渡す。
   if (msg.kind === "on") {
-    if (_onNoteOn) _onNoteOn(msg.note, msg.velocity);
+    if (_onNoteOn) _onNoteOn(msg.note, msg.velocity, ev.timeStamp);
   } else if (_onNoteOff) {
-    _onNoteOff(msg.note);
+    _onNoteOff(msg.note, ev.timeStamp);
   }
 }
 

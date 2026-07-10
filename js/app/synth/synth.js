@@ -26,7 +26,7 @@ import { fillRect, isCapturing } from "../../core/gpu.js";
 import { drawText, textWidth, GLYPH_H } from "../../core/font.js";
 import { keyDown, keyHeld } from "../../core/input.js";
 import { wmOpen, wmRegister, wmIsFocused } from "../../wm/index.js";
-import { createPolySynth } from "../../core/audio.js";
+import { createPolySynth, midiEventAudioTime } from "../../core/audio.js";
 import { initMidiInput, getMidiInputCount } from "../../core/midi_input.js";
 import {
   WidgetGroup,
@@ -184,16 +184,18 @@ function _initWidgets() {
 
   // Web MIDI 入力 (非対応環境では自動で無効 → PC 鍵盤にフォールバック)。
   // フォーカスに依らず winOpen の間だけ発音する (外部 MIDI 鍵盤の自然な挙動)。
+  // 発音時刻を MIDI イベントの timeStamp に固定してフレーム描画由来のジッタを吸収する
+  // (midiEventAudioTime が performance.now → AudioContext 時刻へ変換)。
   initMidiInput({
-    onNoteOn: (m, v) => {
+    onNoteOn: (m, v, t) => {
       if (!winOpen) return;
       midiHeld.add(m);
-      synth().noteOn(m, v);
+      synth().noteOn(m, v, midiEventAudioTime(t));
     },
-    onNoteOff: (m) => {
+    onNoteOff: (m, t) => {
       if (!winOpen) return;
       midiHeld.delete(m);
-      synth().noteOff(m);
+      synth().noteOff(m, midiEventAudioTime(t));
     },
   });
 }
