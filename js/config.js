@@ -260,14 +260,19 @@ export function assetUrl(url) {
 
 /** 説明文 (改行区切り) */
 export const APP_DESCRIPTION =
-  "A retro-computer-inspired environment\n" +
-  "for expressing structure through sound and visuals.";
+  "A retro-computer-inspired environment\n" + "for the low-bit faithful.";
 
 /** 著作権者名 */
 export const APP_AUTHOR = "Layotashi";
 
-/** 公開 URL */
-export const APP_URL = "x.com/layotashi_";
+/**
+ * 関連リンク (ABOUT に表示)。text=表示テキスト, url=遷移先 (https)。
+ * 増やす場合はここに追記するだけ (insta / youtube / patreon 等)。
+ */
+export const APP_LINKS = [
+  { text: "x.com/layotashi_", url: "https://x.com/layotashi_" },
+  { text: "github.com/layotashi", url: "https://github.com/layotashi" },
+];
 
 /** PIXERA OS の ASCII アートロゴ (splash / about 共通) */
 export const APP_ASCII_LOGO = [
