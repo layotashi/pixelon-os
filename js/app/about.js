@@ -3,8 +3,8 @@
  * about.js — ABOUT ダイアログ
  *
  * アプリケーション情報 (identity) を表示する非モーダルウィンドウ。
- * ASCII アートロゴ + テキスト (ラベル) + 関連リンク (Link) を左揃え描画。
- * 「いつ・何が変わったか」は WELCOME (app/welcome.js) が担う。
+ * ロゴ → 説明 → ビルド → AUTHOR + 関連リンク (Link) → 著作権 を左揃えで縦に並べる。
+ * 著作権は末尾。「いつ・何が変わったか」は WELCOME (app/welcome.js) が担う。
  */
 
 import * as Config from "../config.js";
@@ -19,25 +19,30 @@ const APP_NAME = "ABOUT";
 // 余白は WELCOME と揃える (少しコンパクトに)。
 const ABOUT_PADDING = 8;
 
-// ── 全テキスト (ロゴ + 情報を1つに連結、空行で余白調整) ──
-const aboutText = [
+// ── 上段テキスト (ロゴ → 説明 → ビルド → AUTHOR 見出し) ──
+const headText = [
   ...Config.APP_ASCII_LOGO,
   "",
   Config.APP_DESCRIPTION,
   "",
-  Config.APP_CHANNEL,
-  "BUILD " + BUILD.date + " (" + BUILD.hash + ")",
+  Config.buildStampLine(),
+  "",
+  "AUTHOR",
+].join("\n");
+
+// ── 下段テキスト (著作権を末尾に。先頭の空行でリンク群と分離する) ──
+const footText = [
   "",
   "(C) " +
+    Config.APP_YEAR_START +
+    "-" +
     BUILD.date.slice(0, 4) +
     " " +
     Config.APP_AUTHOR +
-    " " +
-    "All Rights Reserved.",
+    " ALL RIGHTS RESERVED.",
 ].join("\n");
 
 // ── ウィジェット (遅延初期化) ──
-let label;
 let root;
 let group;
 let _ready = false;
@@ -45,12 +50,13 @@ let _ready = false;
 function _initWidgets() {
   if (_ready) return;
   _ready = true;
-  label = new Label(0, 0, aboutText);
-  // 関連リンク: 各行を下線付きクリック可能に (別タブで開く)
+  // 上段ラベル → 関連リンク (下線付き・別タブで開く) → 著作権ラベル の順に縦積み。
+  const head = new Label(0, 0, headText);
   const links = Config.APP_LINKS.map(
     (l) => new Link(0, 0, l.text, () => openUrl(l.url)),
   );
-  root = VBox([label, ...links]);
+  const foot = new Label(0, 0, footText);
+  root = VBox([head, ...links, foot]);
   group = new WidgetGroup(root, { x: ABOUT_PADDING, y: ABOUT_PADDING });
 }
 

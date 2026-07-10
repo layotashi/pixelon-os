@@ -226,6 +226,15 @@ export const APP_NAME = "PIXERA OS";
  */
 export const APP_CHANNEL = "BETA";
 
+/**
+ * ABOUT / WELCOME 共通のビルド行を返す "BETA  2026.07.10 (9d6888d)"。
+ * チャンネル + CalVer 日付 + 短縮ハッシュを 1 行にまとめる (スプラッシュと同書式)。
+ * @returns {string}
+ */
+export function buildStampLine() {
+  return APP_CHANNEL + "  " + BUILD.date + " (" + BUILD.hash + ")";
+}
+
 // ── アセットのキャッシュバスティング ──
 
 /** キャッシュバスト用トークン (初回 assetUrl 呼び出し時に一度だけ確定) */
@@ -264,6 +273,9 @@ export const APP_DESCRIPTION =
 
 /** 著作権者名 */
 export const APP_AUTHOR = "Layotashi";
+
+/** 開発開始年 (著作権表記の範囲の始点)。終点はビルド年から自動算出する */
+export const APP_YEAR_START = "2025";
 
 /**
  * 関連リンク (ABOUT に表示)。text=表示テキスト, url=遷移先 (https)。

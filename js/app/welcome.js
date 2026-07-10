@@ -108,8 +108,7 @@ function buildText() {
   const rule = "-".repeat(cols);
   const out = [
     Config.APP_NAME,
-    Config.APP_CHANNEL,
-    "BUILD " + BUILD.date + " (" + BUILD.hash + ")",
+    Config.buildStampLine(),
     rule,
     "WHAT'S NEW",
   ];
