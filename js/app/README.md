@@ -21,6 +21,8 @@
 - `category` — 右クリックランチャの分類。省略時はトップレベル (OS ユーティリティ扱い)。
 - `dev: true` — `config.js` の `DEV_MODE` が真のときだけ表示 (未完成・デモ)。
 - `hidden: true` — ランチャに出さない (イースターエッグ)。
+- `noIcon: true` — デスクトップアイコンを作らない (ランチャのみ)。OS 情報窓向け。
+- `system: true` — ランチャ最下部の system セクションに置く (WELCOME / ABOUT)。並びは import 順。
 - `about` — ヘッダ右クリック → ABOUT パネルの説明文 (宣言したアプリのみ)。
 
 - **CREATIVE**
@@ -32,7 +34,9 @@
   - `files` — VFS マネージャ
   - `capture` — スクショ/動画/GIF 撮影
   - `settings` — パレット/壁紙/解像度/エフェクト
-  - `about` — バージョン情報
+- **システム** (ランチャ最下部, `system: true` = 兄弟として隣接)
+  - `welcome` — 起動時の WHAT'S NEW / ビルド情報
+  - `about` — 製品情報 (identity)
 - **GAMES**
   - `life` — ライフゲーム / `bricker` — ブロック崩し
   - `dungeon` — 1-bit ローグライク

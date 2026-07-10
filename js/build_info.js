@@ -8,8 +8,8 @@
 
 export const BUILD = {
   date: "2026.07.10",
-  hash: "9c7d777",
-  count: 261,
+  hash: "b94a068",
+  count: 262,
   notes: [
     { date: "2026-07-10", hash: "d5137b8", text: "A WELCOME window now greets you at startup with what's new" },
   ],

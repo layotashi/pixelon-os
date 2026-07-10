@@ -107,6 +107,27 @@ describe("buildMenuTree", () => {
     expect(shape(buildMenuTree(reg))).toEqual(["ALPHA", "---", "DIALOG"]);
   });
 
+  it("system エントリは最下部にセパレーター付きで登録順に並ぶ (アルファベット順にしない)", () => {
+    const reg = [
+      entry("WELCOME", { system: true }),
+      entry("CAPTURE"),
+      entry("DIALOG", { modal: true }),
+      entry("ABOUT", { system: true }),
+      entry("PAINT", { category: "CREATIVE" }),
+    ];
+    // 非階層 → カテゴリ → modal → system(登録順 WELCOME→ABOUT, アルファベット順なら ABOUT が先)
+    expect(shape(buildMenuTree(reg))).toEqual([
+      "CAPTURE",
+      "---",
+      "[CREATIVE]",
+      "---",
+      "DIALOG",
+      "---",
+      "WELCOME",
+      "ABOUT",
+    ]);
+  });
+
   it("production サブメニューは dev 専用サブメニューより前に並ぶ", () => {
     _devMode = true;
     const reg = [

@@ -159,7 +159,7 @@ wmRegister(
       },
     });
   },
-  { noIcon: true },
+  { noIcon: true, system: true },
 );
 
 /**

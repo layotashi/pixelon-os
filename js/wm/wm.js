@@ -516,6 +516,8 @@ const registry = [];
  * @param {boolean} [opts.hidden]   メニューに表示しない（デスクトップアイコンのみ）。
  * @param {boolean} [opts.noIcon]   デスクトップアイコンを作らない（ランチャメニューのみ）。
  *                                  OS 情報窓 (ABOUT / WELCOME) 等、デスクトップに常駐させない窓に使う。
+ * @param {boolean} [opts.system]   ランチャ最下部の「システム」セクションに置く
+ *                                  (WELCOME / ABOUT)。並びは登録順 = app.js の import 順。
  * @param {string}  [opts.openLabel] デスクトップアイコン右クリックメニューの主アクション
  *   (起動) のラベル。省略時は "OPEN"。アプリの性質に合わせて上書きする (例: AQUARIA="RUN")。
  * @param {(entry:object)=>object[]} [opts.iconMenu] デスクトップアイコン右クリックメニューに
@@ -539,6 +541,7 @@ export function wmRegister(name, factory, opts = null) {
     dev: (opts && opts.dev) || false,
     hidden: (opts && opts.hidden) || false,
     noIcon: (opts && opts.noIcon) || false,
+    system: (opts && opts.system) || false,
     openLabel: (opts && opts.openLabel) || null,
     iconMenu: (opts && opts.iconMenu) || null,
     isRunning: (opts && opts.isRunning) || null,
@@ -1101,6 +1104,7 @@ export function wmGetRegistry() {
     category: e.category,
     dev: e.dev,
     noIcon: e.noIcon,
+    system: e.system,
   }));
 }
 

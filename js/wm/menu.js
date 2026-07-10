@@ -118,12 +118,15 @@ function _itemChecked(item) {
 export function buildMenuTree(registry) {
   const regular = [];
   const modal = [];
+  const system = [];
   for (const e of registry) {
     // dev アプリを非表示
     if (e.dev && !Config.DEV_MODE) continue;
     // hidden アプリをメニューから除外
     if (e.hidden) continue;
-    if (e.modal) modal.push(e);
+    // システム窓 (WELCOME / ABOUT) は最下部の専用セクションへ
+    if (e.system) system.push(e);
+    else if (e.modal) modal.push(e);
     else regular.push(e);
   }
 
@@ -205,7 +208,8 @@ export function buildMenuTree(registry) {
   }
 
   // トップレベル: 非階層アプリ → セパレーター → プロダクションサブメニュー
-  //              → セパレーター → dev サブメニュー → セパレーター → モーダル
+  //   → セパレーター → dev サブメニュー → セパレーター → モーダル
+  //   → セパレーター → システム窓 (WELCOME / ABOUT)
   let topItems = [];
 
   // 1) 非階層アプリ (アルファベット順)
@@ -251,6 +255,16 @@ export function buildMenuTree(registry) {
   }
   const sortedModal = [...modal].sort((a, b) => a.name.localeCompare(b.name));
   for (const e of sortedModal) {
+    topItems.push({ type: "app", entry: e });
+  }
+
+  // システム窓 (WELCOME / ABOUT) を最下部にセパレーター付きで追加する。
+  // 兄弟として隣接させ、水平線で挟んだ最下段に置く。並びはアルファベット順ではなく
+  // 登録順 (app.js の import 順 = WELCOME → ABOUT) を尊重する。
+  if (topItems.length > 0 && system.length > 0) {
+    topItems.push({ type: "sep" });
+  }
+  for (const e of system) {
     topItems.push({ type: "app", entry: e });
   }
 

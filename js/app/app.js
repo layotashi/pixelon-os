@@ -23,8 +23,10 @@ import "./notepad.js";
 // capture.js は上で named import 済み
 import "./synesta/synesta.js";
 // synesta/synth_panel.js, synesta/piano_roll.js は synesta.js 経由で読み込まれる
-import "./about.js";
+// WELCOME / ABOUT はランチャ最下部の system セクションに並ぶ。
+// import 順が並び順を決めるため、WELCOME を先に読み込む (メニュー: WELCOME → ABOUT)。
 import "./welcome.js";
+import "./about.js";
 import "./life.js";
 import "./files.js";
 import "./paint.js";
