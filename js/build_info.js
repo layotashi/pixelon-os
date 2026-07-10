@@ -8,9 +8,10 @@
 
 export const BUILD = {
   date: "2026.07.10",
-  hash: "50e05d9",
-  count: 266,
+  hash: "7b2ce0a",
+  count: 267,
   notes: [
+    { date: "2026-07-10", hash: "7b2ce0a", text: "New Matte option adds a margin to shots" },
     { date: "2026-07-10", hash: "e901879", text: "About now has clickable links to X and GitHub" },
     { date: "2026-07-10", hash: "d5137b8", text: "A WELCOME window now greets you at startup with what's new" },
   ],
