@@ -21,6 +21,12 @@
  * 発音は tracks レジストリ経由: SYNTH が開いていればその音色 (現在のパラメータ) で鳴り、
  * 無ければ ROLL 内蔵のフォールバック音源で鳴る。再生位置は共有 transport が持つ
  * (再生「制御」は将来 Transport アプリへ分離できるよう責務を分けてある)。
+ *
+ * ── VFS 連携 (保存 / 読込) ──
+ *   Ctrl+S = 上書き保存 (無題なら Save As)。Ctrl+Shift+S = 名前を付けて保存。
+ *   Ctrl+O = 開く。いずれも共有クリップモデル (core/clip.js) の JSON = `.roll`。
+ *   モデルは MIDI 互換の形状 (pitch/start/len/vel) で、将来の `.mid` コーデック追加時に
+ *   作り直さずに済む。FILES から `.roll` をダブルクリックで開く (rollOpenFile)。
  */
 
 import { fillRect, isCapturing } from "../../core/gpu.js";
@@ -28,14 +34,20 @@ import { drawText, textWidth } from "../../core/font.js";
 import { createPolySynth, getAudioContext, initAudio } from "../../core/audio.js";
 import * as tracks from "../music/tracks.js";
 import * as transport from "../music/transport.js";
+import * as VFS from "../../core/vfs.js";
+import { openFileDialog, openConfirmDialog } from "../../ui/index.js";
+import { CLIP_EXT, serializeClip, parseClip } from "../../core/clip.js";
 import {
   wmOpen,
   wmRegister,
   wmIsFocused,
   wmGetScroll,
   wmSetScroll,
+  wmSetTitle,
+  wmOpenOrFocus,
+  wmClose,
 } from "../../wm/index.js";
-import { keyDown, keyHeld, ctrlDown } from "../../core/input.js";
+import { keyDown, keyHeld, ctrlDown, ctrlShiftDown } from "../../core/input.js";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  定数
@@ -107,6 +119,12 @@ let fold = false; // FOLD: ノートのある行だけ表示
 
 /** @type {{col:number,row:number,len:number,vel:number,selected:boolean}[]} */
 let notes = [];
+
+// ── ファイル状態 (VFS 保存/読込) ──
+/** 現在開いているクリップの VFS パス (null = 無題) */
+let currentFilePath = null;
+/** 最後に保存/読込した時点から編集があるか */
+let isDirty = false;
 
 /**
  * ドラッグ状態。mode="move": 選択のグループ移動/複製 (dCol/dRow, sel, pending)。
@@ -351,6 +369,7 @@ function changeLen(d) {
   if (!sel.length) return;
   for (const n of sel) n.len = Math.max(1, n.len + d);
   resolveOverlaps(sel);
+  markDirty();
 }
 /** (dCol,dRow) を選択集合が枠内に収まる範囲へクランプ */
 function clampDelta(sel, dCol, dRow) {
@@ -377,6 +396,7 @@ function moveSelected(dCol, dRow) {
     n.row += dRow;
   }
   resolveOverlaps(sel);
+  markDirty();
 }
 /** sel を (dCol,dRow) へ複製し選択をコピーへ移す。コピーが既存に勝つ */
 function duplicateAt(sel, dCol, dRow) {
@@ -391,6 +411,7 @@ function duplicateAt(sel, dCol, dRow) {
   for (const n of sel) n.selected = false;
   notes.push(...copies);
   resolveOverlaps(copies);
+  markDirty();
 }
 /** Ctrl+D: 「ノート群の末尾の次のセル」から複製 (音高そのまま。相対位置を保つ) */
 function duplicateAfter() {
@@ -405,8 +426,119 @@ function duplicateAfter() {
   duplicateAt(sel, maxEnd - minCol, 0);
 }
 function deleteSelected() {
+  if (!notes.some((n) => n.selected)) return;
   notes = notes.filter((n) => !n.selected);
   drag = null;
+  markDirty();
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  ファイル (VFS 保存 / 読込)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//
+// 保存形式は共有クリップモデル (core/clip.js) の JSON = .roll。ROLL 内部の
+// ノート表現 {col,row,len,vel} と、MIDI 互換のクリップ表現 {pitch,start,len,vel}
+// を相互変換する (pitch = rowToMidi(row)、start = col)。
+
+/** タイトルバーをファイル名 + dirty マークで更新する */
+function refreshTitle() {
+  if (winId < 0) return;
+  const name = currentFilePath ? VFS.basename(currentFilePath) : "UNTITLED";
+  wmSetTitle(winId, `${isDirty ? "* " : ""}${name} - ${APP_NAME}`);
+}
+
+/** 編集が起きたら dirty にしてタイトルを更新する (未 dirty からの遷移時のみ) */
+function markDirty() {
+  if (isDirty) return;
+  isDirty = true;
+  refreshTitle();
+}
+
+/** 現在のノート群を保存用クリップ (MIDI 互換形状) にする */
+function currentClip() {
+  return {
+    stepsPerBeat: STEPS_PER_BEAT,
+    steps: COLS,
+    notes: notes.map((n) => ({
+      pitch: rowToMidi(n.row),
+      start: n.col,
+      len: n.len,
+      vel: n.vel,
+    })),
+  };
+}
+
+/** 読み込んだクリップをノート群へ反映し、再生/編集の一時状態を初期化する */
+function loadClip(clip) {
+  notes = clip.notes.map((n) => ({
+    col: n.start,
+    row: ROWS - 1 - n.pitch, // rowToMidi の逆
+    len: n.len,
+    vel: n.vel,
+    selected: false,
+  }));
+  drag = null;
+  sounding.clear();
+}
+
+/** dirty なら破棄確認、無ければ即実行 */
+function confirmDiscard(onOk) {
+  if (!isDirty) {
+    onOk();
+    return;
+  }
+  openConfirmDialog("DISCARD UNSAVED CHANGES?", { variant: "danger", onOk });
+}
+
+/** 名前を付けて保存 (FileDialog) */
+function saveClipAs() {
+  const dir = currentFilePath ? VFS.parentPath(currentFilePath) : "/Music";
+  const name = currentFilePath ? VFS.basename(currentFilePath) : "untitled" + CLIP_EXT;
+  openFileDialog("save", {
+    title: "SAVE AS",
+    defaultPath: dir,
+    defaultName: name,
+    filter: [CLIP_EXT],
+    onResult: (path) => {
+      if (!path) return;
+      currentFilePath = path;
+      VFS.writeFile(path, serializeClip(currentClip()));
+      isDirty = false;
+      refreshTitle();
+    },
+  });
+}
+
+/** 上書き保存 (パス未定なら Save As へフォールバック) */
+function saveClip() {
+  if (!currentFilePath) {
+    saveClipAs();
+    return;
+  }
+  VFS.writeFile(currentFilePath, serializeClip(currentClip()));
+  isDirty = false;
+  refreshTitle();
+}
+
+/** ファイルを開く (未保存確認 → FileDialog → 読込) */
+function openClip() {
+  confirmDiscard(() => {
+    openFileDialog("open", {
+      title: "OPEN",
+      filter: [CLIP_EXT],
+      onResult: (path) => {
+        if (!path) return;
+        const text = VFS.readFile(path);
+        if (text === null) return;
+        const clip = parseClip(text);
+        if (!clip) return;
+        loadClip(clip);
+        currentFilePath = path;
+        isDirty = false;
+        refreshTitle();
+      },
+    });
+  });
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -520,6 +652,7 @@ function endDrag() {
   drag = null;
   if (d.mode === "resize") {
     resolveOverlaps([d.note]); // 端ドラッグはノートを実時間で伸縮済み。確定時に重なり解決
+    if (d.resized) markDirty();
     return;
   }
   if (!d.moved) {
@@ -527,13 +660,14 @@ function endDrag() {
     return;
   }
   if (ctrlHeld()) {
-    duplicateAt(d.sel, d.dCol, d.dRow); // Ctrl 押下中 = 複製
+    duplicateAt(d.sel, d.dCol, d.dRow); // Ctrl 押下中 = 複製 (markDirty は duplicateAt 内)
   } else {
     for (const n of d.sel) {
       n.col += d.dCol;
       n.row += d.dRow;
     }
     resolveOverlaps(d.sel);
+    markDirty();
   }
 }
 
@@ -559,6 +693,7 @@ function onInput(ev) {
       audition(rowToMidi(nn.row));
       resolveOverlaps([nn]);
     }
+    markDirty();
     return;
   }
 
@@ -584,6 +719,7 @@ function onInput(ev) {
         note: n,
         side,
         fixedCol: side === "r" ? n.col : n.col + n.len - 1,
+        resized: false,
       };
       return;
     }
@@ -624,6 +760,8 @@ function onInput(ev) {
     const cell = cellAt(ev.localX, ev.localY);
     if (!cell) return;
     if (drag.mode === "resize") {
+      const pc = drag.note.col;
+      const pl = drag.note.len;
       if (drag.side === "r") {
         drag.note.len = Math.max(1, cell.col - drag.fixedCol + 1);
       } else {
@@ -631,6 +769,7 @@ function onInput(ev) {
         drag.note.col = s;
         drag.note.len = drag.fixedCol - s + 1;
       }
+      if (drag.note.col !== pc || drag.note.len !== pl) drag.resized = true;
       return;
     }
     const [dCol, dRow] = clampDelta(drag.sel, cell.col - drag.grabCol, cell.row - drag.grabRow);
@@ -688,6 +827,10 @@ function handleKeys() {
     return;
   }
   const shift = keyHeld("ShiftLeft") || keyHeld("ShiftRight");
+  // ファイル (VFS): Ctrl+Shift+S を Ctrl+S より先に判定する
+  if (ctrlShiftDown("KeyS")) saveClipAs();
+  else if (ctrlDown("KeyS")) saveClip();
+  if (ctrlDown("KeyO")) openClip();
   if (ctrlDown("KeyA")) selectAll();
   if (ctrlDown("KeyD")) duplicateAfter();
   if (keyDown("Escape")) deselectAll();
@@ -831,11 +974,44 @@ const ABOUT_TEXT = [
   "- F: fold (show only used rows)",
   "- Space: play / stop",
   "- Shift+Space: play from stop point",
+  "",
+  "FILE",
+  "- Ctrl+S: save (.roll clip)",
+  "- Ctrl+Shift+S: save as",
+  "- Ctrl+O: open",
 ].join("\n");
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  登録
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/** 閉じる際の後始末: 再生を止め発音を消す (updatePlayback は閉じると呼ばれないため明示) */
+function cleanupOnClose() {
+  if (transport.isPlaying()) transport.stop();
+  if (_activeInst) _activeInst.allNotesOff();
+  _activeInst = null;
+  _wasPlaying = false;
+  sounding.clear();
+  winId = -1;
+}
+
+/** 閉じる前: 未保存なら破棄確認して閉じをキャンセル、確認後に直接クローズ */
+function onBeforeClose() {
+  if (isDirty) {
+    const id = winId;
+    openConfirmDialog("DISCARD UNSAVED CHANGES?", {
+      variant: "danger",
+      onOk: () => {
+        isDirty = false;
+        cleanupOnClose();
+        wmClose(id);
+      },
+    });
+    return false;
+  }
+  cleanupOnClose();
+  return true;
+}
 
 wmRegister(
   APP_NAME,
@@ -843,19 +1019,40 @@ wmRegister(
     winId = wmOpen(-1, -1, 0, 0, APP_NAME, onDraw, onInput, onMeasure, {
       footer: true,
       onDrawFooter,
-      onBeforeClose: () => {
-        // 再生を止め発音を消す (updatePlayback は閉じると呼ばれないため明示的に)
-        if (transport.isPlaying()) transport.stop();
-        if (_activeInst) _activeInst.allNotesOff();
-        _activeInst = null;
-        _wasPlaying = false;
-        sounding.clear();
-        winId = -1;
-        return true;
-      },
+      onBeforeClose,
       about: ABOUT_TEXT,
     });
+    refreshTitle(); // 再オープン時もファイル名 / dirty をタイトルに反映
     return winId;
   },
   { category: "CREATIVE", dev: true },
 );
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  公開 API: FILES 等から .roll を開く
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * 指定パスの .roll クリップを ROLL で開く。
+ * ウィンドウが閉じていれば開き、最前面へ。未保存の編集があれば破棄確認する。
+ * @param {string} path  VFS 上のファイルパス (.roll)
+ * @returns {boolean} 読み込み成功なら true
+ */
+export function rollOpenFile(path) {
+  const text = VFS.readFile(path);
+  if (text === null) return false;
+  const clip = parseClip(text);
+  if (!clip) return false;
+
+  const load = () => {
+    wmOpenOrFocus(APP_NAME); // 未オープンなら登録 cb が winId を確定
+    loadClip(clip);
+    currentFilePath = path;
+    isDirty = false;
+    refreshTitle();
+  };
+  // 開いていて未保存編集があるときだけ確認する (閉じていれば破棄するものは無い)
+  if (winId >= 0 && isDirty) confirmDiscard(load);
+  else load();
+  return true;
+}
