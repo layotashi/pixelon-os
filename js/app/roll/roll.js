@@ -18,12 +18,16 @@
  *   ズーム = Ctrl/Shift+Ctrl+ホイール (カーソル基準)。FOLD = F。再生 = Space。
  *   選択時はピッチ確認のため短く試聴する。重なりは配置側が勝ち (被りは削除/クリップ)。
  *
- * 音源は内蔵 PolySynth。再生はフレーム駆動 (AudioContext 時計基準)。
+ * 発音は tracks レジストリ経由: SYNTH が開いていればその音色 (現在のパラメータ) で鳴り、
+ * 無ければ ROLL 内蔵のフォールバック音源で鳴る。再生位置は共有 transport が持つ
+ * (再生「制御」は将来 Transport アプリへ分離できるよう責務を分けてある)。
  */
 
 import { fillRect, isCapturing } from "../../core/gpu.js";
 import { drawText, textWidth } from "../../core/font.js";
 import { createPolySynth, getAudioContext, initAudio } from "../../core/audio.js";
+import * as tracks from "../music/tracks.js";
+import * as transport from "../music/transport.js";
 import {
   wmOpen,
   wmRegister,
@@ -72,8 +76,9 @@ const EDGE_GRAB = 5;
 const DEFAULT_VEL = 100;
 /** 試聴の長さ (秒) */
 const AUDITION_SEC = 0.25;
-/** 再生テンポ (v1 固定) と 1 ループ長 (= 4 小節) */
+/** 再生テンポ (v1 固定) と拍/ループ長 (= 4 小節) */
 const BPM = 120;
+const BEATS_PER_BAR = STEPS_PER_BAR / STEPS_PER_BEAT; // 4/4 → 4
 const LOOP_STEPS = COLS;
 
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
@@ -118,22 +123,26 @@ let repeatNext = 0;
 let lastDownKey = null;
 let prevDownKey = null;
 
-// ── 再生 ──
-let playing = false;
-let playPos = 0; // 現在位置 (ステップ)。停止後は停止位置を保持
-let playStartTime = 0;
-let playStartPos = 0;
+// ── 再生 (クロックは共有 transport、発音先は tracks レジストリ) ──
 let lastFiredStep = -1;
+let _wasPlaying = false; // transport 再生状態の前フレーム値 (開始/停止の遷移検出)
+let _activeInst = null; // 再生セッション中の発音先 (開始時に確定し、途中で切替えない)
 const sounding = new Map(); // note -> 残りステップ (発音中)
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  音源 / 試聴
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-let _synth = null;
-function synth() {
-  if (!_synth) _synth = createPolySynth();
-  return _synth;
+/** ROLL 内蔵のフォールバック音源 (SYNTH トラックが無いとき用)。PolySynth は instrument 互換 */
+let _fallback = null;
+function fallbackInstrument() {
+  if (!_fallback) _fallback = createPolySynth();
+  return _fallback;
+}
+/** 発音先: SYNTH が登録したトラックがあればその音色、無ければフォールバック */
+function targetInstrument() {
+  const t = tracks.getDefaultTrack();
+  return t ? t.instrument : fallbackInstrument();
 }
 /** AudioContext を確実に用意 (ユーザー操作起点で resume) */
 function ensureCtx() {
@@ -142,12 +151,13 @@ function ensureCtx() {
   if (ctx && ctx.state === "suspended") ctx.resume();
   return ctx;
 }
-/** ピッチ確認の短い試聴 */
+/** ピッチ確認の短い試聴 (発音先は毎回の最新ターゲット) */
 function audition(midi) {
   const ctx = ensureCtx();
   if (!ctx) return;
-  synth().noteOn(midi, DEFAULT_VEL / 127, ctx.currentTime);
-  synth().noteOff(midi, ctx.currentTime + AUDITION_SEC);
+  const inst = targetInstrument();
+  inst.noteOn(midi, DEFAULT_VEL / 127, ctx.currentTime);
+  inst.noteOff(midi, ctx.currentTime + AUDITION_SEC);
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -403,29 +413,24 @@ function deleteSelected() {
 //  再生
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-const stepDur = () => 60 / BPM / STEPS_PER_BEAT;
-
-function startPlay(fromPos) {
-  const ctx = ensureCtx();
-  if (!ctx) return;
-  playing = true;
-  playStartPos = ((fromPos % LOOP_STEPS) + LOOP_STEPS) % LOOP_STEPS;
-  playPos = playStartPos;
-  playStartTime = ctx.currentTime;
-  lastFiredStep = (Math.floor(playStartPos) - 1 + LOOP_STEPS) % LOOP_STEPS;
-  sounding.clear();
-}
-function stopPlay() {
-  playing = false;
-  if (_synth) _synth.allNotesOff();
-  sounding.clear();
+/** Space: transport を開始/停止する。fromStop=true で停止位置から (Shift+Space) */
+function togglePlay(fromStop) {
+  if (transport.isPlaying()) {
+    transport.stop();
+  } else {
+    transport.setTempo(BPM);
+    transport.setLoop(0, BARS * BEATS_PER_BAR, true); // 4 小節ループ
+    transport.play(fromStop ? null : 0); // null=停止位置から / 0=1.1.1 から
+  }
 }
 /** ステップ境界: 発音中を減衰・消音し、そのステップで始まるノートを発音 */
 function onStepEnter(step) {
+  const inst = _activeInst;
+  if (!inst) return;
   for (const [note, rem] of sounding) {
     const r = rem - 1;
     if (r <= 0) {
-      synth().noteOff(rowToMidi(note.row));
+      inst.noteOff(rowToMidi(note.row));
       sounding.delete(note);
     } else {
       sounding.set(note, r);
@@ -434,19 +439,34 @@ function onStepEnter(step) {
   for (const n of notes) {
     if (n.col === step) {
       const midi = rowToMidi(n.row);
-      synth().noteOff(midi);
-      synth().noteOn(midi, n.vel / 127);
+      inst.noteOff(midi);
+      inst.noteOn(midi, n.vel / 127);
       sounding.set(n, n.len);
     }
   }
 }
-/** 毎フレーム: AudioContext 時計で位置を進め、跨いだステップを 1 つずつ発火 */
+/**
+ * 毎フレーム: transport を進め、開始/停止の遷移を処理し、跨いだステップを発火する。
+ * transport を誰が操作しても (将来の Transport アプリ含む) ここで追従する。
+ */
 function updatePlayback() {
-  if (!playing) return;
-  const ctx = getAudioContext();
-  if (!ctx) return;
-  playPos = (playStartPos + (ctx.currentTime - playStartTime) / stepDur()) % LOOP_STEPS;
-  const target = Math.floor(playPos);
+  transport.update();
+  const p = transport.isPlaying();
+  if (p && !_wasPlaying) {
+    // 再生開始: このセッションの発音先を確定し、開始ステップ直前へ合わせる
+    _activeInst = targetInstrument();
+    const startStep = transport.getPosition() * STEPS_PER_BEAT;
+    lastFiredStep = (Math.floor(startStep) - 1 + LOOP_STEPS) % LOOP_STEPS;
+    sounding.clear();
+  } else if (!p && _wasPlaying) {
+    // 停止: 発音を止める
+    if (_activeInst) _activeInst.allNotesOff();
+    _activeInst = null;
+    sounding.clear();
+  }
+  _wasPlaying = p;
+  if (!p) return;
+  const target = Math.floor(transport.getPosition() * STEPS_PER_BEAT) % LOOP_STEPS;
   let guard = 0;
   while (lastFiredStep !== target && guard++ <= LOOP_STEPS) {
     lastFiredStep = (lastFiredStep + 1) % LOOP_STEPS;
@@ -673,10 +693,7 @@ function handleKeys() {
   if (keyDown("Escape")) deselectAll();
   if (keyDown("Delete")) deleteSelected();
   if (keyDown("KeyF")) fold = !fold;
-  if (keyDown("Space")) {
-    if (playing) stopPlay();
-    else startPlay(shift ? playPos : 0); // Shift = 停止位置から / 素 = 1.1.1 から
-  }
+  if (keyDown("Space")) togglePlay(shift); // Shift = 停止位置から / 素 = 1.1.1 から
   handleArrows(performance.now(), shift);
 }
 
@@ -789,7 +806,7 @@ function onDrawFooter(fr) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 const ABOUT_TEXT = [
-  "ROLL is a step-grid MIDI editor. Four bars of 16 steps across, all 128 MIDI pitches down. Selecting a note plays its pitch.",
+  "ROLL is a step-grid MIDI editor. Four bars of 16 steps across, all 128 MIDI pitches down. Notes play through SYNTH's voice when it is open, else a built-in fallback.",
   "",
   "MOUSE",
   "- Double-click empty: place note",
@@ -827,7 +844,12 @@ wmRegister(
       footer: true,
       onDrawFooter,
       onBeforeClose: () => {
-        stopPlay();
+        // 再生を止め発音を消す (updatePlayback は閉じると呼ばれないため明示的に)
+        if (transport.isPlaying()) transport.stop();
+        if (_activeInst) _activeInst.allNotesOff();
+        _activeInst = null;
+        _wasPlaying = false;
+        sounding.clear();
         winId = -1;
         return true;
       },

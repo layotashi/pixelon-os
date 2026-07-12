@@ -41,6 +41,7 @@ import { keyDown, keyHeld } from "../../core/input.js";
 import { wmOpen, wmRegister, wmIsFocused } from "../../wm/index.js";
 import { createPolySynth, midiEventAudioTime } from "../../core/audio.js";
 import { initMidiInput, getMidiInputCount } from "../../core/midi_input.js";
+import { addTrack } from "../music/tracks.js";
 import {
   WidgetGroup,
   DropDown,
@@ -94,7 +95,20 @@ const VOICE_DEFAULT_INDEX = VOICE_VALUES.indexOf(16);
 /** @type {import("../../core/audio.js").PolySynth|null} */
 let _synth = null;
 function synth() {
-  if (!_synth) _synth = createPolySynth();
+  if (!_synth) {
+    _synth = createPolySynth();
+    // 自身の音源をトラックとして公開し、ROLL 等が現在の音色で鳴らせるようにする。
+    // instrument は _synth への薄いラッパ (パラメータは _synth に反映済み)。
+    addTrack({
+      id: APP_NAME,
+      name: APP_NAME,
+      instrument: {
+        noteOn: (m, v, t) => _synth.noteOn(m, v, t),
+        noteOff: (m, t) => _synth.noteOff(m, t),
+        allNotesOff: () => _synth.allNotesOff(),
+      },
+    });
+  }
   return _synth;
 }
 
