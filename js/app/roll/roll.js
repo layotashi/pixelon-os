@@ -2,29 +2,26 @@
  * @module app/roll/roll
  * roll.js — ROLL ウィンドウ (ステップグリッド MIDI エディタ)
  *
- * 最小構成からの再出発。ボディには表を 1 枚だけ描く:
- *   横 16 列 = 1 小節を 16 分音符で分割したステップ。
- *   縦 12 行 = 1 オクターブを構成する 12 音。
- *   計 192 セル。ノートは開始セル (col,row) と長さ len (セル数) を持つ。
+ * ボディには表を 1 枚だけ描く:
+ *   横 = 4 小節 × 16 分音符 = 64 列。
+ *   縦 = MIDI で入力可能な全音高 = 128 行。row 0 = MIDI 127 (最高音・上端)。
+ *   ノートは開始セル (col,row) と長さ len (セル数) を持つ。
  *
  * ── 罫線 ──
- *   小節の境界線 (左右端) と、オクターブ境界 (B と C の間 = 上下端) は 2px 実線。
+ *   小節の境界線 (16 列ごと) と、オクターブ境界 (B と C の間) は 2px 実線。上端も 2px。
  *   それ以外の内側の罫線は 1px 実線。罫線の太さはセル内寸に含めない。
  *
  * ── ノート ──
- *   寸法 = セル内寸 (span) から上下左右 1px ずつ内側。
- *   非選択 = 1px 黒枠 + 黒塗り (実質べた塗り)。選択 = 1px 黒枠 + 白塗り。
- *   移動中はゴースト (非選択と同じ外観) を移動先に表示する。
+ *   セル内寸 (span) いっぱいに置き、最外周 1px を白枠、その内側を黒ノートにする
+ *   (罫線との視認性確保。ノート + 白枠 = セル内寸)。
+ *   非選択 = 黒枠 + 黒塗り。選択 = 黒枠 + 白塗り。移動中は移動先へゴースト (非選択と同外観)。
  *
  * ── 操作 (ABOUT パネルにも記載。実装済みのもののみ) ──
- *   ダブルクリック(空)  … ノート配置 (配置直後は選択状態・排他)。
- *   ダブルクリック(ノート)… 削除。
- *   クリック            … 単一選択 (空セルは選択解除)。
- *   Ctrl+クリック       … 選択トグル (複数選択)。
- *   ドラッグ            … ノートを別セルへ移動。
- *   Ctrl+ホイール       … セル高さのズーム。Shift+Ctrl+ホイール … セル幅のズーム。
- *   Ctrl+A / Esc        … 全選択 / 全解除。
- *   Shift+← / Shift+→   … 選択ノートを 1 セル短縮 / 伸長 (最小 1 セル・上限なし)。
+ *   ダブルクリック(空/ノート) … 配置 / 削除。クリック … 単一選択 (空は解除)。
+ *   Ctrl+クリック … 選択トグル。ドラッグ … 移動 (掴んだ位置を保つ)。
+ *   Ctrl+ホイール / Shift+Ctrl+ホイール … セル高さ / 幅のズーム。
+ *   Ctrl+A / Esc … 全選択 / 全解除。矢印 … 選択を 1 セル移動。
+ *   Shift+↑↓ … 1 オクターブ移動。Shift+←→ … 1 セル短縮 / 伸長 (最小 1 セル・上限なし)。
  *
  * 音名・小節番号・鍵盤・再生は、この段階では未実装。
  * ノートモデルや再生ロジックは grid.js に温存 (このウィンドウからは未接続) してある。
@@ -40,16 +37,21 @@ import { keyDown, keyHeld, ctrlDown } from "../../core/input.js";
 
 export const APP_NAME = "ROLL";
 
-/** 表の格子数: 横 16 列 (1 小節 / 16 分音符) × 縦 12 行 (1 オクターブ 12 音) */
-const COLS = 16;
-const ROWS = 12;
+/** 時間方向: 4 小節 × 16 分音符 = 64 列 */
+const BARS = 4;
+const STEPS_PER_BAR = 16;
+const COLS = BARS * STEPS_PER_BAR;
+
+/** 音高方向: MIDI 0..127 の 128 行。row 0 = MIDI 127 (最高音・上端) */
+const OCTAVE = 12;
+const ROWS = 128;
 
 /** 罫線の太さ (DOT)。境界線 = 太線、それ以外 = 細線 */
 const THIN = 1;
 const BOLD = 2;
 
 /** セル内寸 (DOT) の範囲と初期値。罫線の太さは内寸に含めない */
-const CELL_MIN = 0;
+const CELL_MIN = 5;
 const CELL_MAX = 30;
 const CELL_DEFAULT = 15;
 
@@ -69,17 +71,22 @@ let cellH = CELL_DEFAULT; // 縦 (行) 方向の内寸
 /** ノート一覧。@type {{col:number,row:number,len:number,selected:boolean}[]} */
 let notes = [];
 
-/** ドラッグ移動の状態。@type {{note:object,startCol:number,startRow:number,targetCol:number,targetRow:number}|null} */
+/**
+ * ドラッグ移動の状態。grabD* は掴んだセルのノート先頭からのオフセット (掴み位置維持用)。
+ * @type {{note:object,grabDCol:number,grabDRow:number,startCol:number,startRow:number,targetCol:number,targetRow:number}|null}
+ */
 let drag = null;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  寸法 / 座標 (コンテンツ空間。原点 = 表の左上)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/** 列境界 (縦罫線) の太さ。両端 = 小節境界 = 太線 */
-const vThick = (c) => (c === 0 || c === COLS ? BOLD : THIN);
-/** 行境界 (横罫線) の太さ。両端 = オクターブ境界 (B/C) = 太線 */
-const hThick = (r) => (r === 0 || r === ROWS ? BOLD : THIN);
+const clampInt = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+/** 列境界 (縦罫線) の太さ。小節境界 (16 列ごと・両端含む) = 太線 */
+const vThick = (c) => (c % STEPS_PER_BAR === 0 ? BOLD : THIN);
+/** 行境界 (横罫線) の太さ。オクターブ境界 (B/C) と上端 = 太線 */
+const hThick = (r) => (r === 0 || (ROWS - r) % OCTAVE === 0 ? BOLD : THIN);
 
 /** 表の総幅 (DOT) = 全セル内寸 + 全縦罫線の太さ */
 function tableW() {
@@ -169,6 +176,23 @@ function selectOnly(note) {
 function changeLen(d) {
   for (const n of notes) if (n.selected) n.len = Math.max(1, n.len + d);
 }
+/**
+ * 選択中の全ノートを (dCol,dRow) だけ動かす。相対位置を保つため、1 つでも
+ * グリッド枠外へ出る場合は全体を動かさない (all-or-nothing)。
+ */
+function moveSelected(dCol, dRow) {
+  const sel = notes.filter((n) => n.selected);
+  if (!sel.length) return;
+  for (const n of sel) {
+    const c = n.col + dCol;
+    const r = n.row + dRow;
+    if (c < 0 || c > COLS - 1 || r < 0 || r > ROWS - 1) return;
+  }
+  for (const n of sel) {
+    n.col += dCol;
+    n.row += dRow;
+  }
+}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  入力
@@ -231,9 +255,17 @@ function onInput(ev) {
     } else {
       deselectAll(); // 空セルのクリック = 全解除
     }
-    // ノート上ならドラッグ開始 (実際の移動は held/up で確定)
+    // ノート上ならドラッグ開始。掴んだ位置のオフセットを保持し、移動時に瞬間移動させない
     drag = n
-      ? { note: n, startCol: n.col, startRow: n.row, targetCol: n.col, targetRow: n.row }
+      ? {
+          note: n,
+          grabDCol: cell.col - n.col,
+          grabDRow: cell.row - n.row,
+          startCol: n.col,
+          startRow: n.row,
+          targetCol: n.col,
+          targetRow: n.row,
+        }
       : null;
     return;
   }
@@ -242,8 +274,9 @@ function onInput(ev) {
     if (!drag) return;
     const cell = cellAt(ev.localX, ev.localY);
     if (!cell) return; // グリッド外は移動先を据え置き
-    drag.targetCol = cell.col;
-    drag.targetRow = cell.row;
+    // 掴んだ位置を保ったまま先頭セルを求める (枠内にクランプ)
+    drag.targetCol = clampInt(cell.col - drag.grabDCol, 0, COLS - 1);
+    drag.targetRow = clampInt(cell.row - drag.grabDRow, 0, ROWS - 1);
     return;
   }
 
@@ -257,9 +290,19 @@ function handleKeys() {
   if (!wmIsFocused(APP_NAME)) return;
   if (ctrlDown("KeyA")) selectAll();
   if (keyDown("Escape")) deselectAll();
+
   const shift = keyHeld("ShiftLeft") || keyHeld("ShiftRight");
-  if (shift && keyDown("ArrowRight")) changeLen(+1); // 伸長
-  if (shift && keyDown("ArrowLeft")) changeLen(-1); //  短縮
+  if (shift) {
+    if (keyDown("ArrowRight")) changeLen(+1); // 伸長
+    if (keyDown("ArrowLeft")) changeLen(-1); //  短縮
+    if (keyDown("ArrowUp")) moveSelected(0, -OCTAVE); // 1 オクターブ上 (row 減 = 高音)
+    if (keyDown("ArrowDown")) moveSelected(0, +OCTAVE); // 1 オクターブ下
+  } else {
+    if (keyDown("ArrowLeft")) moveSelected(-1, 0);
+    if (keyDown("ArrowRight")) moveSelected(+1, 0);
+    if (keyDown("ArrowUp")) moveSelected(0, -1); // 上 = 高音 = row 減
+    if (keyDown("ArrowDown")) moveSelected(0, +1);
+  }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -268,19 +311,23 @@ function handleKeys() {
 
 /**
  * ノート (col,row から len セル) を描く。cr はコンテンツ矩形。
- * selected=true で 1px 黒枠 + 白塗り、false で黒枠 + 黒塗り (べた)。
+ * セル内寸いっぱいを白枠 (最外周 1px) にし、その内側を黒ノートにする。
+ * selected=true で内部をさらに白へ (黒枠 + 白塗り)、false で黒塗り (べた)。
  */
 function drawNoteAt(cr, col, row, len, selected) {
   const x0 = colInnerX(col);
-  const x1 = colInnerX(col + len - 1) + cellW; // 最終セルの内寸・右端
-  const nx = cr.x + x0 + 1;
-  const ny = cr.y + rowInnerY(row) + 1;
-  const nw = x1 - x0 - 2; // span から左右 1px ずつ内側
-  const nh = cellH - 2;
-  if (nw <= 0 || nh <= 0) return; // 縮小しすぎでノートが消える範囲
-  fillRect(nx, ny, nw, nh, 1); // 1px 黒枠 + 黒塗り
-  if (selected && nw > 2 && nh > 2) {
-    fillRect(nx + 1, ny + 1, nw - 2, nh - 2, 0); // 内部を白へ → 黒枠 + 白塗り
+  const x1 = colInnerX(col + len - 1) + cellW; // 最終セル内寸の右端
+  const ox = cr.x + x0;
+  const oy = cr.y + rowInnerY(row);
+  const ow = x1 - x0; // セル内寸の span 幅 (白枠込みのノート全体)
+  const oh = cellH; // セル内寸の高さ
+  if (ow <= 0 || oh <= 0) return;
+  fillRect(ox, oy, ow, oh, 0); // 白枠 (最外周 1px ぶんを含めた白地)
+  if (ow > 2 && oh > 2) {
+    fillRect(ox + 1, oy + 1, ow - 2, oh - 2, 1); // 黒ノート本体 (白枠の内側)
+    if (selected && ow > 4 && oh > 4) {
+      fillRect(ox + 2, oy + 2, ow - 4, oh - 4, 0); // 選択: 内部を白へ (黒枠 + 白塗り)
+    }
   }
 }
 
@@ -304,7 +351,7 @@ function onDraw(cr) {
     y += t + (r < ROWS ? cellH : 0);
   }
 
-  // ノート (罫線の上に重ねる。内寸から 1px 内側なので線には触れない)
+  // ノート (罫線の上に重ねる。白枠が罫線との境を確保する)
   const moving = dragMoved();
   for (const n of notes) {
     if (moving && n === drag.note) continue; // 移動中の実体は隠しゴーストだけ描く
@@ -322,7 +369,7 @@ function onDraw(cr) {
 // 段落は空行区切り。字下げは描画側で空白が畳まれるため "-" 箇条書きで構造化する。
 // 実装済みの操作のみを記載し、機能追加ごとにこの一覧を更新する。
 const ABOUT_TEXT = [
-  "ROLL is a step-grid MIDI editor. One bar of 16 steps across, one octave down.",
+  "ROLL is a step-grid MIDI editor. Four bars of 16 steps across, all 128 MIDI pitches down.",
   "",
   "MOUSE",
   "- Double-click empty: place note",
@@ -338,6 +385,8 @@ const ABOUT_TEXT = [
   "KEYS",
   "- Ctrl+A: select all",
   "- Esc: clear selection",
+  "- Arrows: move 1 cell",
+  "- Shift+Up/Down: move 1 octave",
   "- Shift+Left: shorten note",
   "- Shift+Right: lengthen note",
 ].join("\n");
@@ -349,7 +398,8 @@ const ABOUT_TEXT = [
 wmRegister(
   APP_NAME,
   () => {
-    // w=0/h=0: onMeasure から初期外寸を自動算出 (表 + chrome にちょうど合う)
+    // w=0/h=0: onMeasure から初期外寸を自動算出 (表が work area より大きければ
+    // クランプされ、スクロールで巡る = fixed-size + scroll)
     winId = wmOpen(-1, -1, 0, 0, APP_NAME, onDraw, onInput, onMeasure, {
       onBeforeClose: () => {
         winId = -1;
