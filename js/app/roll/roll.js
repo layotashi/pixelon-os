@@ -935,7 +935,8 @@ function handleArrows(now, shift) {
   }
 }
 function handleKeys() {
-  if (!wmIsFocused(APP_NAME)) {
+  // フォーカス判定は winId で行う (title はファイル名で変わるため APP_NAME 比較は不可)
+  if (!wmIsFocused(winId)) {
     repeatCode = null;
     return;
   }
