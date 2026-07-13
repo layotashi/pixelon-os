@@ -119,9 +119,7 @@ const EDGE_GRAB = 5;
 const DEFAULT_VEL = 100;
 /** 試聴の長さ (秒) */
 const AUDITION_SEC = 0.25;
-/** 再生テンポ (v1 固定) と拍/ループ長 (= 4 小節) */
-const BPM = 120;
-const BEATS_PER_BAR = STEPS_PER_BAR / STEPS_PER_BEAT; // 4/4 → 4
+/** ステップ発火のループ長 (= 4 小節 = 全列)。テンポ/ループ範囲は共有 transport が持つ。 */
 const LOOP_STEPS = COLS;
 
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
@@ -661,13 +659,17 @@ function openClip() {
 //  再生
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/** Space: transport を開始/停止する。fromStop=true で停止位置から (Shift+Space) */
+/** Space: transport を開始/停止する。fromStop=true で停止位置から (Shift+Space)
+ *
+ *  テンポ・ループは共有 transport が持つ単一の出所 (TRANSPORT アプリが操作する)。
+ *  ROLL はそれを上書きせず読むだけにする ── こうしないと ROLL で Space を押すたびに
+ *  TRANSPORT で設定したテンポ/ループが 120・4 小節へ戻ってしまう。共有 transport の
+ *  既定 (120BPM / 0..16beat ループ ON) は元々ここで固定していた値と同じなので、
+ *  ROLL 単体での挙動は変わらない。 */
 function togglePlay(fromStop) {
   if (transport.isPlaying()) {
     transport.stop();
   } else {
-    transport.setTempo(BPM);
-    transport.setLoop(0, BARS * BEATS_PER_BAR, true); // 4 小節ループ
     transport.play(fromStop ? null : 0); // null=停止位置から / 0=1.1.1 から
   }
 }
