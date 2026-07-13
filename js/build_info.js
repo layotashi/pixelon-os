@@ -8,9 +8,10 @@
 
 export const BUILD = {
   date: "2026.07.14",
-  hash: "736055f",
-  count: 307,
+  hash: "26ab759",
+  count: 308,
   notes: [
+    { date: "2026-07-14", hash: "26ab759", text: "OSCILLO is now a full-window oscilloscope" },
     { date: "2026-07-14", hash: "736055f", text: "Audio no longer hangs when you switch browser tabs" },
     { date: "2026-07-13", hash: "19acb05", text: "App content stays inside the window body" },
     { date: "2026-07-13", hash: "bc4ab41", text: "ROLL cursor now reflects the action" },
@@ -22,6 +23,5 @@ export const BUILD = {
     { date: "2026-07-11", hash: "6699d81", text: "SYNTH: fixed velocity mode (FIX toggle)" },
     { date: "2026-07-11", hash: "b96d3f3", text: "SYNTH gets a wide layout and voice count" },
     { date: "2026-07-11", hash: "217e3d9", text: "MIDI keyboard timing is now steady" },
-    { date: "2026-07-11", hash: "15cf8c5", text: "SYNTH ADSR now uses vertical faders" },
   ],
 };

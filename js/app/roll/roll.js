@@ -140,6 +140,8 @@ let winId = -1;
 let cellW = CELL_W_DEFAULT;
 let cellH = CELL_H_DEFAULT;
 let fold = false; // FOLD: ノートのある行だけ表示
+/** FOLD を ON にする直前 (通常表示) のスクロール位置。OFF 復帰時にここへ戻す (null = 未保存) */
+let _scrollBeforeFold = null;
 
 /** @type {{col:number,row:number,len:number,vel:number,selected:boolean}[]} */
 let notes = [];
@@ -1001,6 +1003,27 @@ function handleArrows(now, shift) {
     repeatCode = null;
   }
 }
+/**
+ * FOLD を切り替える。ON にする直前の (通常表示の) スクロール位置を覚えておき、OFF に戻した
+ * ときにそこへ復帰する。こうしないと、FOLD 中はコンテンツが短くスクロールが 0 付近へ寄るため、
+ * OFF に戻した瞬間に全 128 音高グリッドの最上部 (最高音域・通常は空) へ飛んでしまう。
+ * FOLD 表示中のスクロールは破棄する (打ち込んでいた音域へ戻すのが目的なので通常位置だけ保つ)。
+ */
+function toggleFold() {
+  if (!fold) {
+    _scrollBeforeFold = wmGetScroll(winId); // ON へ: 通常表示のスクロールを退避
+    fold = true;
+  } else {
+    fold = false; // OFF へ: レイアウトを通常表示へ戻してから退避位置を復元
+    if (_scrollBeforeFold) {
+      // wmSetScroll は onMeasure で新レイアウト (縦=128 行) の寸法に同期してからクランプするので
+      // 退避した通常表示の位置が正しく収まる。
+      wmSetScroll(winId, _scrollBeforeFold.x, _scrollBeforeFold.y);
+      _scrollBeforeFold = null;
+    }
+  }
+}
+
 function handleKeys() {
   // フォーカス判定は winId で行う (title はファイル名で変わるため APP_NAME 比較は不可)
   if (!wmIsFocused(winId)) {
@@ -1016,7 +1039,7 @@ function handleKeys() {
   if (ctrlDown("KeyD")) duplicateAfter();
   if (keyDown("Escape")) deselectAll();
   if (keyDown("Delete")) deleteSelected();
-  if (keyDown("KeyF")) fold = !fold;
+  if (keyDown("KeyF")) toggleFold();
   if (keyDown("Space")) togglePlay(shift); // Shift = 停止位置から / 素 = 1.1.1 から
   handleArrows(performance.now(), shift);
 }
