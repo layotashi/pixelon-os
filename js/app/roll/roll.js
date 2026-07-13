@@ -190,15 +190,15 @@ function ensureCtx() {
 // ── モノフォニック試聴 / プレビュー ──
 //
 // 一度に鳴るプレビュー音は常に 1 つだけ。次の音を鳴らす前に必ず直前の音を止めるので
-// 多重発音しない。単発 (audition: 配置/選択時) は AUDITION_SEC 後に自動消音、ドラッグ
-// 移動中のグリッサンド (previewPlay sustain=true) は指を離すまで持続する。
+// 多重発音しない。プレビューはすべて単発 (audition) で AUDITION_SEC 後に自動消音する。
+// ドラッグやキーでピッチが変わるたびに鳴らし直すため、移動中も短い発音が連なる (持続はしない)。
 // 発音は「今すぐ」(ctx.currentTime) にスケジュールしてクリック→発音の遅延を最小化する。
 
 /** 現在鳴っているプレビュー音の MIDI (null = 無音) */
 let _previewMidi = null;
 /** その音を鳴らした発音先 (停止に使う。途中でターゲットが変わっても正しく止める) */
 let _previewInst = null;
-/** 自動消音の期限 (ms, performance.now 基準)。0 = 持続 (自動消音しない) */
+/** 自動消音の期限 (ms, performance.now 基準) */
 let _previewOffAt = 0;
 
 /** 現在のプレビュー音を止める (直前の音を停止 = 多重発音の防止) */
@@ -211,16 +211,16 @@ function previewStop() {
 }
 
 /**
- * プレビュー発音。直前の音を必ず止めてから鳴らす (モノフォニック)。
+ * 単発試聴 (ピッチ確認)。直前の音を必ず止めてから鳴らす (モノフォニック)。AUDITION_SEC 後に
+ * updatePreview が自動消音する。同じ音高への連続呼び出しは鳴らし直さず消音期限だけ延長する。
  * @param {number} midi
- * @param {boolean} sustain  true=持続 (グリッサンド)、false=単発 (AUDITION_SEC で自動消音)
  */
-function previewPlay(midi, sustain) {
+function audition(midi) {
   const ctx = ensureCtx();
   if (!ctx) return;
-  const off = sustain ? 0 : performance.now() + AUDITION_SEC * 1000;
+  const off = performance.now() + AUDITION_SEC * 1000;
   if (_previewMidi === midi) {
-    _previewOffAt = off; // 同じ音は鳴らし直さず、消音期限だけ更新
+    _previewOffAt = off; // 同じ音は鳴らし直さず、消音期限だけ延長
     return;
   }
   previewStop();
@@ -231,16 +231,9 @@ function previewPlay(midi, sustain) {
   _previewOffAt = off;
 }
 
-/** 単発試聴 (配置/選択時のピッチ確認) */
-function audition(midi) {
-  previewPlay(midi, false);
-}
-
 /** 毎フレーム: 単発プレビューが期限に達していたら消音する */
 function updatePreview() {
-  if (_previewMidi != null && _previewOffAt !== 0 && performance.now() >= _previewOffAt) {
-    previewStop();
-  }
+  if (_previewMidi != null && performance.now() >= _previewOffAt) previewStop();
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -395,7 +388,8 @@ function selected() {
  * ラバー矩形 (コンテンツ空間の 2 点) に触れているノートを選択する。ノート全体が矩形内に
  * 収まっている必要はなく、矩形とノート描画箱が少しでも重なれば選択する。additive (Shift)
  * のときは base (開始時の選択) にマージする。毎フレーム全ノートを再判定して反映する。
- * @param {{x0:number,y0:number,x1:number,y1:number,base:Set|null}} d
+ * 矩形へ新たに入ったノート (前フレーム未ヒットで既存選択でもない) はピッチ確認のため試聴する。
+ * @param {{x0:number,y0:number,x1:number,y1:number,base:Set|null,rubberHit:Set}} d
  */
 function applyRubberSelection(d) {
   const vl = vLayout();
@@ -403,6 +397,9 @@ function applyRubberSelection(d) {
   const rx1 = Math.max(d.x0, d.x1);
   const ry0 = Math.min(d.y0, d.y1);
   const ry1 = Math.max(d.y0, d.y1);
+  const prevHit = d.rubberHit;
+  const hitNow = new Set();
+  let addedTopRow = Infinity; // 新たに矩形へ入ったノートの最高音 (= 最小 row)
   for (const n of notes) {
     const di = vl.rowToDi.get(n.row);
     if (di === undefined) {
@@ -415,7 +412,14 @@ function applyRubberSelection(d) {
     const ny1 = ny0 + cellH;
     const hit = nx0 < rx1 && nx1 > rx0 && ny0 < ry1 && ny1 > ry0;
     n.selected = hit || (d.base ? d.base.has(n) : false);
+    if (hit) {
+      hitNow.add(n);
+      // 選択状態が false→true に変わった (前は未ヒット & base にも無い) ノートだけ試聴候補
+      if (!prevHit.has(n) && !(d.base && d.base.has(n))) addedTopRow = Math.min(addedTopRow, n.row);
+    }
   }
+  d.rubberHit = hitNow;
+  if (addedTopRow !== Infinity) audition(rowToMidi(addedTopRow));
 }
 
 /**
@@ -488,6 +492,9 @@ function moveSelected(dCol, dRow) {
     n.row += dRow;
   }
   resolveOverlaps(sel);
+  // ピッチ方向 (上下キー) の移動だけ、移動後の代表音 (最高音) を試聴する。
+  // 時間方向 (左右キー = dRow 0) では鳴らさない。
+  if (dRow !== 0) audition(rowToMidi(Math.min(...sel.map((n) => n.row))));
   markDirty();
 }
 /** sel を (dCol,dRow) へ複製し選択をコピーへ移す。コピーが既存に勝つ */
@@ -742,8 +749,6 @@ function endDrag() {
   if (!drag) return;
   const d = drag;
   drag = null;
-  // ドラッグ由来の持続プレビュー (グリッサンド) を止める。単発 (自動消音) はそのまま鳴らす。
-  if (_previewMidi != null && _previewOffAt === 0) previewStop();
 
   if (d.mode === "rubber") {
     // 動かして離した場合は held で選択反映済み。動かさず離した (単なる空クリック) は
@@ -816,6 +821,7 @@ function onInput(ev) {
         y1: ev.localY,
         additive: !!ev.shift,
         base: ev.shift ? new Set(selected()) : null,
+        rubberHit: new Set(), // 前フレームまでに矩形へ入ったノート (新規ヒットの試聴判定用)
         moved: false,
       };
       return;
@@ -861,6 +867,7 @@ function onInput(ev) {
       dCol: 0,
       dRow: 0,
       moved: false,
+      previewRow: 0, // 最後に試聴した dRow (ピッチが変わったフレームだけ鳴らすため)
       sel: selected(),
       pending,
     };
@@ -897,9 +904,12 @@ function onInput(ev) {
     drag.dCol = dCol;
     drag.dRow = dRow;
     drag.moved = dCol !== 0 || dRow !== 0;
-    // 移動先のピッチを持続プレビュー (グリッサンド)。掴んだセルの新しい行の音高を鳴らす。
-    // 通常/Shift/Ctrl ドラッグとも同じ move 経路なので一括で対応する。
-    if (drag.moved) previewPlay(rowToMidi(drag.grabRow + dRow), true);
+    // ピッチ (行) が変わったフレームだけ、移動先の音高を短く試聴する。時間 (列) 方向だけの
+    // 移動では鳴らさない。掴んだセルの新しい行を鳴らす (通常/Shift/Ctrl ドラッグ共通)。
+    if (dRow !== drag.previewRow) {
+      audition(rowToMidi(drag.grabRow + dRow));
+      drag.previewRow = dRow;
+    }
     return;
   }
 
