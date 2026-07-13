@@ -18,6 +18,12 @@
       "hotY": 7,
       "description": "Four-directional arrow (move / drag)"
     },
+    "move-copy": {
+      "file": "move-copy.png",
+      "hotX": 7,
+      "hotY": 7,
+      "description": "Four-directional move arrows with a plus (duplicate-move / Ctrl+drag copy)"
+    },
     "resize-ew": {
       "file": "resize-ew.png",
       "hotX": 7,

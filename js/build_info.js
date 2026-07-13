@@ -8,8 +8,8 @@
 
 export const BUILD = {
   date: "2026.07.13",
-  hash: "05a99e8",
-  count: 301,
+  hash: "286e227",
+  count: 302,
   notes: [
     { date: "2026-07-13", hash: "05a99e8", text: "SYNTH now shows a master output meter" },
     { date: "2026-07-13", hash: "c99da50", text: "ROLL opens on a usable pitch range" },

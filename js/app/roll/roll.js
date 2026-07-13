@@ -54,6 +54,7 @@ import {
   wmClose,
   wmDefaultContentSize,
   wmGetContentRect,
+  wmRequestCursor,
 } from "../../wm/index.js";
 import { keyDown, keyHeld, ctrlDown, ctrlShiftDown } from "../../core/input.js";
 
@@ -242,6 +243,7 @@ function updatePreview() {
 
 const clampInt = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const ctrlHeld = () => keyHeld("ControlLeft") || keyHeld("ControlRight");
+const shiftHeld = () => keyHeld("ShiftLeft") || keyHeld("ShiftRight");
 
 /** 表示する実 row の配列。normal = 全行、fold = ノートのある行のみ昇順 */
 function visibleRows() {
@@ -734,6 +736,15 @@ function zoomWheel(ev) {
 //  入力 — マウス
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+// ── 操作カーソル (assets/cursors/manifest.json のキー) ──
+// カーソル名は「操作の役割」を表す。ホバー中は「今押したら何が起きるか」、ドラッグ中は
+// 「実行中の操作」に合わせて毎フレーム要求する (WM の contentCursorOverride は毎フレーム
+// リセットされるため、hover/held のたびに要求し直す必要がある)。
+const CURSOR_SELECT = "pointer"; // 選択 (空セルのラバー選択 / Shift 選択トグル)
+const CURSOR_MOVE = "move"; // ノート移動
+const CURSOR_RESIZE = "resize-ew"; // 音価変更 (ノート左右の辺)
+const CURSOR_DUPLICATE = "move-copy"; // 複製移動 (Ctrl+ドラッグ)
+
 /** ノート n の辺掴み判定。'l'/'r'/null。端ゾーンは幅の 1/3 (最大 EDGE_GRAB) */
 function edgeSide(lx, n) {
   const le = colInnerX(n.col);
@@ -742,6 +753,30 @@ function edgeSide(lx, n) {
   if (lx < le + g) return "l";
   if (lx >= re - g) return "r";
   return null;
+}
+
+/**
+ * ホバー/ドラッグ状態に応じて操作カーソルを WM へ要求する。判定順は down ハンドラと
+ * 揃える (辺 > Shift 選択 > Ctrl 複製 > 移動)。hover イベントは ctrl/shift を運ばないため、
+ * endDrag と同じくキーボードの押下状態 (ctrlHeld/shiftHeld) で複製・選択を見分ける。
+ * @param {number} lx コンテンツ空間 X
+ * @param {number} ly コンテンツ空間 Y
+ */
+function updateCursor(lx, ly) {
+  if (drag) {
+    // ドラッグ中は実行中の操作がそのままカーソル
+    if (drag.mode === "resize") wmRequestCursor(CURSOR_RESIZE);
+    else if (drag.mode === "move") wmRequestCursor(ctrlHeld() ? CURSOR_DUPLICATE : CURSOR_MOVE);
+    else wmRequestCursor(CURSOR_SELECT); // rubber
+    return;
+  }
+  // ホバー: 押したら何が起きるかでカーソルを決める
+  const cell = cellAt(lx, ly);
+  const n = cell ? noteAt(cell.col, cell.row) : null;
+  if (!n) wmRequestCursor(CURSOR_SELECT); // 空セル → ラバー選択
+  else if (shiftHeld()) wmRequestCursor(CURSOR_SELECT); // Shift → 選択トグル (辺掴み無効)
+  else if (edgeSide(lx, n)) wmRequestCursor(CURSOR_RESIZE); // ノートの辺 → 音価変更
+  else wmRequestCursor(ctrlHeld() ? CURSOR_DUPLICATE : CURSOR_MOVE); // 本体 → 移動 / Ctrl=複製
 }
 
 /** ドラッグ確定 */
@@ -876,6 +911,7 @@ function onInput(ev) {
 
   if (ev.type === "held") {
     if (!drag) return;
+    updateCursor(ev.localX, ev.localY);
     if (drag.mode === "rubber") {
       // ラバー矩形を更新し、触れているノートをリアルタイム選択する。cellAt に依らず
       // localX/localY をそのまま使う (表の外まで広げても矩形を追従させるため)。
@@ -913,8 +949,12 @@ function onInput(ev) {
     return;
   }
 
-  if (ev.type === "up") endDrag();
-  else if (ev.type === "hover" && drag) endDrag(); // 領域外リリースの保険
+  if (ev.type === "up") {
+    endDrag();
+  } else if (ev.type === "hover") {
+    if (drag) endDrag(); // 領域外リリースの保険 (枠外で離すと up が来ないため)
+    updateCursor(ev.localX, ev.localY); // ホバー位置に応じてカーソル形状を更新
+  }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -961,7 +1001,7 @@ function handleKeys() {
     repeatCode = null;
     return;
   }
-  const shift = keyHeld("ShiftLeft") || keyHeld("ShiftRight");
+  const shift = shiftHeld();
   // ファイル (VFS): Ctrl+Shift+S を Ctrl+S より先に判定する
   if (ctrlShiftDown("KeyS")) saveClipAs();
   else if (ctrlDown("KeyS")) saveClip();
