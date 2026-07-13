@@ -526,6 +526,42 @@ export function dcBlock(samples, sampleRate, cutoffHz = 20) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  発音元レジストリ (パニック消音)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//
+// 発音の開始/停止は各アプリの毎フレームループ (requestAnimationFrame) が駆動する。
+// ところがブラウザはタブが非表示になると rAF を止めるため、ROLL 再生中やキーを押した
+// SYNTH 演奏中に別タブへ移ると「次のステップ/離鍵で鳴らすはずの noteOff」が永遠に来ず、
+// 発音中のノートが鳴りっぱなしになる (AudioContext 自体は裏でも動き続ける)。
+//
+// これを横断的に断つため、音を出す全クラス (SynthChannel / PolySynth / SamplePlayer) を
+// 生成時にこのレジストリへ登録し、panicAllAudio() で一括消音できるようにする。kernel.js が
+// visibilitychange (非表示化) を検知してこれを呼ぶ。各クラスは panic() を実装する。
+
+/** @type {Set<{panic:()=>void}>} 生存中の発音元 (SynthChannel/PolySynth/SamplePlayer) */
+const _liveSources = new Set();
+
+/** 発音元をパニック消音レジストリに登録する (各クラスのコンストラクタから呼ぶ) */
+function _registerSource(src) {
+  _liveSources.add(src);
+}
+
+/**
+ * 全発音元を即座に消音する (パニック)。タブ非表示化などで発音スケジューリングが止まり、
+ * 発音中ノートに noteOff が届かなくなる状況で、鳴りっぱなしを防ぐために呼ぶ。
+ * 1 つの発音元でエラーが出ても残りは消音を続ける。
+ */
+export function panicAllAudio() {
+  for (const src of _liveSources) {
+    try {
+      src.panic();
+    } catch (_) {
+      /* 個別の失敗で全体の消音を止めない */
+    }
+  }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  SynthChannel クラス
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -565,6 +601,14 @@ export class SynthChannel {
     this._scheduledVoices = new Set();
     /** @type {GainNode|null} */
     this._channelGain = null;
+
+    _registerSource(this); // パニック消音レジストリへ登録
+  }
+
+  /** パニック消音: 発音中・リリース中・スケジュール済みの全ボイスを即座に止める。 */
+  panic() {
+    this._stopCurrent();
+    this.stopAllScheduled();
   }
 
   /** チャンネルゲインノードを遅延生成する (AudioContext 初期化後に呼ばれる) */
@@ -973,6 +1017,13 @@ export class PolySynth {
     this._held = new Map();
     /** @type {Set<{source:AudioScheduledSourceNode, envGain:GainNode}>} リリース中ボイス */
     this._releasing = new Set();
+
+    _registerSource(this); // パニック消音レジストリへ登録
+  }
+
+  /** パニック消音: 押鍵中・リリース中の全ボイスを即座に止める (= allNotesOff)。 */
+  panic() {
+    this.allNotesOff();
   }
 
   /** AudioContext を必要時に生成する。生成不能な環境 (Node) では false を返す。 */
@@ -1433,6 +1484,13 @@ export class SamplePlayer {
     this._activeVoices = new Set();
     /** @type {number} 最大同時発音数 (超過時は最古のボイスをカット) */
     this._maxVoices = 4;
+
+    _registerSource(this); // パニック消音レジストリへ登録
+  }
+
+  /** パニック消音: 再生中の全ボイスを即座に止める (= stop)。 */
+  panic() {
+    this.stop();
   }
 
   /** GainNode を遅延生成し masterGain に接続する */

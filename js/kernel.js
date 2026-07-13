@@ -48,6 +48,7 @@ import * as Storage from "./core/storage.js";
 import * as Config from "./config.js";
 import { runSplash, fadeInDesktop } from "./splash.js";
 import { initSystemSfxHooks } from "./system_sfx.js";
+import { panicAllAudio } from "./core/audio.js";
 
 // ── メインループ ──
 
@@ -223,6 +224,15 @@ async function boot() {
     // 全画面中の Alt+Tab でフォーカスを失うと resize イベントが縮小値で発火するが
     // autoScale() 側でスキップする。復帰時にここで正しい値に再計算する。
     window.addEventListener("focus", () => Config.autoScale());
+
+    // ── タブ非表示化で発音中ノートをパニック消音 ──
+    // タブが裏へ回ると requestAnimationFrame が止まり、発音の開始/停止を駆動する各アプリの
+    // 毎フレームループも止まる。すると ROLL 再生中やキーを押した SYNTH 演奏中に別タブへ移ると
+    // 「次のステップ/離鍵で来るはずの noteOff」が届かず、発音中の単音や和音が鳴りっぱなしになる
+    // (AudioContext は裏でも動き続ける)。非表示化を検知して全発音元を一括消音する。
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) panicAllAudio();
+    });
 
     // ── WELCOME 自動表示 (初回、または新しい Note: があるときだけ) ──
     maybeAutoOpenWelcome();

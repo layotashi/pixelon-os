@@ -7,8 +7,8 @@
  */
 
 export const BUILD = {
-  date: "2026.07.13",
-  hash: "174fec4",
+  date: "2026.07.14",
+  hash: "a1232d0",
   count: 306,
   notes: [
     { date: "2026-07-13", hash: "19acb05", text: "App content stays inside the window body" },
