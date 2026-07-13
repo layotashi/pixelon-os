@@ -12,8 +12,9 @@
  *     小節線 (16 列ごと)   = 2px 実線
  *     拍線   (4 列ごと)     = 1px 実線
  *     ステップ (拍より細かい) = 1px 点線 (1px 描画 + 1px 間隔の交互)
- *   点線は各セル内寸の上端から 1px おきに点を打つため、隙間が必ず横罫線の行に重なる。
- *   これにより交点で横線が途切れず、ズーム (cellH 可変) でもこの位相関係は保たれる。
+ *   点線は各セル内寸の上端から 1px おきに点を打つ。行高 (cellH) は常に奇数なので内寸も
+ *   奇数となり、点は内寸の上端と下端の両方に乗る。よって隙間が横罫線の行にちょうど重なり、
+ *   横線を上下 1px の点で挟んだ左右対称な 3px の交点になる (縦ズームは 2px 刻みで奇数を保つ)。
  *   横 (音高) はオクターブ境界 (B/C)・上端/下端 = 2px、他は 1px 実線。
  *   ノートはセル内寸いっぱいに置き、最外周 1px を白枠・内側を黒に (罫線との視認性)。
  *   非選択 = 黒枠+黒塗り。選択/発音中 = 黒枠+白塗り。
@@ -89,17 +90,23 @@ const INITIAL_VIEW_HI_MIDI = 72; // C5
 const THIN = 1;
 const BOLD = 2;
 
-/** セル内寸 (DOT) の範囲。桁幅・行高は独立にズームできる (以下は初期値)。 */
-const CELL_MIN = 5;
-const CELL_MAX = 30;
-/** 初期の桁幅。時間方向は横スクロール前提なので、編集しやすい幅を保つ。 */
+/** 桁幅 (DOT) の範囲。時間方向は横スクロール前提なので、編集しやすい幅を保つ。 */
+const CELL_W_MIN = 5;
+const CELL_W_MAX = 30;
 const CELL_W_DEFAULT = 15;
-/** 初期の行高。チップチューンの主要音域を一度に見せる (≈2 オクターブ) よう控えめにし、
- *  起動ごとに使用音域までスクロールする手間を減らす。狭すぎると編集しづらいので下限寄り。 */
-const CELL_H_DEFAULT = 8;
 
-/** ホイール 1 ノッチのズーム量 (DOT) */
-const ZOOM_STEP = 1;
+/** 行高 (DOT) は縦点線 (ステップ) の位相を保つため常に奇数にする。内寸が奇数だと点線が
+ *  内寸の上端と下端の両方に乗り、横罫線を上下 1px の点で挟んだ左右対称な 3px 交点になる
+ *  (偶数だと片側が隙間になり位相が崩れる)。ゆえに範囲・既定をすべて奇数で定義し、縦ズームは
+ *  2px 刻みにして奇数を保つ。既定はチップチューンの主要音域を一度に見せる (≈2 オクターブ)
+ *  よう控えめにし、起動ごとのスクロール手間を減らす (狭すぎると編集しづらいので下限寄り)。 */
+const CELL_H_MIN = 5;
+const CELL_H_MAX = 29;
+const CELL_H_DEFAULT = 9;
+
+/** ホイール 1 ノッチのズーム量 (DOT)。縦は奇数を保つため 2px 刻み。 */
+const ZOOM_STEP_W = 1;
+const ZOOM_STEP_H = 2;
 
 /** キーリピート: 押下後この待機 (ms) を経てからこの間隔 (ms) で連続処理 */
 const REPEAT_DELAY = 300;
@@ -719,7 +726,8 @@ function updatePlayback() {
 //  入力 — ホイール (カーソル基準ズーム)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-const clampCell = (v) => Math.max(CELL_MIN, Math.min(CELL_MAX, v));
+const clampW = (v) => Math.max(CELL_W_MIN, Math.min(CELL_W_MAX, v));
+const clampH = (v) => Math.max(CELL_H_MIN, Math.min(CELL_H_MAX, v));
 
 function zoomWheel(ev) {
   const dir = -Math.sign(ev.deltaY || 0); // WheelUp = 拡大 / Down = 縮小
@@ -729,12 +737,14 @@ function zoomWheel(ev) {
   if (ev.shift) {
     const f = anchorCol(ev.localX);
     const old = cellW;
-    cellW = clampCell(cellW + dir * ZOOM_STEP); // Shift+Ctrl = 水平 (幅)
+    cellW = clampW(cellW + dir * ZOOM_STEP_W); // Shift+Ctrl = 水平 (幅)
     wmSetScroll(winId, Math.round(s0.x + f * (cellW - old)), null);
   } else {
     const f = anchorRow(ev.localY);
     const old = cellH;
-    cellH = clampCell(cellH + dir * ZOOM_STEP); // Ctrl = 垂直 (高さ)
+    // 縦は 2px 刻み。奇数の既定値から偶数を足し引きするので cellH は常に奇数のまま
+    // (= 点線の隙間が横罫線に重なり、上下対称な交点になる位相を維持する)。
+    cellH = clampH(cellH + dir * ZOOM_STEP_H); // Ctrl = 垂直 (高さ)
     wmSetScroll(winId, null, Math.round(s0.y + f * (cellH - old)));
   }
   ev.consumed = true;
@@ -1051,12 +1061,14 @@ function handleKeys() {
 /**
  * ステップ (拍より細かい) の縦点線を 1 本描く。各セル内寸の上端 (interiorY) から 1px おきに
  * 点を打つ。横罫線は内寸の「外」にあるため点が乗らず、点線の隙間が必ず横線の行に重なる
- * (ASCII 仕様の位相)。内寸基準なので cellH や罫線厚がズームで変わっても位相は保たれる。
+ * (ASCII 仕様の位相)。呼び出し側は行高 ch を常に奇数に保つので、内寸の上端と下端の両方が
+ * 点になり、横罫線を上下 1px の点で対称に挟む 3px の交点になる。内寸基準なので cellH や
+ * 罫線厚がズームで変わってもこの位相は保たれる。
  * @param {number} x   線の X (画面座標)
  * @param {number} oy  表上端の Y (画面座標。interiorY はこの原点からのオフセット)
  * @param {number[]} interiorY  各表示行の内寸上端 Y (コンテンツ空間)
  * @param {number} rows 表示行数 (interiorY の有効長)
- * @param {number} ch  セル行高
+ * @param {number} ch  セル行高 (奇数。0,2,…,ch-1 に点 = 内寸の上端と下端の両方に乗る)
  */
 export function drawStepDots(x, oy, interiorY, rows, ch) {
   for (let di = 0; di < rows; di++) {

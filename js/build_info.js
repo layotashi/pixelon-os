@@ -8,9 +8,10 @@
 
 export const BUILD = {
   date: "2026.07.14",
-  hash: "26ab759",
-  count: 308,
+  hash: "ab03887",
+  count: 309,
   notes: [
+    { date: "2026-07-14", hash: "ab03887", text: "ROLL keeps your scroll position when unfolding" },
     { date: "2026-07-14", hash: "26ab759", text: "OSCILLO is now a full-window oscilloscope" },
     { date: "2026-07-14", hash: "736055f", text: "Audio no longer hangs when you switch browser tabs" },
     { date: "2026-07-13", hash: "19acb05", text: "App content stays inside the window body" },
@@ -22,6 +23,5 @@ export const BUILD = {
     { date: "2026-07-12", hash: "4378124", text: "Roll can now save and open note clips" },
     { date: "2026-07-11", hash: "6699d81", text: "SYNTH: fixed velocity mode (FIX toggle)" },
     { date: "2026-07-11", hash: "b96d3f3", text: "SYNTH gets a wide layout and voice count" },
-    { date: "2026-07-11", hash: "217e3d9", text: "MIDI keyboard timing is now steady" },
   ],
 };
