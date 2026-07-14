@@ -8,9 +8,10 @@
 
 export const BUILD = {
   date: "2026.07.14",
-  hash: "44b82a3",
-  count: 313,
+  hash: "2306bbf",
+  count: 314,
   notes: [
+    { date: "2026-07-14", hash: "2306bbf", text: "ROLL now plays in perfect time even under heavy desktop load" },
     { date: "2026-07-14", hash: "d543f18", text: "ROLL: undo/redo, copy-paste, time scale" },
     { date: "2026-07-14", hash: "6bafcfb", text: "New TRANSPORT app: play, tempo, loop, metronome for all music apps" },
     { date: "2026-07-14", hash: "de68716", text: "Roll step grid dots stay aligned when zooming" },
@@ -22,6 +23,5 @@ export const BUILD = {
     { date: "2026-07-13", hash: "05a99e8", text: "SYNTH now shows a master output meter" },
     { date: "2026-07-13", hash: "c99da50", text: "ROLL opens on a usable pitch range" },
     { date: "2026-07-13", hash: "055f740", text: "TESSERA no longer opens full-screen" },
-    { date: "2026-07-12", hash: "6a8712d", text: "ROLL now has rubber-band note selection" },
   ],
 };

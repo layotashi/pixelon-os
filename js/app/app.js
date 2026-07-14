@@ -24,6 +24,7 @@ import "./notepad.js";
 import "./synth/synth.js"; // SYNTH — ポリフォニック・ソフトシンセ (音楽機能の再設計・第1弾)
 import "./roll/roll.js"; // ROLL — ステップグリッド MIDI フレーズエディタ (音楽機能の再設計・第2弾)
 import "./transport.js"; // TRANSPORT — 共有トランスポートの操作面 (音楽機能の再設計・第3弾)
+import "./track.js"; // TRACK — 4 トラックの編集対象を選ぶ (マルチトラック打ち込み)
 // WELCOME / ABOUT はランチャ最下部の system セクションに並ぶ。
 // import 順が並び順を決めるため、WELCOME を先に読み込む (メニュー: WELCOME → ABOUT)。
 import "./welcome.js";

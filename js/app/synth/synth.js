@@ -2,9 +2,13 @@
  * @module app/synth/synth
  * synth.js — SYNTH ウィンドウ (ポリフォニック・ソフトシンセ)
  *
- * 音楽制作機能の再設計・第 1 弾。単体で完結するソフトシンセサイザ。
+ * 音楽制作機能の再設計・第 1 弾。ポリフォニック・ソフトシンセサイザ。
  * 音色を作り (波形 / 発音数 / ADSR / 音量)、PC キーボード・オンスクリーン鍵盤で
- * 和音を演奏する。音源は core/audio.js の PolySynth。SYNESTA には依存しない。
+ * 和音を演奏する。音源はチップ波形メモリ音源 (core/chip.js)。SYNESTA には依存しない。
+ *
+ * マルチトラック: 共有ソングモデル (app/music/song.js) の「選択トラック」の音色を
+ * 表示・編集する。トラックを切り替える (TRACK アプリ) と、その音色に表示が入れ替わる。
+ * 各トラックは独立した音色を持ち、ここで作った音色でそのトラックの発音・ROLL 再生が鳴る。
  *
  * ── レイアウト (横長 2 段) ──
  *   上段: OSC / ENV / AMP / PLAY を左から右へ横並び (各セクション幅の反転バンド見出し)。
@@ -30,7 +34,8 @@
  * 目視できる。フッタ右には現在の発音数 / 最大同時発音数 (VOICES) と、MIDI デバイス
  * 接続時はその台数を表示する。
  *
- * 初期音色はチップチューン向けの既定 (波形 SQ50 / ADSR = MIN・MIN・MAX・MIN)。
+ * 初期音色はトラックごとのチップチューン向け既定 (song.js。ADSR は全トラック
+ * MIN・MIN・MAX・MIN、波形は LEAD=PULSE25 / CHORD=PULSE12 / BASS=TRI / DRUM=NOISE)。
  *
  * 演奏キー (フォーカス時):
  *   Z 段 = 現オクターブ, Q 段 = +1oct, I〜P = +2oct
@@ -44,9 +49,9 @@ import { drawText, textWidth, GLYPH_H } from "../../core/font.js";
 import { keyDown, keyHeld } from "../../core/input.js";
 import { wmOpen, wmRegister, wmIsFocused } from "../../wm/index.js";
 import { midiEventAudioTime, getMasterMeter } from "../../core/audio.js";
-import { createInstrument, initChipEngine } from "../../core/chip.js";
+import { initChipEngine } from "../../core/chip.js";
 import { initMidiInput, getMidiInputCount } from "../../core/midi_input.js";
-import { addTrack } from "../music/tracks.js";
+import * as song from "../music/song.js";
 import {
   WidgetGroup,
   DropDown,
@@ -111,36 +116,16 @@ const DEFAULT_VOL = 50;
 const DEFAULT_WAVE_INDEX = WAVE_IDS.indexOf(DEFAULT_WAVE_ID);
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  音源 (遅延生成)
+//  音源 (共有ソングモデルの選択トラック)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/** @type {import("../../core/chip.js").ChipSynth|import("../../core/audio.js").PolySynth|null} */
-let _synth = null;
-function synth() {
-  if (!_synth) {
-    _synth = createInstrument();
-    // 初期音色 (チップチューン既定) を音源へ反映し、UI 表示と初期音を一致させる。
-    // PolySynth のクラス既定 (saw 等) は ROLL のフォールバック音源と共有のため変更せず、
-    // SYNTH 固有の既定はここで上書きする。
-    _synth.setWaveform(DEFAULT_WAVE_ID);
-    _synth.setADSR(DEFAULT_ADSR.a, DEFAULT_ADSR.d, DEFAULT_ADSR.s, DEFAULT_ADSR.r);
-    _synth.setVolume(DEFAULT_VOL);
-    // 自身の音源をトラックとして公開し、ROLL 等が現在の音色で鳴らせるようにする。
-    // instrument は _synth への薄いラッパ (パラメータは _synth に反映済み)。
-    addTrack({
-      id: APP_NAME,
-      name: APP_NAME,
-      instrument: {
-        // ワークレット上のチャンネル (ChipSynth のとき)。ROLL のシーケンサが発音先として使う。
-        // PolySynth フォールバック時は undefined ＝ ROLL は従来の per-frame 発火にフォールバックする。
-        channel: _synth.channel,
-        noteOn: (m, v, t) => _synth.noteOn(m, v, t),
-        noteOff: (m, t) => _synth.noteOff(m, t),
-        allNotesOff: () => _synth.allNotesOff(),
-      },
-    });
-  }
-  return _synth;
+/** 現在の選択トラック index (編集/演奏対象)。 */
+function sel() {
+  return song.getSelectedIndex();
+}
+/** 選択トラックの音源。発音イベント (鍵盤 / MIDI) はここへ送る。初回に全 4 音源が生成される。 */
+function inst() {
+  return song.getInstrument(sel());
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -222,10 +207,10 @@ function _initWidgets() {
   _ready = true;
 
   dropDownWave = new DropDown(0, 0, WAVE_ITEMS, DEFAULT_WAVE_INDEX, (idx) => {
-    synth().setWaveform(WAVE_IDS[idx]);
+    song.updatePatch(sel(), { waveform: WAVE_IDS[idx] });
   });
   dropDownVoices = new DropDown(0, 0, VOICE_ITEMS, VOICE_DEFAULT_INDEX, (idx) => {
-    synth().setMaxVoices(VOICE_VALUES[idx]);
+    song.updatePatch(sel(), { maxVoices: VOICE_VALUES[idx] });
   });
 
   // ENV: A/D/S/R は同型の縦フェーダー。初期値はチップチューン既定 (0/0/100/0) に揃える
@@ -239,7 +224,7 @@ function _initWidgets() {
 
   // AMP: VOL は ENV と同型の縦フェーダー (数値はフッタに表示)
   faderVol = new Fader(0, 0, FADER_H, 0, 100, DEFAULT_VOL, (v) => {
-    synth().setVolume(v);
+    song.updatePatch(sel(), { volume: v });
     setParamFooter("VOL", v, "%");
   });
 
@@ -256,9 +241,12 @@ function _initWidgets() {
   }, velFixed);
 
   keyboard = new Keyboard(KEY_W, KEY_H, NUM_WHITE, {
-    onNoteOn: (m) => synth().noteOn(m, velocity / 127),
-    onNoteOff: (m) => synth().noteOff(m),
-    isHeld: (m) => synth().isNoteHeld(m),
+    onNoteOn: (m) => inst().noteOn(m, velocity / 127),
+    onNoteOff: (m) => inst().noteOff(m),
+    isHeld: (m) => {
+      const ins = song.peekInstrument(sel());
+      return ins ? ins.isNoteHeld(m) : false;
+    },
   });
 
   group = new WidgetGroup([
@@ -280,14 +268,34 @@ function _initWidgets() {
       midiHeld.add(m);
       // FIX 時は受信ベロシティを捨て VEL 値で発音 (PC / オンスクリーン鍵盤と一律に揃う)
       const vel = velFixed ? velocity / 127 : v;
-      synth().noteOn(m, vel, midiEventAudioTime(t));
+      inst().noteOn(m, vel, midiEventAudioTime(t));
     },
     onNoteOff: (m, t) => {
       if (!winOpen) return;
       midiHeld.delete(m);
-      synth().noteOff(m, midiEventAudioTime(t));
+      inst().noteOff(m, midiEventAudioTime(t));
     },
   });
+
+  // 選択トラックの音色をウィジェットに載せ、トラック切替に追従させる。
+  loadPatchToWidgets();
+  song.onSelectionChange(() => {
+    if (_ready) loadPatchToWidgets();
+  });
+}
+
+/** 選択トラックの patch を各ウィジェットの表示値へ反映する (直接代入なので onChange は発火しない)。 */
+function loadPatchToWidgets() {
+  const p = song.getPatch(sel());
+  if (!p) return;
+  dropDownWave.selectedIndex = waveIndexMap[p.waveform] ?? DEFAULT_WAVE_INDEX;
+  const vi = VOICE_VALUES.indexOf(p.maxVoices);
+  dropDownVoices.selectedIndex = vi >= 0 ? vi : VOICE_DEFAULT_INDEX;
+  faderA.value = p.a;
+  faderD.value = p.d;
+  faderS.value = p.s;
+  faderR.value = p.r;
+  faderVol.value = p.volume;
 }
 
 /** ENV フェーダー変更: ADSR に反映し、フッタ表示を更新する */
@@ -301,15 +309,9 @@ function setParamFooter(label, v, unit) {
   paramFooterText = label + "  " + String(v).padStart(4) + " " + unit;
 }
 
-/** ADSR の一部を更新して PolySynth に反映する */
-function applyADSR({ a, d, s, r }) {
-  const c = synth().getADSR();
-  synth().setADSR(
-    a !== undefined ? a : c.a,
-    d !== undefined ? d : c.d,
-    s !== undefined ? s : c.s,
-    r !== undefined ? r : c.r,
-  );
+/** ADSR の一部 (単一キー) を選択トラックの音色へ反映する */
+function applyADSR(partial) {
+  song.updatePatch(sel(), partial);
 }
 
 /** オクターブを設定する (クランプ)。鍵盤の表示範囲も追従する */
@@ -439,12 +441,14 @@ function drawSynthFooter(fr) {
   // 左: 最後に触れたアナログパラメータ (ENV / VOL) の値
   if (paramFooterText) drawText(fr.x, fr.y, paramFooterText, 1);
 
-  // 右: 発音数 / 最大同時発音数 (+ MIDI 台数)
+  // 右: 発音数 / 最大同時発音数 (+ MIDI 台数)。押鍵数は音源があれば読む (無ければ 0)、
+  // 最大同時発音数は選択トラックの patch から取る (音源を無駄に生成しない)。
+  const ins = song.peekInstrument(sel());
   let right =
     "POLY " +
-    String(synth().heldCount).padStart(2) +
+    String(ins ? ins.heldCount : 0).padStart(2) +
     "/" +
-    String(synth().getMaxVoices()).padStart(2);
+    String(song.getPatch(sel()).maxVoices).padStart(2);
   const midiN = getMidiInputCount();
   if (midiN > 0) right += "  MIDI " + midiN;
   drawText(fr.x + fr.w - textWidth(right), fr.y, right, 1);
@@ -544,7 +548,7 @@ function drawSynth(cr) {
 function handleKeyboard() {
   if (!wmIsFocused(APP_NAME)) {
     if (heldKeys.size > 0) {
-      synth().allNotesOff();
+      song.allNotesOff();
       heldKeys.clear();
     }
     return;
@@ -556,22 +560,25 @@ function handleKeyboard() {
   if (keyDown("BracketRight")) velocity = Math.min(VEL_MAX, velocity + VEL_STEP);
   if (keyDown("Backslash")) velFixed = !velFixed;
   if (keyDown("Slash")) {
-    const wf = synth().cycleWaveform();
-    dropDownWave.selectedIndex = waveIndexMap[wf] ?? 0;
+    // 選択トラックの波形を順送りし、ドロップダウン表示も合わせる
+    const idx = waveIndexMap[song.getPatch(sel()).waveform] ?? 0;
+    const next = WAVE_IDS[(idx + 1) % WAVE_IDS.length];
+    song.updatePatch(sel(), { waveform: next });
+    dropDownWave.selectedIndex = waveIndexMap[next];
   }
 
   // 新規押下 → ノートオン (和音対応)
   for (const k of KEY_MAP) {
     if (keyDown(k.code) && !heldKeys.has(k.code)) {
       const midi = offsetToMidi(k.offset);
-      synth().noteOn(midi, velocity / 127);
+      inst().noteOn(midi, velocity / 127);
       heldKeys.set(k.code, midi);
     }
   }
   // 離鍵 → ノートオフ (押下時の音程で)
   for (const [code, midi] of heldKeys) {
     if (!keyHeld(code)) {
-      synth().noteOff(midi);
+      inst().noteOff(midi);
       heldKeys.delete(code);
     }
   }
@@ -593,7 +600,7 @@ function measureSynth() {
 
 /** 発音を止め一時的な入力状態をクリアする (音作り・オクターブ等の設定は保持) */
 function silence() {
-  if (_synth) _synth.allNotesOff();
+  song.allNotesOff();
   if (keyboard) keyboard.reset();
   heldKeys.clear();
   midiHeld.clear();

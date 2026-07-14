@@ -11,9 +11,9 @@
  * chip.js から `ctx.audioWorklet.addModule()` で読み込む。
  *
  * ── チャンネル (音源) ──
- *   複数の音源 (SYNTH・ROLL 内蔵フォールバック・将来のマルチトラック) が 1 つのワークレットを
- *   共有できるよう、音色パラメータは channel 単位で持つ。ボイスは全チャンネル共通のプールから
- *   割り当て、発音数上限はチャンネル単位で守る。tracks レジストリ (音楽アプリ連携) の土台。
+ *   複数の音源 (4 トラック分。SYNTH の音色 = ROLL の発音先) が 1 つのワークレットを共有できるよう、
+ *   音色パラメータは channel 単位で持つ。ボイスは全チャンネル共通のプールから割り当て、発音数上限は
+ *   チャンネル単位で守る。共有ソングモデル (app/music/song.js) のマルチトラック連携の土台。
  *
  * ── 発火のタイミング ──
  *   process() は 128 サンプル (レンダークォンタム) 単位で呼ばれる。currentFrame はそのクォンタム
@@ -33,9 +33,9 @@
  *   { type:"noteOn",  channel, id, midi, vel, time }                     // vel=0..1, time=秒(ctx基準)
  *   { type:"noteOff", channel, id, time }
  *   { type:"allNotesOff", channel? }   // channel 省略時は全チャンネル
- *   // ── シーケンサ (Phase 2) ──
- *   { type:"pattern",   notes:[{midi,startStep,lenSteps,vel}], stepsPerBeat }
- *   { type:"transport", channel, playing, bpm, startBeat, startTime, loopStart, loopEnd, loopOn }
+ *   // ── シーケンサ (Phase 2 / マルチトラック) ──
+ *   { type:"pattern",   channel, notes:[{midi,startStep,lenSteps,vel}], stepsPerBeat } // チャンネル別
+ *   { type:"transport", playing, bpm, startBeat, startTime, loopStart, loopEnd, loopOn } // 全体共有の 1 本
  */
 
 /** 最大同時発音数の既定 (PolySynth の DEFAULT_MAX_VOICES に一致)。 */
@@ -93,10 +93,10 @@ class ChipProcessor extends AudioWorkletProcessor {
     /** ボイス割当順 (最古スティール用の単調増加カウンタ) */
     this._seq = 0;
 
-    // ── 自走シーケンサ (パターン + トランスポート時計から発火) ──
-    /** @type {{notes:Array<object>, stepsPerBeat:number}} */
-    this._pattern = { notes: [], stepsPerBeat: 4 };
-    /** @type {object} トランスポート状態 (メインの transport をミラー) */
+    // ── 自走シーケンサ (チャンネル別パターン + 共有トランスポート時計から発火) ──
+    /** @type {Map<number, {notes:Array<object>, stepsPerBeat:number}>} channel → パターン */
+    this._patterns = new Map();
+    /** @type {object} トランスポート状態 (メインの transport をミラー。全チャンネル共有) */
     this._transport = {
       playing: false,
       bpm: 120,
@@ -106,9 +106,7 @@ class ChipProcessor extends AudioWorkletProcessor {
       loopEnd: 16,
       loopOn: true,
     };
-    /** シーケンサの発音先チャンネル */
-    this._seqChannel = 0;
-    /** 次に発火判定を始める絶対サンプル (連続する窓で重複/取りこぼしを防ぐ) */
+    /** 次に発火判定を始める絶対サンプル (連続する窓で重複/取りこぼしを防ぐ。時計は共有なので単一) */
     this._seqCursor = 0;
     /** アンカー変化検知用 (再開/シークで再スケジュールするため) */
     this._lastStartTime = 0;
@@ -217,12 +215,12 @@ class ChipProcessor extends AudioWorkletProcessor {
         break;
       }
       case "pattern":
-        // パターン差し替え。発音中ボイスは止めない (予約済み off で自然に消える)。
+        // チャンネル別パターン差し替え。発音中ボイスは止めない (予約済み off で自然に消える)。
         // 未来のオンセットは次クォンタムから新パターンで再導出される (編集の即時反映)。
-        this._pattern = {
+        this._patterns.set(msg.channel | 0, {
           notes: msg.notes || [],
           stepsPerBeat: msg.stepsPerBeat || 4,
-        };
+        });
         break;
       case "transport": {
         const tp = this._transport;
@@ -230,7 +228,6 @@ class ChipProcessor extends AudioWorkletProcessor {
         tp.loopStart = msg.loopStart;
         tp.loopEnd = msg.loopEnd;
         tp.loopOn = msg.loopOn;
-        if (msg.channel != null) this._seqChannel = msg.channel | 0;
         const wasPlaying = tp.playing;
         tp.playing = !!msg.playing;
         tp.startBeat = msg.startBeat;
@@ -399,11 +396,6 @@ class ChipProcessor extends AudioWorkletProcessor {
     if (!t.playing) return;
     const beatsPerSec = t.bpm / 60;
     if (!(beatsPerSec > 0)) return;
-    const notes = this._pattern.notes;
-    if (!notes.length) {
-      this._seqCursor = currentFrame + N;
-      return;
-    }
     const qEnd = currentFrame + N;
     const t0 = this._seqCursor / sampleRate;
     const t1 = qEnd / sampleRate;
@@ -411,44 +403,51 @@ class ChipProcessor extends AudioWorkletProcessor {
       this._seqCursor = qEnd;
       return;
     }
-    const spb = this._pattern.stepsPerBeat || 4;
     const bLin0 = t.startBeat + (t0 - t.startTime) * beatsPerSec;
     const bLin1 = t.startBeat + (t1 - t.startTime) * beatsPerSec;
     const period = t.loopEnd - t.loopStart;
     const looping = t.loopOn && period > 0;
-    const ch = this._seqChannel;
     const beatToSample = (b) =>
       Math.round((t.startTime + (b - t.startBeat) / beatsPerSec) * sampleRate);
 
-    for (let i = 0; i < notes.length; i++) {
-      const n = notes[i];
-      const onBeat = n.startStep / spb;
-      const lenBeat = n.lenSteps / spb;
-      const id = SEQ_ID_BASE + n.midi;
-      if (looping) {
-        if (onBeat < t.loopStart || onBeat >= t.loopEnd) continue;
-        const offRel = Math.min(lenBeat, t.loopEnd - onBeat); // off はループ末尾で切る
-        let cand = onBeat + Math.ceil((bLin0 - onBeat) / period) * period;
-        for (; cand < bLin1; cand += period) {
-          if (cand < bLin0) continue;
-          this._enqueue(beatToSample(cand), {
+    // 全チャンネルのパターンを走査する。時計は共有だが、各チャンネルは独立した音色で
+    // 同時発音される。id はチャンネルを織り込み (SEQ_ID_BASE + ch*128 + midi)、別チャンネルで
+    // 同じ音高が鳴ってもボイス/off が衝突しないようにする。
+    for (const [ch, pat] of this._patterns) {
+      const notes = pat.notes;
+      if (!notes.length) continue;
+      const spb = pat.stepsPerBeat || 4;
+      const idBase = SEQ_ID_BASE + ch * 128;
+      for (let i = 0; i < notes.length; i++) {
+        const n = notes[i];
+        const onBeat = n.startStep / spb;
+        const lenBeat = n.lenSteps / spb;
+        const id = idBase + n.midi;
+        if (looping) {
+          if (onBeat < t.loopStart || onBeat >= t.loopEnd) continue;
+          const offRel = Math.min(lenBeat, t.loopEnd - onBeat); // off はループ末尾で切る
+          let cand = onBeat + Math.ceil((bLin0 - onBeat) / period) * period;
+          for (; cand < bLin1; cand += period) {
+            if (cand < bLin0) continue;
+            this._enqueue(beatToSample(cand), {
+              kind: "on",
+              channel: ch,
+              id,
+              midi: n.midi,
+              vel: n.vel,
+            });
+            this._enqueue(beatToSample(cand + offRel), { kind: "off", channel: ch, id });
+          }
+        } else if (onBeat >= bLin0 && onBeat < bLin1) {
+          this._enqueue(beatToSample(onBeat), {
             kind: "on",
             channel: ch,
             id,
             midi: n.midi,
             vel: n.vel,
           });
-          this._enqueue(beatToSample(cand + offRel), { kind: "off", channel: ch, id });
+          this._enqueue(beatToSample(onBeat + lenBeat), { kind: "off", channel: ch, id });
         }
-      } else if (onBeat >= bLin0 && onBeat < bLin1) {
-        this._enqueue(beatToSample(onBeat), {
-          kind: "on",
-          channel: ch,
-          id,
-          midi: n.midi,
-          vel: n.vel,
-        });
-        this._enqueue(beatToSample(onBeat + lenBeat), { kind: "off", channel: ch, id });
       }
     }
     this._seqCursor = qEnd;

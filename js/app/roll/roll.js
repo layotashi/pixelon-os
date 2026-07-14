@@ -27,9 +27,10 @@
  *   コピー/ペースト = Ctrl+C / Ctrl+V (ペーストは直近クリックのグリッド線が起点)。
  *   Undo/Redo = Ctrl+Z / Ctrl+Y。時間スケール = `*`/`/` に続けて数字 (例 `*`2=2倍, `/`2=1/2倍)。
  *
- * 発音は tracks レジストリ経由: SYNTH が開いていればその音色 (現在のパラメータ) で鳴り、
- * 無ければ ROLL 内蔵のフォールバック音源で鳴る。再生位置は共有 transport が持つ
- * (再生「制御」は将来 Transport アプリへ分離できるよう責務を分けてある)。
+ * マルチトラック: 共有ソングモデル (app/music/song.js) の 4 トラックのうち「選択トラック」の
+ * クリップを編集する。非選択 3 トラックのノートは背面に市松ゴーストで表示 (同時刻・同音高の
+ * 重なりを把握するため)。発音は各トラックの音色 (SYNTH が編集) で、再生は 4 トラック同時。
+ * 再生位置は共有 transport が持つ (再生「制御」は TRANSPORT アプリが操作する)。
  *
  * ── VFS 連携 (保存 / 読込) ──
  *   Ctrl+S = 上書き保存 (無題なら Save As)。Ctrl+Shift+S = 名前を付けて保存。
@@ -38,7 +39,7 @@
  *   作り直さずに済む。FILES から `.roll` をダブルクリックで開く (rollOpenFile)。
  */
 
-import { fillRect, pset, drawDashedRect, isCapturing } from "../../core/gpu.js";
+import { fillRect, pset, drawDashedRect, drawCheckerboard, isCapturing } from "../../core/gpu.js";
 import { drawText, textWidth } from "../../core/font.js";
 import {
   getAudioContext,
@@ -47,13 +48,12 @@ import {
   releaseAudioAwake,
 } from "../../core/audio.js";
 import {
-  createInstrument,
   initChipEngine,
   isChipSupported,
   chipSetPattern,
   chipSetTransport,
 } from "../../core/chip.js";
-import * as tracks from "../music/tracks.js";
+import * as song from "../music/song.js";
 import * as transport from "../music/transport.js";
 import * as VFS from "../../core/vfs.js";
 import { openFileDialog, openConfirmDialog } from "../../ui/index.js";
@@ -207,39 +207,30 @@ let _scaleOpAt = 0;
 let lastDownKey = null;
 let prevDownKey = null;
 
-// ── 再生 (クロックは共有 transport、発音先は tracks レジストリ) ──
+// ── 再生 (クロックは共有 transport、発音先は song モデルの 4 トラック) ──
 //
-// 発音方式は 2 系統:
-//   [seq]    ワークレット内シーケンサ (対応環境 + 発音先が ChipSynth のとき)。パターンと
-//            トランスポート時計をオーディオスレッドへ渡し、そこがサンプル精度で発火する。
-//            メインスレッドの描画ジャンク (TESSERA 背景等) に一切影響されない ＝ 本命の経路。
-//   [legacy] 非対応環境/フォールバック音源のとき。従来どおり毎フレームでステップを発火する
-//            (フレームレートに量子化されるが、対応環境では使われない安全網)。
+// マルチトラック: 4 トラックを同時再生する。発音方式は 2 系統:
+//   [seq]    ワークレット内シーケンサ (対応環境)。各トラックのパターンを自チャンネルへ、
+//            共有トランスポート時計を 1 本送ると、オーディオスレッドが 4 チャンネルを
+//            サンプル精度で同時発火する。メインスレッドの描画ジャンクに影響されない本命経路。
+//   [legacy] 非対応環境。従来どおり毎フレームで発火するが、選択トラックのみ (安全網)。
 let lastFiredStep = -1;
 let _wasPlaying = false; // transport 再生状態の前フレーム値 (開始/停止の遷移検出)
-let _activeInst = null; // 再生セッション中の発音先 (開始時に確定し、途中で切替えない)
+let _activeInst = null; // [legacy] 再生セッション中の発音先 (選択トラック)
 const sounding = new Map(); // note -> 残りステップ ([legacy] の発音管理用)
 
 // ── [seq] ワークレットシーケンサの同期状態 ──
 let _seqMode = false; // このセッションがワークレットシーケンサ経路か
-let _seqChannel = null; // 発音先チャンネル (ChipSynth.channel)
-let _lastPatternSig = 0; // 直近に送ったパターンの署名 (編集検知して再送)
+let _lastSigs = []; // 直近に送った各トラックのパターン署名 (編集検知して再送)
 let _lastClockKey = ""; // 直近に送ったトランスポート時計のキー (変化検知して再送)
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  音源 / 試聴
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/** ROLL 内蔵のフォールバック音源 (SYNTH トラックが無いとき用)。ChipSynth/PolySynth は instrument 互換 */
-let _fallback = null;
-function fallbackInstrument() {
-  if (!_fallback) _fallback = createInstrument();
-  return _fallback;
-}
-/** 発音先: SYNTH が登録したトラックがあればその音色、無ければフォールバック */
+/** 試聴の発音先 = 選択トラックの音源 (SYNTH と同じ音色で鳴らす)。 */
 function targetInstrument() {
-  const t = tracks.getDefaultTrack();
-  return t ? t.instrument : fallbackInstrument();
+  return song.getInstrument(song.getSelectedIndex());
 }
 /** AudioContext を確実に用意 (ユーザー操作起点で resume) */
 function ensureCtx() {
@@ -831,6 +822,25 @@ function loadClip(clip) {
   resetHistory(); // 別ドキュメントなので Undo/Redo をまっさらに
 }
 
+// ── マルチトラック: 選択トラックとの同期 ──
+//
+// ROLL は「選択トラックの clip」を編集する。編集中のノートは毎フレーム song へ書き戻し
+// (commitSelectedClip)、他アプリ (再生・ゴースト・将来の保存) がプル参照できるようにする。
+// トラックを切り替えたら旧トラックへ確定保存し、新トラックのノートを読み込む。
+
+/** ROLL の現在ノートを選択トラックのクリップとして song へ書き戻す (毎フレーム。鮮度維持)。 */
+function commitSelectedClip() {
+  song.setClipNotes(song.getSelectedIndex(), currentClip().notes);
+}
+
+/** トラック切替: 旧トラックへ現在ノートを保存し、新トラックのクリップを読み込む
+ *  (Undo 履歴・選択・ドラッグ・発音中は loadClip 内で初期化される)。 */
+function onTrackSwitch(next, prev) {
+  song.setClipNotes(prev, currentClip().notes);
+  loadClip(song.getClip(next));
+}
+song.onSelectionChange(onTrackSwitch);
+
 /** dirty なら破棄確認、無ければ即実行 */
 function confirmDiscard(onOk) {
   if (!isDirty) {
@@ -909,36 +919,45 @@ function togglePlay(fromStop) {
     transport.play(fromStop ? null : 0); // null=停止位置から / 0=1.1.1 から
   }
 }
-// ── [seq] ワークレットシーケンサへ渡す変換 / 同期 ──
+// ── [seq] ワークレットシーケンサへ渡す変換 / 同期 (トラック別) ──
 
-/** ROLL のノート {col,row,len,vel} → ワークレットのパターン形 {midi,startStep,lenSteps,vel(0..1)}。 */
-function toWorkletNotes() {
-  return notes.map((n) => ({
-    midi: rowToMidi(n.row),
-    startStep: n.col,
+/** トラック i のクリップ {pitch,start,len,vel} → ワークレットのパターン形 {midi,startStep,lenSteps,vel(0..1)}。 */
+function trackWorkletNotes(i) {
+  return song.getClip(i).notes.map((n) => ({
+    midi: n.pitch,
+    startStep: n.start,
     lenSteps: n.len,
     vel: n.vel / 127,
   }));
 }
 
-/** パターンの署名 (編集検知用)。値が変われば再送する。 */
-function patternSig() {
-  let s = notes.length | 0;
-  for (const n of notes) {
-    s = (Math.imul(s, 31) + n.col * 131071 + n.row * 8191 + n.len * 127 + n.vel) | 0;
+/** トラック i のパターン署名 (編集検知用)。値が変われば再送する。 */
+function trackSig(i) {
+  const ns = song.getClip(i).notes;
+  let s = ns.length | 0;
+  for (const n of ns) {
+    s = (Math.imul(s, 31) + n.start * 131071 + n.pitch * 8191 + n.len * 127 + n.vel) | 0;
   }
   return s;
+}
+
+/** トラック i の発音チャンネル (ChipSynth のみ。不可なら null)。 */
+function trackChannel(i) {
+  if (!isChipSupported()) return null;
+  const inst = song.getInstrument(i);
+  return inst && inst.channel != null ? inst.channel : null;
+}
+
+/** トラック i のパターン + チャンネルをワークレットへ送る (チャンネル未確定なら何もしない)。 */
+function sendTrackPattern(i) {
+  const ch = trackChannel(i);
+  if (ch == null) return;
+  chipSetPattern(trackWorkletNotes(i), STEPS_PER_BEAT, ch);
 }
 
 /** トランスポート時計のキー (変化検知用)。アンカー/テンポ/ループが変われば再送する。 */
 function clockKey(c) {
   return `${c.playing}|${c.bpm}|${c.startBeat}|${c.startTime}|${c.loopStart}|${c.loopEnd}|${c.loopOn}`;
-}
-
-/** 発音先がワークレットシーケンサで鳴らせるなら、そのチャンネル番号を返す (不可なら null)。 */
-function seqChannelOf(inst) {
-  if (!isChipSupported()) return null;
-  return inst && inst.channel != null ? inst.channel : null;
 }
 
 /** [legacy] ステップ境界: 発音中を減衰・消音し、そのステップで始まるノートを発音 */
@@ -972,22 +991,30 @@ function onStepEnter(step) {
  */
 function updatePlayback() {
   transport.update();
+  // 選択トラックの編集を song へ反映してから各トラックのパターンを読む (鮮度の保証)。
+  commitSelectedClip();
   const p = transport.isPlaying();
   const clock = transport.getClock();
+  const chip = isChipSupported();
+  const N = song.getTrackCount();
 
   if (p && !_wasPlaying) {
-    // ── 再生開始: 発音先を確定し、経路を選ぶ ──
-    _activeInst = targetInstrument();
-    _seqChannel = seqChannelOf(_activeInst);
-    _seqMode = _seqChannel != null;
-    if (_seqMode) {
-      // ワークレットへパターン + 時計を送る (以降オーディオスレッドが自走発火)
-      chipSetPattern(toWorkletNotes(), STEPS_PER_BEAT);
-      chipSetTransport(clock, _seqChannel);
-      _lastPatternSig = patternSig();
+    // ── 再生開始: 経路を選ぶ ──
+    if (chip) {
+      song.getInstrument(0); // 全チャンネル (0..N-1) を確保
+      _seqMode = true;
+      _lastSigs = [];
+      // 全トラックのパターンを各チャンネルへ、共有時計を 1 本送る (以降オーディオスレッドが自走)
+      for (let i = 0; i < N; i++) {
+        sendTrackPattern(i);
+        _lastSigs[i] = trackSig(i);
+      }
+      chipSetTransport(clock);
       _lastClockKey = clockKey(clock);
     } else {
-      // フォールバック: 開始ステップ直前へ合わせる
+      // フォールバック: 選択トラックのみ per-frame 発火。開始ステップ直前へ合わせる
+      _seqMode = false;
+      _activeInst = targetInstrument();
       const startStep = transport.getPosition() * STEPS_PER_BEAT;
       lastFiredStep = (Math.floor(startStep) - 1 + LOOP_STEPS) % LOOP_STEPS;
       sounding.clear();
@@ -995,7 +1022,7 @@ function updatePlayback() {
   } else if (!p && _wasPlaying) {
     // ── 停止 ──
     if (_seqMode) {
-      chipSetTransport(clock, _seqChannel); // playing:false ＝ ワークレットのシーケンス音を止める
+      chipSetTransport(clock); // playing:false ＝ 全チャンネルのシーケンス音を止める
     } else if (_activeInst) {
       _activeInst.allNotesOff();
     }
@@ -1003,15 +1030,17 @@ function updatePlayback() {
     _seqMode = false;
     sounding.clear();
   } else if (p && _seqMode) {
-    // ── 継続 [seq]: 編集/トランスポート変更をワークレットへ同期 ──
-    const sig = patternSig();
-    if (sig !== _lastPatternSig) {
-      chipSetPattern(toWorkletNotes(), STEPS_PER_BEAT); // 打ち込み編集を即反映 (WYSIWYG)
-      _lastPatternSig = sig;
+    // ── 継続 [seq]: 各トラックの編集 / トランスポート変更をワークレットへ同期 ──
+    for (let i = 0; i < N; i++) {
+      const sig = trackSig(i);
+      if (sig !== _lastSigs[i]) {
+        sendTrackPattern(i); // 打ち込み編集を即反映 (WYSIWYG)
+        _lastSigs[i] = sig;
+      }
     }
     const ck = clockKey(clock);
     if (ck !== _lastClockKey) {
-      chipSetTransport(clock, _seqChannel); // テンポ/ループ/シーク変更を反映
+      chipSetTransport(clock); // テンポ/ループ/シーク変更を反映
       _lastClockKey = ck;
     }
   }
@@ -1019,7 +1048,7 @@ function updatePlayback() {
   _wasPlaying = p;
   if (!p || _seqMode) return;
 
-  // ── [legacy] per-frame 発火 (非対応環境/フォールバック音源のみ) ──
+  // ── [legacy] per-frame 発火 (非対応環境のみ。選択トラック) ──
   const target = Math.floor(transport.getPosition() * STEPS_PER_BEAT) % LOOP_STEPS;
   let guard = 0;
   while (lastFiredStep !== target && guard++ <= LOOP_STEPS) {
@@ -1440,21 +1469,47 @@ export function drawStepDots(x, oy, interiorY, rows, ch) {
 }
 
 /** 1 ノートを描く。hollow=true で内部を白抜き (選択/発音中) */
-function drawNoteAt(cr, col, row, len, hollow, vl) {
-  const di = vl.rowToDi.get(row);
-  if (di === undefined) return; // FOLD で非表示の行
-  const x0 = colInnerX(col);
-  const x1 = colInnerX(col + len - 1) + cellW;
-  const ox = cr.x + x0;
-  const oy = cr.y + vl.interiorY[di];
-  const ow = x1 - x0;
-  const oh = cellH;
+/**
+ * ノートグリフを絶対矩形へ描く (レイアウト非依存の純関数)。全スタイル共通で
+ * 白の外枠 (最外周 1px) + 黒枠を描き、内部を style で埋める:
+ *   solid  … 黒のまま (通常の非選択ノート)
+ *   hollow … 白抜き (選択中 / 再生中)
+ *   ghost  … 市松 (非アクティブトラック)。drawCheckerboard は内側原点 (ox+2,oy+2) 基準の
+ *            phase=0 で一致位相に白 (=0) を置くので、各ノートの左上角が常に白始まりになり、
+ *            位置/サイズに依らず角の位相が揃う (ユーザー ASCII 仕様どおり)。
+ * @param {"solid"|"hollow"|"ghost"} style
+ */
+export function drawNoteGlyph(ox, oy, ow, oh, style) {
   if (ow <= 0 || oh <= 0) return;
   fillRect(ox, oy, ow, oh, 0); // 白枠 (最外周 1px を含む白地)
   if (ow > 2 && oh > 2) {
-    fillRect(ox + 1, oy + 1, ow - 2, oh - 2, 1); // 黒ノート本体
-    if (hollow && ow > 4 && oh > 4) fillRect(ox + 2, oy + 2, ow - 4, oh - 4, 0);
+    fillRect(ox + 1, oy + 1, ow - 2, oh - 2, 1); // 黒枠本体
+    if (ow > 4 && oh > 4) {
+      if (style === "hollow") fillRect(ox + 2, oy + 2, ow - 4, oh - 4, 0);
+      else if (style === "ghost") drawCheckerboard(ox + 2, oy + 2, ow - 4, oh - 4, 0, 0);
+    }
   }
+}
+
+/** レイアウトからノートの描画矩形 (絶対座標) を求める。FOLD で非表示の行は null。 */
+function noteRect(cr, col, row, len, vl) {
+  const di = vl.rowToDi.get(row);
+  if (di === undefined) return null; // FOLD で非表示の行
+  const x0 = colInnerX(col);
+  const x1 = colInnerX(col + len - 1) + cellW;
+  return { ox: cr.x + x0, oy: cr.y + vl.interiorY[di], ow: x1 - x0, oh: cellH };
+}
+
+/** 1 ノートを描く。hollow=true で内部を白抜き (選択/発音中)。 */
+function drawNoteAt(cr, col, row, len, hollow, vl) {
+  const r = noteRect(cr, col, row, len, vl);
+  if (r) drawNoteGlyph(r.ox, r.oy, r.ow, r.oh, hollow ? "hollow" : "solid");
+}
+
+/** 非アクティブトラックのノートを市松ゴーストで描く (状態差なし。背面表示用)。 */
+function drawGhostNoteAt(cr, col, row, len, vl) {
+  const r = noteRect(cr, col, row, len, vl);
+  if (r) drawNoteGlyph(r.ox, r.oy, r.ow, r.oh, "ghost");
 }
 
 function onDraw(cr) {
@@ -1479,6 +1534,16 @@ function onDraw(cr) {
     const t = vl.lineThick[di];
     fillRect(cr.x, y, tw, t, 1);
     y += t + (di < vl.R ? cellH : 0);
+  }
+
+  // 非選択トラックのノートを背面に市松ゴースト表示する (同時刻・同音高の重なりを把握するため)。
+  // 選択トラックのノートは後段で通常描画され前面に来る。
+  const selIdx = song.getSelectedIndex();
+  for (let ti = 0; ti < song.getTrackCount(); ti++) {
+    if (ti === selIdx) continue;
+    for (const gn of song.getClip(ti).notes) {
+      drawGhostNoteAt(cr, gn.start, ROWS - 1 - gn.pitch, gn.len, vl);
+    }
   }
 
   // ノート + 移動プレビュー (発音中/選択は白抜き)。発音中判定は再生ヘッドから導出するので
@@ -1611,7 +1676,8 @@ const ABOUT_TEXT = [
 function cleanupOnClose() {
   if (transport.isPlaying()) transport.stop();
   // [seq] ワークレットシーケンサは自走するので、停止後の時計 (playing:false) を明示的に送って止める。
-  if (_seqMode && _seqChannel != null) chipSetTransport(transport.getClock(), _seqChannel);
+  if (_seqMode) chipSetTransport(transport.getClock());
+  song.allNotesOff(); // 全トラックのライブ/シーケンス発音を止める
   if (_activeInst) _activeInst.allNotesOff();
   _activeInst = null;
   _seqMode = false;

@@ -11,10 +11,10 @@
  *   - createInstrument() … 発音先を 1 つ作る。ワークレット対応環境では ChipSynth (チップ音源)、
  *     非対応/テスト環境では PolySynth (audio.js の従来オシレータ) にフォールバックする。
  *   - ChipSynth        … PolySynth と同一シグネチャの発音ハンドル。1 インスタンス = 1 チャンネル
- *     (音色パラメータ独立)。SYNTH / ROLL 内蔵音源 / 将来のマルチトラックがそれぞれ 1 つ持つ。
+ *     (音色パラメータ独立)。共有ソングモデル (app/music/song.js) が 4 トラック分を 1 つずつ持つ。
  *
- * 発音先を tracks レジストリへ載せる形は従来どおり (music-app-integration)。ROLL は per-frame の
- * ノート発火 (Phase 1 時点) をこのハンドル経由で行い、Phase 2 でワークレット内シーケンサへ移す。
+ * 音源は共有ソングモデル (app/music/song.js) が所有し、SYNTH が音色を編集、ROLL がクリップを
+ * 編集/再生する。ROLL 再生はワークレット内シーケンサへチャンネル別パターンを送って駆動する。
  */
 
 import {
@@ -234,29 +234,30 @@ export class ChipSynth {
 //  ワークレット内シーケンサ制御 (ROLL の再生を駆動)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //
-// ワークレットは 1 つの自走シーケンサを持ち、パターン (ノート列) とトランスポート時計を
-// 与えると、自前のサンプル時計で発火する。発音時刻はメインスレッドの描画ジャンクから独立し、
-// サンプル精度に固定される (frame-quantize なテンポ揺れが原理的に消える)。
+// ワークレットは自走シーケンサを持ち、チャンネルごとのパターン (ノート列) と共有トランスポート
+// 時計を与えると、自前のサンプル時計で発火する。発音時刻はメインスレッドの描画ジャンクから
+// 独立し、サンプル精度に固定される (frame-quantize なテンポ揺れが原理的に消える)。
+// マルチトラック: パターンはチャンネル別 (chipSetPattern の channel)、時計は全体共有。
 
 /**
- * シーケンサのパターンを差し替える。再生中の編集で呼ぶと未来のオンセットに即反映される。
+ * 指定チャンネルのシーケンサ・パターンを差し替える。再生中の編集で呼ぶと未来のオンセットに
+ * 即反映される。空配列を送ればそのチャンネルの発火を止める (トラックのノート全削除など)。
  * @param {{midi:number,startStep:number,lenSteps:number,vel:number}[]} notes  vel は 0..1
  * @param {number} stepsPerBeat
+ * @param {number} channel  発音先チャンネル (ChipSynth.channel)
  */
-export function chipSetPattern(notes, stepsPerBeat) {
-  post({ type: "pattern", notes, stepsPerBeat });
+export function chipSetPattern(notes, stepsPerBeat, channel) {
+  post({ type: "pattern", notes, stepsPerBeat, channel });
 }
 
 /**
- * トランスポート時計 (アンカー) と発音先チャンネルをシーケンサへ送る。開始/停止/シーク/
- * テンポ・ループ変更のたびに呼ぶ。playing:false で発音中のシーケンス音を止める。
+ * 共有トランスポート時計 (アンカー) をシーケンサへ送る。開始/停止/シーク/テンポ・ループ変更の
+ * たびに呼ぶ。全チャンネル共通の 1 本の時計。playing:false で発音中のシーケンス音を止める。
  * @param {{playing:boolean,bpm:number,startBeat:number,startTime:number,loopStart:number,loopEnd:number,loopOn:boolean}} clock
- * @param {number} channel  発音先チャンネル (ChipSynth.channel)
  */
-export function chipSetTransport(clock, channel) {
+export function chipSetTransport(clock) {
   post({
     type: "transport",
-    channel,
     playing: clock.playing,
     bpm: clock.bpm,
     startBeat: clock.startBeat,
