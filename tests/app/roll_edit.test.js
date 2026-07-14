@@ -8,7 +8,9 @@
  *   - gridLineAtX: クリック X → 最寄りグリッド線 (セル中央しきい値)。既定桁幅 (=15) 前提。
  */
 import { describe, it, expect } from "vitest";
-import { scaleNotesInTime, pasteNotesAt, gridLineAtX } from "@/app/roll/roll.js";
+import { scaleNotesInTime, pasteNotesAt, gridLineAtX, foldedRows } from "@/app/roll/roll.js";
+
+const ROWS = 128; // ROLL の音高行数。row = ROWS-1-pitch
 
 const COLS = 64; // ROLL の総列数 (4 小節 × 16 分)。枠外判定に使う
 
@@ -112,6 +114,33 @@ describe("pasteNotesAt — 基準グリッド線へ配置", () => {
   it("開始が枠外に出るノートは捨てる", () => {
     const out = pasteNotesAt([{ dCol: 10, row: 60, len: 1, vel: 100 }], 60, COLS);
     expect(out).toEqual([]); // col 70 >= 64
+  });
+});
+
+describe("foldedRows — FOLD の表示行に全 4 トラックのノート行を含める", () => {
+  it("選択トラックのノート行 + 非選択トラックのノート行を昇順で和集合にする", () => {
+    const selNotes = [{ row: 60 }, { row: 55 }];
+    const others = [
+      { notes: [{ pitch: ROWS - 1 - 40 }] }, // row 40
+      { notes: [{ pitch: ROWS - 1 - 70 }] }, // row 70
+    ];
+    expect(foldedRows(selNotes, others)).toEqual([40, 55, 60, 70]);
+  });
+
+  it("重複する行は 1 度だけ (選択と非選択が同じ行でも二重にならない)", () => {
+    const selNotes = [{ row: 50 }];
+    const others = [{ notes: [{ pitch: ROWS - 1 - 50 }] }]; // 同じ row 50
+    expect(foldedRows(selNotes, others)).toEqual([50]);
+  });
+
+  it("非選択トラックにしかノートが無くても、その行が表示される (ゴーストが隠れない)", () => {
+    const selNotes = []; // 選択トラックは空
+    const others = [{ notes: [{ pitch: ROWS - 1 - 62 }, { pitch: ROWS - 1 - 48 }] }];
+    expect(foldedRows(selNotes, others)).toEqual([48, 62]);
+  });
+
+  it("全トラック空なら空配列", () => {
+    expect(foldedRows([], [{ notes: [] }, { notes: [] }])).toEqual([]);
   });
 });
 

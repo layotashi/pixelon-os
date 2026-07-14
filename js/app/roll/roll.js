@@ -301,12 +301,33 @@ const clampInt = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const ctrlHeld = () => keyHeld("ControlLeft") || keyHeld("ControlRight");
 const shiftHeld = () => keyHeld("ShiftLeft") || keyHeld("ShiftRight");
 
-/** 表示する実 row の配列。normal = 全行、fold = ノートのある行のみ昇順 */
+/**
+ * FOLD の表示行 (ノートのある行のみ昇順) を求める純関数。選択トラックのノート行と、非選択
+ * トラックのノート行の和集合を返す ── FOLD でも 4 トラック全てのノートがゴースト表示される
+ * ように (選択トラックの行だけに畳むと他トラックのノートが隠れてしまう)。選択トラックは表示行を
+ * 直接持つ selNotes を、他トラックは MIDI 形状 (pitch) の clip を渡す (row = ROWS-1-pitch)。
+ * @param {{row:number}[]} selNotes 選択トラックのノート (row = 表示行)
+ * @param {{notes:{pitch:number}[]}[]} otherClips 非選択トラックの clip 群
+ * @returns {number[]} 昇順の表示行
+ */
+export function foldedRows(selNotes, otherClips) {
+  const s = new Set();
+  for (const n of selNotes) s.add(n.row);
+  for (const c of otherClips) {
+    for (const gn of c.notes) s.add(ROWS - 1 - gn.pitch);
+  }
+  return [...s].sort((a, b) => a - b);
+}
+
+/** 表示する実 row の配列。normal = 全行、fold = ノートのある行のみ昇順 (4 トラック分)。 */
 function visibleRows() {
   if (!fold) return ALL_ROWS;
-  const s = new Set();
-  for (const n of notes) s.add(n.row);
-  return [...s].sort((a, b) => a - b);
+  const selIdx = song.getSelectedIndex();
+  const others = [];
+  for (let ti = 0; ti < song.getTrackCount(); ti++) {
+    if (ti !== selIdx) others.push(song.getClip(ti));
+  }
+  return foldedRows(notes, others);
 }
 
 /** 列境界 (縦罫線) の太さ。小節境界 (16 列ごと・両端) = 太線 */

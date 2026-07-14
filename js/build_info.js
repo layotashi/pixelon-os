@@ -8,9 +8,10 @@
 
 export const BUILD = {
   date: "2026.07.14",
-  hash: "716af27",
-  count: 316,
+  hash: "f755743",
+  count: 317,
   notes: [
+    { date: "2026-07-14", hash: "f755743", text: "ROLL now supports Ctrl+X to cut selected notes" },
     { date: "2026-07-14", hash: "716af27", text: "ROLL now saves all 4 tracks together as a .song project" },
     { date: "2026-07-14", hash: "51c6f96", text: "ROLL and SYNTH now have 4 tracks" },
     { date: "2026-07-14", hash: "2306bbf", text: "ROLL now plays in perfect time even under heavy desktop load" },
@@ -22,6 +23,5 @@ export const BUILD = {
     { date: "2026-07-14", hash: "736055f", text: "Audio no longer hangs when you switch browser tabs" },
     { date: "2026-07-13", hash: "19acb05", text: "App content stays inside the window body" },
     { date: "2026-07-13", hash: "bc4ab41", text: "ROLL cursor now reflects the action" },
-    { date: "2026-07-13", hash: "05a99e8", text: "SYNTH now shows a master output meter" },
   ],
 };
