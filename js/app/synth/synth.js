@@ -43,11 +43,8 @@ import { fillRect, drawRect, isCapturing } from "../../core/gpu.js";
 import { drawText, textWidth, GLYPH_H } from "../../core/font.js";
 import { keyDown, keyHeld } from "../../core/input.js";
 import { wmOpen, wmRegister, wmIsFocused } from "../../wm/index.js";
-import {
-  createPolySynth,
-  midiEventAudioTime,
-  getMasterMeter,
-} from "../../core/audio.js";
+import { midiEventAudioTime, getMasterMeter } from "../../core/audio.js";
+import { createInstrument, initChipEngine } from "../../core/chip.js";
 import { initMidiInput, getMidiInputCount } from "../../core/midi_input.js";
 import { addTrack } from "../music/tracks.js";
 import {
@@ -117,11 +114,11 @@ const DEFAULT_WAVE_INDEX = WAVE_IDS.indexOf(DEFAULT_WAVE_ID);
 //  音源 (遅延生成)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/** @type {import("../../core/audio.js").PolySynth|null} */
+/** @type {import("../../core/chip.js").ChipSynth|import("../../core/audio.js").PolySynth|null} */
 let _synth = null;
 function synth() {
   if (!_synth) {
-    _synth = createPolySynth();
+    _synth = createInstrument();
     // 初期音色 (チップチューン既定) を音源へ反映し、UI 表示と初期音を一致させる。
     // PolySynth のクラス既定 (saw 等) は ROLL のフォールバック音源と共有のため変更せず、
     // SYNTH 固有の既定はここで上書きする。
@@ -611,6 +608,8 @@ wmRegister(
   () => {
     _initWidgets();
     winOpen = true;
+    // 起動 (ユーザー操作) 時点でチップ音源エンジンを用意しておく (1 音目の遅延防止)
+    initChipEngine();
     return wmOpen(-1, -1, 0, 0, APP_NAME, drawSynth, onSynthInput, measureSynth, {
       about:
         "A polyphonic software synthesizer. Pick a waveform and voice count, " +

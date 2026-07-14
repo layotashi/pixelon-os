@@ -41,12 +41,12 @@
 import { fillRect, pset, drawDashedRect, isCapturing } from "../../core/gpu.js";
 import { drawText, textWidth } from "../../core/font.js";
 import {
-  createPolySynth,
   getAudioContext,
   initAudio,
   keepAudioAwake,
   releaseAudioAwake,
 } from "../../core/audio.js";
+import { createInstrument, initChipEngine } from "../../core/chip.js";
 import * as tracks from "../music/tracks.js";
 import * as transport from "../music/transport.js";
 import * as VFS from "../../core/vfs.js";
@@ -211,10 +211,10 @@ const sounding = new Map(); // note -> 残りステップ (発音中)
 //  音源 / 試聴
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/** ROLL 内蔵のフォールバック音源 (SYNTH トラックが無いとき用)。PolySynth は instrument 互換 */
+/** ROLL 内蔵のフォールバック音源 (SYNTH トラックが無いとき用)。ChipSynth/PolySynth は instrument 互換 */
 let _fallback = null;
 function fallbackInstrument() {
-  if (!_fallback) _fallback = createPolySynth();
+  if (!_fallback) _fallback = createInstrument();
   return _fallback;
 }
 /** 発音先: SYNTH が登録したトラックがあればその音色、無ければフォールバック */
@@ -1572,6 +1572,7 @@ wmRegister(
     // 起動 (ユーザー操作) の時点でオーディオを用意/起こしておく。1 音目や放置後の
     // 復帰時に出る余分な発音遅延を防ぐ (クローズ時に releaseAudioAwake で解放)。
     keepAudioAwake();
+    initChipEngine(); // チップ音源エンジンも用意 (発音先がフォールバック音源のとき用)
     return winId;
   },
   { category: "CREATIVE", dev: true },
