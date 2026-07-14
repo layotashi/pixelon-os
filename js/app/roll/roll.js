@@ -740,6 +740,14 @@ function copySelection() {
   };
 }
 
+/** 選択をクリップボードへ退避してから削除する (Ctrl+X)。コピー & ペーストと対になる操作で、
+ *  クリップボードの中身は copySelection と同一形式。削除は 1 件の履歴として記録し Undo で戻せる。 */
+function cutSelection() {
+  if (!selected().length) return;
+  copySelection();
+  withHistory(deleteSelected);
+}
+
 /**
  * クリップボードのノート群を基準列 refCol に配置したノートを返す (純関数)。
  * 各ノートの col = refCol + dCol。右端をはみ出す分は長さを詰め、枠外に出るものは捨てる。
@@ -1460,7 +1468,8 @@ function handleKeys() {
   // 履歴: Ctrl+Z = Undo / Ctrl+Y = Redo
   if (ctrlDown("KeyZ")) undo();
   if (ctrlDown("KeyY")) redo();
-  // コピー / ペースト
+  // 切り取り / コピー / ペースト
+  if (ctrlDown("KeyX")) cutSelection();
   if (ctrlDown("KeyC")) copySelection();
   if (ctrlDown("KeyV")) pasteClipboard();
   if (ctrlDown("KeyA")) selectAll();
@@ -1675,7 +1684,7 @@ const ABOUT_TEXT = [
   "- Ctrl+A / Esc: select all / none",
   "- Delete: delete selection",
   "- Ctrl+D: duplicate after group",
-  "- Ctrl+C / Ctrl+V: copy / paste",
+  "- Ctrl+X / Ctrl+C / Ctrl+V: cut / copy / paste",
   "- Ctrl+Z / Ctrl+Y: undo / redo",
   "- * then N: scale length x N",
   "- / then N: scale length / N",
