@@ -8,9 +8,10 @@
 
 export const BUILD = {
   date: "2026.07.14",
-  hash: "99d3305",
-  count: 318,
+  hash: "0d6840e",
+  count: 319,
   notes: [
+    { date: "2026-07-14", hash: "0d6840e", text: "Click a ghost note in ROLL to switch to its track" },
     { date: "2026-07-14", hash: "99d3305", text: "FOLD view now keeps rows used by any of the 4 tracks" },
     { date: "2026-07-14", hash: "f755743", text: "ROLL now supports Ctrl+X to cut selected notes" },
     { date: "2026-07-14", hash: "716af27", text: "ROLL now saves all 4 tracks together as a .song project" },
@@ -22,6 +23,5 @@ export const BUILD = {
     { date: "2026-07-14", hash: "ab03887", text: "ROLL keeps your scroll position when unfolding" },
     { date: "2026-07-14", hash: "26ab759", text: "OSCILLO is now a full-window oscilloscope" },
     { date: "2026-07-14", hash: "736055f", text: "Audio no longer hangs when you switch browser tabs" },
-    { date: "2026-07-13", hash: "19acb05", text: "App content stays inside the window body" },
   ],
 };

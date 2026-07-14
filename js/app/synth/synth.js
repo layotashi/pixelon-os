@@ -642,5 +642,6 @@ wmRegister(
       },
     });
   },
-  { category: "CREATIVE", dev: true },
+  // SYNESTA メンバー: アイコン / ランチャーには出さず、SYNESTA からまとめて起動する。
+  { category: "CREATIVE", dev: true, hidden: true, noIcon: true },
 );

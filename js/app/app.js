@@ -20,11 +20,15 @@ import { drawVramDumpOverlay } from "./vram_dump.js";
 import "./settings.js"; // TUNING を統合 (DISPLAY/EFFECTS/THEME/SYSTEM タブ)
 import "./notepad.js";
 // capture.js は上で named import 済み
-// SYNESTA (旧 DAW) はアーカイブ済み。app/synesta/ と audio/ は参照用に残すが読み込まない。
-import "./synth/synth.js"; // SYNTH — ポリフォニック・ソフトシンセ (音楽機能の再設計・第1弾)
-import "./roll/roll.js"; // ROLL — ステップグリッド MIDI フレーズエディタ (音楽機能の再設計・第2弾)
-import "./transport.js"; // TRANSPORT — 共有トランスポートの操作面 (音楽機能の再設計・第3弾)
-import "./track.js"; // TRACK — 4 トラックの編集対象を選ぶ (マルチトラック打ち込み)
+// ── 音楽制作アプリ群 ──
+// 旧 SYNESTA (DAW モノリス) はアーカイブ済み (app/synesta/ と audio/ は参照用に残すが読み込まない)。
+// 新 SYNESTA は下記メンバーを束ねる統合入口。メンバーは hidden + noIcon で登録され、アイコン /
+// ランチャーには SYNESTA だけが出る (個別アプリは SYNESTA からまとめて起動・終了する)。
+import "./synth/synth.js"; // SYNTH — ポリフォニック・ソフトシンセ (SYNESTA メンバー)
+import "./roll/roll.js"; // ROLL — ステップグリッド MIDI フレーズエディタ (SYNESTA メンバー)
+import "./transport.js"; // TRANSPORT — 共有トランスポートの操作面 (SYNESTA メンバー)
+import "./track.js"; // TRACK — 4 トラックの編集対象を選ぶ (SYNESTA メンバー)
+import { synestaUpdate } from "./synesta.js"; // SYNESTA — 音楽アプリ群の統合入口
 // WELCOME / ABOUT はランチャ最下部の system セクションに並ぶ。
 // import 順が並び順を決めるため、WELCOME を先に読み込む (メニュー: WELCOME → ABOUT)。
 import "./welcome.js";
@@ -37,7 +41,7 @@ import "./dungeon.js";
 import "./tessera.js";
 import "./telex.js";
 import { updateDesktopFish, drawDesktopFish } from "./aquaria.js";
-import "./oscillo.js";
+import "./oscillo.js"; // OSCILLO — 1-bit オシロスコープ (SYNESTA メンバー)
 import "./oracle.js";
 import "./glypher.js";
 import { DOLPHIN_TOOLTIP } from "./dolphin.js";
@@ -97,6 +101,9 @@ export const appIconNames = [
 export function update() {
   // ── 入力オーバーレイ更新 ──
   updateInputOverlay();
+
+  // ── SYNESTA: メンバー窓が 1 つでも閉じたらまとめて終了する検出 ──
+  synestaUpdate();
 
   // ── AQUARIA デスクトップモードの魚を更新 (ウィンドウ有無と独立に常駐) ──
   updateDesktopFish();

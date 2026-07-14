@@ -92,11 +92,16 @@ function _menuItemLabel(item) {
 
 /**
  * アイテムにチェックマークを表示すべきか。
- *   app    … 対応ウィンドウが開いている
+ *   app    … 対応ウィンドウが開いている (自前のウィンドウを持たないメタアプリ =
+ *            SYNESTA 等は isRunning で判定する。省略時は winId ベース)
  *   action … item.checked が true (ラジオ/トグル状態の表示に使う)
  */
 function _itemChecked(item) {
-  if (item.type === "app") return !item.entry.modal && item.entry.winId !== null;
+  if (item.type === "app") {
+    const e = item.entry;
+    if (e.modal) return false;
+    return e.isRunning ? e.isRunning(e) : e.winId !== null;
+  }
   if (item.type === "action") return item.checked === true;
   return false;
 }

@@ -95,5 +95,6 @@ wmRegister(
         "is selected at a time. All 4 tracks play together.",
     });
   },
-  { category: "CREATIVE", shortName: "TRACK", dev: true },
+  // SYNESTA メンバー: アイコン / ランチャーには出さず、SYNESTA からまとめて起動する。
+  { category: "CREATIVE", shortName: "TRACK", dev: true, hidden: true, noIcon: true },
 );

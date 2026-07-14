@@ -322,5 +322,6 @@ wmRegister(
       },
     );
   },
-  { category: "CREATIVE", shortName: "TRANSP", dev: true },
+  // SYNESTA メンバー: アイコン / ランチャーには出さず、SYNESTA からまとめて起動する。
+  { category: "CREATIVE", shortName: "TRANSP", dev: true, hidden: true, noIcon: true },
 );

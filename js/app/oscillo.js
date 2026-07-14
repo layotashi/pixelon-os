@@ -113,5 +113,6 @@ wmRegister(
       noMaximize: true,
     });
   },
-  { category: "EXPERIMENT" },
+  // SYNESTA メンバー: アイコン / ランチャーには出さず、SYNESTA からまとめて起動する。
+  { category: "EXPERIMENT", hidden: true, noIcon: true },
 );

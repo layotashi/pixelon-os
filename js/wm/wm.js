@@ -1274,10 +1274,7 @@ function buildWindowContextMenu(win) {
   items.push({
     type: "action",
     label: "CLOSE",
-    action: () => {
-      if (win.onBeforeClose && !win.onBeforeClose()) return;
-      wmClose(win.id);
-    },
+    action: () => wmRequestClose(win.id),
   });
   return items;
 }
@@ -1470,6 +1467,42 @@ export function wmClose(id) {
   // ファクトリの参照をクリア
   const entry = registry.find((e) => e.winId === id);
   if (entry) entry.winId = null;
+}
+
+/**
+ * ウィンドウを「閉じる前フック (onBeforeClose) を尊重して」閉じる。タイトルバーの × や
+ * CLOSE メニューと同じ経路で、onBeforeClose が false を返した場合 (破棄確認ダイアログを
+ * 出した等) は閉じずに false を返す。
+ * @param {number} id  ウィンドウ ID
+ * @returns {boolean} 実際に閉じたら true
+ */
+export function wmRequestClose(id) {
+  const win = windows.find((w) => w.id === id);
+  if (!win) return false;
+  if (win.onBeforeClose && !win.onBeforeClose()) return false;
+  wmClose(id);
+  return true;
+}
+
+/**
+ * 登録名のウィンドウが開いているか (registry の winId 追跡ベース)。
+ * SYNESTA のようなメタアプリが、束ねるメンバーの開閉状態を問い合わせるのに使う。
+ * @param {string} name  wmRegister で登録した名前
+ */
+export function wmIsOpenByName(name) {
+  const entry = registry.find((e) => e.name === name);
+  return !!entry && entry.winId !== null;
+}
+
+/**
+ * 登録名のウィンドウを onBeforeClose を尊重して閉じる (開いていなければ何もしない)。
+ * @param {string} name  wmRegister で登録した名前
+ * @returns {boolean} 実際に閉じたら true
+ */
+export function wmCloseByName(name) {
+  const entry = registry.find((e) => e.name === name);
+  if (!entry || entry.winId === null) return false;
+  return wmRequestClose(entry.winId);
 }
 
 /**
@@ -1934,8 +1967,7 @@ function handleHeaderClick(i, mx, my) {
   // アイコンクリック (ドラッグより優先)
   const icon = hitTestHeaderIcon(target, mx, my);
   if (icon === "close") {
-    if (target.onBeforeClose && !target.onBeforeClose()) return;
-    wmClose(target.id);
+    wmRequestClose(target.id);
     return;
   }
   if (icon === "maximize") {
