@@ -456,6 +456,37 @@ function noteAt(col, row) {
   }
   return null;
 }
+
+/**
+ * セル (col,row) を覆う「非アクティブトラック」の index を求める純関数 (無ければ -1)。
+ * 重なりは描画順 (index 昇順で後描き = 前面) に合わせ、最前面 = 最大 index を優先する。
+ * clips[i] は MIDI 形状 (pitch/start/len) のノートを持つトラック clip (row = ROWS-1-pitch)。
+ * @param {number} col
+ * @param {number} row 表示行 (0 = 最高音)
+ * @param {number} selIdx アクティブトラック index (これは除外する)
+ * @param {{notes:{pitch:number,start:number,len:number}[]}[]} clips 全トラックの clip
+ * @returns {number} トラック index、無ければ -1
+ */
+export function ghostTrackAtCell(col, row, selIdx, clips) {
+  const pitch = ROWS - 1 - row;
+  for (let ti = clips.length - 1; ti >= 0; ti--) {
+    if (ti === selIdx) continue;
+    const c = clips[ti];
+    if (!c) continue;
+    for (const gn of c.notes) {
+      if (gn.pitch === pitch && col >= gn.start && col < gn.start + gn.len) return ti;
+    }
+  }
+  return -1;
+}
+
+/** セル (col,row) を覆う非アクティブトラックがあれば index を返す (無ければ -1)。
+ *  ROLL から直接そのトラックへ切り替える (ゴーストノードのクリック) 判定に使う。 */
+function ghostTrackAt(col, row) {
+  const clips = [];
+  for (let ti = 0; ti < song.getTrackCount(); ti++) clips.push(song.getClip(ti));
+  return ghostTrackAtCell(col, row, song.getSelectedIndex(), clips);
+}
 function removeNote(n) {
   const i = notes.indexOf(n);
   if (i >= 0) notes.splice(i, 1);
@@ -1268,11 +1299,25 @@ function onInput(ev) {
   if (ev.type === "down") {
     const cell = cellAt(ev.localX, ev.localY);
     _pasteRefCol = gridLineAtX(ev.localX); // ペースト基準グリッド線 (セル中央しきい値)
-    const before = snapshotNotes(); // ドラッグ確定時に使う履歴起点 (move/resize)
+    let before = snapshotNotes(); // ドラッグ確定時に使う履歴起点 (move/resize)
     prevDownKey = lastDownKey;
     lastDownKey = cell ? `${cell.col},${cell.row}` : null;
 
-    const n = cell ? noteAt(cell.col, cell.row) : null;
+    let n = cell ? noteAt(cell.col, cell.row) : null;
+
+    // アクティブトラックにノートが無く、非アクティブトラックのゴーストノードを掴んだ (plain
+    // クリック) 場合は、そのトラックへ切り替える。TRACK アプリを経由せず ROLL 上で素早く
+    // トラックを移れる。切替後はそのノートを掴み直し、アクティブノートをクリックしたのと同じ
+    // 挙動 (選択 + ドラッグ) へ流す。before は旧トラックのスナップなので取り直す。
+    if (!n && cell && !ev.shift) {
+      const ti = ghostTrackAt(cell.col, cell.row);
+      if (ti >= 0) {
+        song.setSelectedIndex(ti); // onTrackSwitch が旧トラック保存 + 新トラック読込を行う
+        before = snapshotNotes();
+        n = noteAt(cell.col, cell.row);
+      }
+    }
+
     if (!n) {
       // 空セル: ラバー選択を開始。ドラッグすれば矩形に触れたノートを一括選択し、
       // 動かさず離せば単なる空クリック (plain=全解除 / Shift=維持) になる。選択の
