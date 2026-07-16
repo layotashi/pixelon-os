@@ -105,9 +105,12 @@ const INITIAL_VIEW_HI_MIDI = 72; // C5
 const THIN = 1;
 const BOLD = 2;
 
-/** 桁幅 (DOT) の範囲。時間方向は横スクロール前提なので、編集しやすい幅を保つ。 */
+/** 桁幅 (DOT) の範囲。縦 (行高) と同様に常に奇数にする: セル幅が奇数だと、小節線を跨がない
+ *  ノートの描画幅が必ず奇数になり、市松ゴーストの内寸も奇数 = 四隅の位相が揃って白始まりに
+ *  なる (右上/右下が黒くならない)。ゆえに範囲・既定をすべて奇数で定義し、水平ズームは 2px 刻み
+ *  で奇数を保つ (小節線を跨ぐノートの偶数幅は drawNoteGlyph が四隅を白へ補正する)。 */
 const CELL_W_MIN = 5;
-const CELL_W_MAX = 30;
+const CELL_W_MAX = 29;
 const CELL_W_DEFAULT = 15;
 
 /** 行高 (DOT) は縦点線 (ステップ) の位相を保つため常に奇数にする。内寸が奇数だと点線が
@@ -119,8 +122,8 @@ const CELL_H_MIN = 5;
 const CELL_H_MAX = 29;
 const CELL_H_DEFAULT = 9;
 
-/** ホイール 1 ノッチのズーム量 (DOT)。縦は奇数を保つため 2px 刻み。 */
-const ZOOM_STEP_W = 1;
+/** ホイール 1 ノッチのズーム量 (DOT)。縦横とも奇数を保つため 2px 刻み。 */
+const ZOOM_STEP_W = 2;
 const ZOOM_STEP_H = 2;
 
 /** キーリピート: 押下後この待機 (ms) を経てからこの間隔 (ms) で連続処理 */
@@ -1703,8 +1706,11 @@ export function drawStepDots(x, oy, interiorY, rows, ch) {
  *   solid  … 黒のまま (通常の非選択ノート)
  *   hollow … 白抜き (選択中 / 再生中)
  *   ghost  … 市松 (非アクティブトラック)。drawCheckerboard は内側原点 (ox+2,oy+2) 基準の
- *            phase=0 で一致位相に白 (=0) を置くので、各ノートの左上角が常に白始まりになり、
- *            位置/サイズに依らず角の位相が揃う (ユーザー ASCII 仕様どおり)。
+ *            phase=0 で一致位相に白 (=0) を置くので左上角は常に白始まり。内寸幅が奇数なら
+ *            右辺の位相も揃い四隅すべて白になる。セル幅・行高を奇数に保つ (縦横 2px ズーム)
+ *            ことで小節線を跨がないノートは必ず奇数幅になるが、小節線 (2px) を奇数本跨ぐ
+ *            ノートだけは偶数幅になり右上/右下が黒くなる。その角だけ白へ補正し、四隅を必ず
+ *            白に揃える (ユーザー ASCII 仕様: 四隅は必ず白)。
  * @param {"solid"|"hollow"|"ghost"} style
  */
 export function drawNoteGlyph(ox, oy, ow, oh, style) {
@@ -1714,7 +1720,17 @@ export function drawNoteGlyph(ox, oy, ow, oh, style) {
     fillRect(ox + 1, oy + 1, ow - 2, oh - 2, 1); // 黒枠本体
     if (ow > 4 && oh > 4) {
       if (style === "hollow") fillRect(ox + 2, oy + 2, ow - 4, oh - 4, 0);
-      else if (style === "ghost") drawCheckerboard(ox + 2, oy + 2, ow - 4, oh - 4, 0, 0);
+      else if (style === "ghost") {
+        const iw = ow - 4;
+        const ih = oh - 4;
+        drawCheckerboard(ox + 2, oy + 2, iw, ih, 0, 0);
+        // 四隅を必ず白 (0) に揃える。奇数幅では市松の位相で既に白なので実質無変化、偶数幅
+        // (小節線を奇数本跨ぐノート) でのみ黒くなる右辺の角を白へ補正して左右の不一致を消す。
+        pset(ox + 2, oy + 2, 0);
+        pset(ox + 2 + iw - 1, oy + 2, 0);
+        pset(ox + 2, oy + 2 + ih - 1, 0);
+        pset(ox + 2 + iw - 1, oy + 2 + ih - 1, 0);
+      }
     }
   }
 }

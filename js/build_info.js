@@ -8,9 +8,10 @@
 
 export const BUILD = {
   date: "2026.07.16",
-  hash: "b6be8a8",
-  count: 325,
+  hash: "a15aabf",
+  count: 326,
   notes: [
+    { date: "2026-07-16", hash: "a15aabf", text: "Notes now float while selected and only settle overlaps when you deselect" },
     { date: "2026-07-16", hash: "b6be8a8", text: "Fold view now requires at least one note" },
     { date: "2026-07-16", hash: "f4e470b", text: "Rubber-band select now previews the notes together as a chord" },
     { date: "2026-07-16", hash: "1ab6b91", text: "Playing notes now highlight on every track, and stop lighting up wrongly" },
@@ -22,6 +23,5 @@ export const BUILD = {
     { date: "2026-07-14", hash: "f755743", text: "ROLL now supports Ctrl+X to cut selected notes" },
     { date: "2026-07-14", hash: "716af27", text: "ROLL now saves all 4 tracks together as a .song project" },
     { date: "2026-07-14", hash: "51c6f96", text: "ROLL and SYNTH now have 4 tracks" },
-    { date: "2026-07-14", hash: "2306bbf", text: "ROLL now plays in perfect time even under heavy desktop load" },
   ],
 };
