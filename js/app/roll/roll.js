@@ -1107,10 +1107,11 @@ function trackWorkletNotes(i) {
   }));
 }
 
-/** トラック i のパターン署名 (編集検知用)。値が変われば再送する。 */
+/** トラック i のパターン署名 (編集検知用)。値が変われば再送する。SOLO/MUTE による可聴状態も
+ *  署名に織り込み、ミュート/ソロを切り替えたら (ノート編集でなくても) パターンを送り直す。 */
 function trackSig(i) {
   const ns = song.getClip(i).notes;
-  let s = ns.length | 0;
+  let s = ((ns.length | 0) << 1) | (song.isAudible(i) ? 1 : 0);
   for (const n of ns) {
     s = (Math.imul(s, 31) + n.start * 131071 + n.pitch * 8191 + n.len * 127 + n.vel) | 0;
   }
@@ -1124,11 +1125,13 @@ function trackChannel(i) {
   return inst && inst.channel != null ? inst.channel : null;
 }
 
-/** トラック i のパターン + チャンネルをワークレットへ送る (チャンネル未確定なら何もしない)。 */
+/** トラック i のパターン + チャンネルをワークレットへ送る (チャンネル未確定なら何もしない)。
+ *  SOLO/MUTE で不可聴なトラックは空パターンを送り、そのチャンネルの発火を止める。 */
 function sendTrackPattern(i) {
   const ch = trackChannel(i);
   if (ch == null) return;
-  chipSetPattern(trackWorkletNotes(i), STEPS_PER_BEAT, ch);
+  const notes = song.isAudible(i) ? trackWorkletNotes(i) : [];
+  chipSetPattern(notes, STEPS_PER_BEAT, ch);
 }
 
 /** トランスポート時計のキー (変化検知用)。アンカー/テンポ/ループが変われば再送する。 */
@@ -1206,11 +1209,16 @@ function updatePlayback() {
     _seqMode = false;
     sounding.clear();
   } else if (p && _seqMode) {
-    // ── 継続 [seq]: 各トラックの編集 / トランスポート変更をワークレットへ同期 ──
+    // ── 継続 [seq]: 各トラックの編集 / トランスポート / SOLO・MUTE 変更をワークレットへ同期 ──
     for (let i = 0; i < N; i++) {
       const sig = trackSig(i);
       if (sig !== _lastSigs[i]) {
-        sendTrackPattern(i); // 打ち込み編集を即反映 (WYSIWYG)
+        // MUTE/SOLO で不可聴化したら、鳴っている音を即消す (空パターンは未来の発火を止めるだけ)。
+        if (!song.isAudible(i)) {
+          const inst = song.peekInstrument(i);
+          if (inst) inst.allNotesOff();
+        }
+        sendTrackPattern(i); // 打ち込み編集・可聴状態を即反映 (WYSIWYG)
         _lastSigs[i] = sig;
       }
     }
@@ -1788,23 +1796,27 @@ function onDraw(cr) {
 
   // 非選択トラックのノートを背面に市松ゴースト表示する (同時刻・同音高の重なりを把握するため)。
   // 選択トラックのノートは後段で通常描画され前面に来る。発音中のゴーストノートはトラックの
-  // アクティブ状態に依らず「再生中」スタイルで描く (再生を全トラック横断で可視化する)。
+  // アクティブ状態に依らず「再生中」スタイルで描く (再生を全トラック横断で可視化する)。ただし
+  // SOLO/MUTE で発音しないトラックは「再生中」表示にしない (盤面と発音を一致させる)。
   const selIdx = song.getSelectedIndex();
   for (let ti = 0; ti < song.getTrackCount(); ti++) {
     if (ti === selIdx) continue;
+    const audible = song.isAudible(ti);
     for (const gn of song.getClip(ti).notes) {
-      const sounding = playStep >= gn.start && playStep < gn.start + gn.len;
+      const sounding = audible && playStep >= gn.start && playStep < gn.start + gn.len;
       drawGhostNoteAt(cr, gn.start, ROWS - 1 - gn.pitch, gn.len, sounding, vl);
     }
   }
 
   // ノート + 移動プレビュー (発音中/選択は白抜き)。非選択を背面、選択 (= 浮いた配置) を前面に
   // 描くことで、確定前に既存ノートへ一時的に重なっても選択が上に見える (フローティング表示)。
+  // 選択トラックが SOLO/MUTE で不可聴なら発音中表示にしない。
   const moving = !!(drag && drag.mode === "move" && drag.moved);
   const dup = moving && ctrlHeld();
+  const selAudible = song.isAudible(selIdx);
   for (const n of notes) {
     if (n.selected) continue; // 選択は後段で前面に描く
-    drawNoteAt(cr, n.col, n.row, n.len, isNoteSounding(n, playStep), vl);
+    drawNoteAt(cr, n.col, n.row, n.len, selAudible && isNoteSounding(n, playStep), vl);
   }
   for (const n of notes) {
     if (!n.selected) continue;

@@ -66,6 +66,8 @@ function makeTrack(i) {
       maxVoices: DEFAULT_MAX_VOICES,
     },
     clip: { notes: [], steps: DEFAULT_STEPS, stepsPerBeat: DEFAULT_STEPS_PER_BEAT },
+    solo: false, // SOLO: 立っていると (どれか 1 つでも) ソロのトラックだけが鳴る
+    mute: false, // MUTE: 立っていると鳴らない
     _instrument: null,
   };
 }
@@ -132,6 +134,53 @@ export function setSelectedIndex(i) {
   const prev = _selected;
   _selected = i;
   _notifySel(i, prev);
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  SOLO / MUTE (発音するトラックの制御)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//
+// SOLO と MUTE は 1 トラックにつき排他 (片方を立てるともう片方は下りる)。発音判定は:
+//   どれか 1 つでも SOLO があれば → SOLO のトラックだけ鳴る (他は無音)
+//   SOLO が 1 つも無ければ         → MUTE でないトラックが鳴る
+// ROLL の再生 (シーケンサ) と発音中ハイライトはこの isAudible を見て「鳴らない/光らない」を守る。
+
+export function isSolo(i) {
+  return !!(_tracks[i] && _tracks[i].solo);
+}
+export function isMute(i) {
+  return !!(_tracks[i] && _tracks[i].mute);
+}
+/** SOLO を設定する。ON にしたら同トラックの MUTE は解除する (排他)。変更を通知。 */
+export function setSolo(i, v) {
+  const t = _tracks[i];
+  if (!t) return;
+  const next = !!v;
+  if (t.solo === next) return;
+  t.solo = next;
+  if (next) t.mute = false;
+  _notifyChange();
+}
+/** MUTE を設定する。ON にしたら同トラックの SOLO は解除する (排他)。変更を通知。 */
+export function setMute(i, v) {
+  const t = _tracks[i];
+  if (!t) return;
+  const next = !!v;
+  if (t.mute === next) return;
+  t.mute = next;
+  if (next) t.solo = false;
+  _notifyChange();
+}
+/** どれか 1 トラックでも SOLO が立っているか。 */
+function anySolo() {
+  for (const t of _tracks) if (t.solo) return true;
+  return false;
+}
+/** トラック i が発音する (可聴) か。SOLO があれば SOLO のみ、無ければ非 MUTE のみ。 */
+export function isAudible(i) {
+  const t = _tracks[i];
+  if (!t) return false;
+  return anySolo() ? !!t.solo : !t.mute;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

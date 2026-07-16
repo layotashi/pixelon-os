@@ -7,15 +7,29 @@
  * ROLL はノート (と他トラックのゴースト) を切り替える。
  *
  * ── UI ──
- *   縦に並んだ 1 / 2 / 3 / 4 のラジオボタン。常にちょうど 1 つだけ選択される
- *   (排他制御は WidgetGroup が担う)。見た目の統一のため既存の RadioButton を使う。
+ *   各トラック 1 行: [n] ラジオ (編集対象の選択。常にちょうど 1 つ) + [SOLO] [MUTE] トグル
+ *   (発音制御)。SOLO/MUTE は 1 トラック内で排他、SOLO があればソロのみ発音 — この排他と
+ *   発音判定 (isAudible) は共有 song モデルが担い、ROLL の再生と発音中ハイライトが従う。
+ *
+ *     [1][SOLO][MUTE]
+ *     [2][SOLO][MUTE]
+ *     [3][SOLO][MUTE]
+ *     [4][SOLO][MUTE]
  *
  * 将来この窓を残すか Arrangement アプリへ発展させるかは未定。現段階は独立ウィンドウで最小構成。
  */
 
 import { wmOpen, wmRegister } from "../wm/index.js";
 import * as song from "./music/song.js";
-import { WidgetGroup, VBox, RadioButton, FOCUS_MARGIN, GAP } from "../ui/index.js";
+import {
+  WidgetGroup,
+  VBox,
+  HBox,
+  RadioButton,
+  ToggleButton,
+  FOCUS_MARGIN,
+  GAP,
+} from "../ui/index.js";
 
 export const APP_NAME = "TRACK";
 
@@ -27,6 +41,8 @@ const GROUP = "TRACK";
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 let radios = [];
+let soloBtns = [];
+let muteBtns = [];
 let group;
 let _ready = false;
 
@@ -35,29 +51,50 @@ function _initWidgets() {
   _ready = true;
 
   radios = [];
+  soloBtns = [];
+  muteBtns = [];
+  const rows = [];
   for (let i = 0; i < song.getTrackCount(); i++) {
+    const idx = i;
+    // [n]  … 編集トラック選択 (ラジオ) / [SOLO] [MUTE] … 発音制御 (排他は song モデルが担う)
     const r = new RadioButton(
       0,
       0,
       String(i + 1),
       GROUP,
-      () => song.setSelectedIndex(i),
+      () => song.setSelectedIndex(idx),
       i === song.getSelectedIndex(),
     );
+    const solo = new ToggleButton(0, 0, "SOLO", (v) => song.setSolo(idx, v), song.isSolo(i));
+    solo.tooltip = "Solo this track (only soloed tracks play)";
+    const mute = new ToggleButton(0, 0, "MUTE", (v) => song.setMute(idx, v), song.isMute(i));
+    mute.tooltip = "Mute this track";
     radios.push(r);
+    soloBtns.push(solo);
+    muteBtns.push(mute);
+    rows.push(HBox([r, solo, mute], GAP));
   }
 
-  const root = VBox(radios, GAP);
+  const root = VBox(rows, GAP);
   group = new WidgetGroup(root, { x: FOCUS_MARGIN, y: FOCUS_MARGIN });
 
-  // 選択が他経路 (将来) で変わってもボタン表示を追従させる。
+  // 選択・SOLO/MUTE が他経路や排他解除で変わってもボタン表示を追従させる。
   song.onSelectionChange(syncSelection);
+  song.onChange(syncSoloMute);
 }
 
 /** ラジオボタンの点灯を選択トラックに揃える (直接代入なので onChange は発火しない)。 */
 function syncSelection() {
   const sel = song.getSelectedIndex();
   for (let i = 0; i < radios.length; i++) radios[i].value = i === sel;
+}
+
+/** SOLO/MUTE ボタンの点灯をモデルに揃える (排他で片方が下りたときも追従。直接代入で onChange 不発火)。 */
+function syncSoloMute() {
+  for (let i = 0; i < soloBtns.length; i++) {
+    soloBtns[i].value = song.isSolo(i);
+    muteBtns[i].value = song.isMute(i);
+  }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

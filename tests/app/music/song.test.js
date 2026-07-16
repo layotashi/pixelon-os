@@ -39,6 +39,53 @@ describe("song モデル (4 トラック固定)", () => {
     }
   });
 
+  it("SOLO/MUTE: 既定は全トラック非ソロ・非ミュートで全て可聴", () => {
+    for (let i = 0; i < 4; i++) {
+      expect(song.isSolo(i)).toBe(false);
+      expect(song.isMute(i)).toBe(false);
+      expect(song.isAudible(i)).toBe(true);
+    }
+  });
+
+  it("MUTE: ミュートしたトラックだけ不可聴 (ソロが無ければ他は可聴)", () => {
+    song.setMute(1, true);
+    expect(song.isAudible(0)).toBe(true);
+    expect(song.isAudible(1)).toBe(false);
+    expect(song.isAudible(2)).toBe(true);
+  });
+
+  it("SOLO: どれか 1 つでもソロがあればソロのみ可聴 (複数ソロ可)", () => {
+    song.setSolo(0, true);
+    expect(song.isAudible(0)).toBe(true);
+    expect(song.isAudible(1)).toBe(false);
+    song.setSolo(2, true); // 複数ソロ
+    expect(song.isAudible(0)).toBe(true);
+    expect(song.isAudible(2)).toBe(true);
+    expect(song.isAudible(1)).toBe(false);
+    song.setSolo(0, false);
+    song.setSolo(2, false); // 全ソロ解除 → 全可聴へ戻る
+    expect(song.isAudible(1)).toBe(true);
+  });
+
+  it("SOLO/MUTE は 1 トラック内で排他 (片方 ON でもう片方 OFF)", () => {
+    song.setMute(0, true);
+    expect(song.isMute(0)).toBe(true);
+    song.setSolo(0, true); // ソロにするとミュートは下りる
+    expect(song.isSolo(0)).toBe(true);
+    expect(song.isMute(0)).toBe(false);
+    song.setMute(0, true); // ミュートにするとソロは下りる
+    expect(song.isMute(0)).toBe(true);
+    expect(song.isSolo(0)).toBe(false);
+  });
+
+  it("SOLO/MUTE の変更は onChange を通知する", () => {
+    let n = 0;
+    song.onChange(() => n++);
+    song.setSolo(1, true);
+    song.setMute(2, true);
+    expect(n).toBeGreaterThanOrEqual(2);
+  });
+
   it("setSelectedIndex: 範囲外・同一は無視する", () => {
     song.setSelectedIndex(2);
     expect(song.getSelectedIndex()).toBe(2);
