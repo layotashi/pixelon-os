@@ -132,6 +132,25 @@ describe("Fader — onChange / ホイール / ダブルクリック", () => {
     expect(f.value).toBe(50);
   });
 
+  it("Shift+ホイールは微調整 (整数は 1 ステップ)、方向は Wheel と同じ", () => {
+    const f = new Fader(0, 0, 45, 0, 100, 50);
+    // Shift 時は縦 delta が deltaX に載り deltaY=0 になる (input.js の横スクロール振替)。
+    // WheelUp = 負デルタ → 増加。
+    f.update({ type: "wheel", localX: 10, localY: 20, deltaX: -1, deltaY: 0, shift: true });
+    expect(f.value).toBe(51);
+    // WheelDown = 正デルタ → 減少。
+    f.update({ type: "wheel", localX: 10, localY: 20, deltaX: 1, deltaY: 0, shift: true });
+    expect(f.value).toBe(50);
+  });
+
+  it("Shift+ホイールでも down/up 双方向が正しく効く (バグ回帰: 常に加算しない)", () => {
+    const f = new Fader(0, 0, 45, 0, 100, 50);
+    // 2 回下方向 → 2 減る (以前は deltaY=0 で常に +1 されていた)
+    f.update({ type: "wheel", localX: 10, localY: 20, deltaX: 1, deltaY: 0, shift: true });
+    f.update({ type: "wheel", localX: 10, localY: 20, deltaX: 1, deltaY: 0, shift: true });
+    expect(f.value).toBe(48);
+  });
+
   it("ダブルクリックでデフォルト値に戻る", () => {
     const f = new Fader(0, 0, 45, 0, 100, 30);
     press(f, 5); // 100 に変更

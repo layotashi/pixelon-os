@@ -7,10 +7,11 @@
  */
 
 export const BUILD = {
-  date: "2026.07.14",
-  hash: "0d6840e",
-  count: 319,
+  date: "2026.07.16",
+  hash: "fd020ce",
+  count: 320,
   notes: [
+    { date: "2026-07-14", hash: "fd020ce", text: "Music apps now launch and close together as SYNESTA" },
     { date: "2026-07-14", hash: "0d6840e", text: "Click a ghost note in ROLL to switch to its track" },
     { date: "2026-07-14", hash: "99d3305", text: "FOLD view now keeps rows used by any of the 4 tracks" },
     { date: "2026-07-14", hash: "f755743", text: "ROLL now supports Ctrl+X to cut selected notes" },
@@ -22,6 +23,5 @@ export const BUILD = {
     { date: "2026-07-14", hash: "de68716", text: "Roll step grid dots stay aligned when zooming" },
     { date: "2026-07-14", hash: "ab03887", text: "ROLL keeps your scroll position when unfolding" },
     { date: "2026-07-14", hash: "26ab759", text: "OSCILLO is now a full-window oscilloscope" },
-    { date: "2026-07-14", hash: "736055f", text: "Audio no longer hangs when you switch browser tabs" },
   ],
 };

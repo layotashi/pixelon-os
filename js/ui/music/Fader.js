@@ -253,19 +253,33 @@ export class Fader extends FocusableWidget {
       }
     }
 
-    // ホイール: ホバー中のフェーダーの値を増減 (上 = 増加)
+    // ホイール: ホバー中のフェーダーの値を増減 (上 = 増加)。Shift で微調整
+    // (ドラッグの Shift 微調整と対称)。方向は「符号付きデルタ」で決める:
+    // Shift+縦ホイールは環境 (input.js) が縦 delta を横スクロールへ振り替えるため
+    // deltaY が 0 になり deltaX に載る。deltaY を優先し、0 なら deltaX を見ることで
+    // Shift 有無に依らず WheelUp=増加 / WheelDown=減少 を保つ (符号は保存されている)。
     if (ev.type === "wheel" && hit) {
-      const range = this.max - this.min;
-      const step =
-        this.wheelStep != null
-          ? this.wheelStep
-          : this._isInt
-            ? Math.max(1, (range * 0.05) | 0)
-            : range * 0.05;
-      const dir = ev.deltaY > 0 ? -1 : 1;
-      this._setValue(this.value + dir * step);
+      const raw = ev.deltaY !== 0 ? ev.deltaY : ev.deltaX || 0;
+      if (raw !== 0) {
+        const dir = raw > 0 ? -1 : 1;
+        this._setValue(this.value + dir * this._wheelStep(!!ev.shift));
+      }
       ev.consumed = true;
     }
+  }
+
+  /**
+   * ホイール 1 ノッチの増減量。fine (Shift) は微調整 (整数なら最小 1、実数なら通常の 1/10)。
+   * @param {boolean} fine Shift 押下中か
+   * @returns {number}
+   * @private
+   */
+  _wheelStep(fine) {
+    const range = this.max - this.min;
+    if (!fine && this.wheelStep != null) return this.wheelStep;
+    if (this._isInt) return fine ? 1 : Math.max(1, (range * 0.05) | 0);
+    const base = this.wheelStep != null ? this.wheelStep : range * 0.05;
+    return fine ? base / 10 : base;
   }
 
   /** @override — ↑/↓ で最小ステップ増減 (リピート+加速) */
