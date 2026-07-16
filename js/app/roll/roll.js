@@ -1001,11 +1001,7 @@ function openSong() {
  *  既定 (120BPM / 0..16beat ループ ON) は元々ここで固定していた値と同じなので、
  *  ROLL 単体での挙動は変わらない。 */
 function togglePlay(fromStop) {
-  if (transport.isPlaying()) {
-    transport.stop();
-  } else {
-    transport.play(fromStop ? null : 0); // null=停止位置から / 0=1.1.1 から
-  }
+  transport.toggleFromSpace(fromStop); // 共有仕様: 素=1.1.1 から / Shift=停止位置から
 }
 // ── [seq] ワークレットシーケンサへ渡す変換 / 同期 (トラック別) ──
 

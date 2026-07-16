@@ -152,6 +152,32 @@ describe("playback clock", () => {
   });
 });
 
+describe("toggleFromSpace — Space キーの共有仕様", () => {
+  it("停止中の素 Space は 1.1.1 (beat 0) から再生", () => {
+    T.setPosition(8); // 現在位置を先へ動かしておく
+    T.toggleFromSpace(false);
+    expect(T.isPlaying()).toBe(true);
+    expect(T.getPosition()).toBe(0); // 素 = 先頭から
+    expect(T.getClock().startBeat).toBe(0);
+  });
+
+  it("停止中の Shift+Space は現在位置から再生", () => {
+    T.setPosition(8);
+    T.toggleFromSpace(true);
+    expect(T.isPlaying()).toBe(true);
+    expect(T.getClock().startBeat).toBe(8); // Shift = 続きから
+  });
+
+  it("再生中の Space は停止 (位置は保持)", () => {
+    T.play(0);
+    setNow(1);
+    T.update(); // pos ~ 2
+    T.toggleFromSpace(false);
+    expect(T.isPlaying()).toBe(false);
+    expect(T.getPosition()).toBeCloseTo(2, 5);
+  });
+});
+
 describe("clock (getClock) — ワークレットシーケンサへ渡すアンカー", () => {
   it("play 後は開始位置/時刻・テンポ・ループを返す", () => {
     setNow(2);

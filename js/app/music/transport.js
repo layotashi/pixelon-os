@@ -254,6 +254,18 @@ export function stop() {
   _recording = false;
 }
 
+/**
+ * Space キーの共有トグル (ROLL / TRANSPORT が同一挙動になるよう一本化する単一の出所)。
+ * 再生中なら停止 (位置は保持)。停止中なら fromCurrent=false で先頭 (1.1.1 = beat 0) から、
+ * true (Shift+Space) で現在位置から再生する。TRANSPORT の ▶ ボタン (常に現在位置から) とは
+ * 別に、Space は「素で最初から / Shift で続きから」という仕様を持つ。
+ * @param {boolean} fromCurrent Shift 押下中か (現在位置から再開)
+ */
+export function toggleFromSpace(fromCurrent) {
+  if (_playing) stop();
+  else play(fromCurrent ? null : 0);
+}
+
 /** 停止して先頭へ戻す (DAW の STOP)。ループ ON ならループ先頭、OFF なら 0 へ。 */
 export function rewind() {
   stop();

@@ -8,9 +8,10 @@
 
 export const BUILD = {
   date: "2026.07.16",
-  hash: "fd020ce",
-  count: 320,
+  hash: "72c538e",
+  count: 321,
   notes: [
+    { date: "2026-07-16", hash: "72c538e", text: "Shift plus wheel now fine-tunes music faders in the right direction" },
     { date: "2026-07-14", hash: "fd020ce", text: "Music apps now launch and close together as SYNESTA" },
     { date: "2026-07-14", hash: "0d6840e", text: "Click a ghost note in ROLL to switch to its track" },
     { date: "2026-07-14", hash: "99d3305", text: "FOLD view now keeps rows used by any of the 4 tracks" },
@@ -22,6 +23,5 @@ export const BUILD = {
     { date: "2026-07-14", hash: "6bafcfb", text: "New TRANSPORT app: play, tempo, loop, metronome for all music apps" },
     { date: "2026-07-14", hash: "de68716", text: "Roll step grid dots stay aligned when zooming" },
     { date: "2026-07-14", hash: "ab03887", text: "ROLL keeps your scroll position when unfolding" },
-    { date: "2026-07-14", hash: "26ab759", text: "OSCILLO is now a full-window oscilloscope" },
   ],
 };

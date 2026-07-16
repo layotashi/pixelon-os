@@ -30,7 +30,7 @@
 
 import { drawText, textWidth } from "../core/font.js";
 import { drawIcon, ICON_W, ICON_H } from "../core/icon.js";
-import { keyDown } from "../core/input.js";
+import { keyDown, keyHeld } from "../core/input.js";
 import { isCapturing } from "../core/gpu.js";
 import { wmOpen, wmRegister, wmIsFocused } from "../wm/index.js";
 import * as transport from "./music/transport.js";
@@ -208,14 +208,14 @@ function _initWidgets() {
 //  毎フレーム: 共有クロック更新 + キー + 表示同期
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/** Space で Play/Pause をトグルする (窓フォーカス時・テキスト入力中は無視)。 */
+/** Space で再生トグル (窓フォーカス時・テキスト入力中は無視)。素=1.1.1 から /
+ *  Shift=停止位置から。ROLL と同一の共有仕様 (transport.toggleFromSpace) を使う。 */
 function handleKeys() {
   if (!wmIsFocused(APP_NAME)) return;
   const focused = WidgetGroup.getFocused();
   if (focused && focused.isTextInput) return;
   if (keyDown("Space")) {
-    if (transport.isPlaying()) transport.stop();
-    else transport.play();
+    transport.toggleFromSpace(keyHeld("ShiftLeft") || keyHeld("ShiftRight"));
   }
 }
 
