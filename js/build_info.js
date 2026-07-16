@@ -8,9 +8,10 @@
 
 export const BUILD = {
   date: "2026.07.16",
-  hash: "f4e470b",
-  count: 324,
+  hash: "b6be8a8",
+  count: 325,
   notes: [
+    { date: "2026-07-16", hash: "b6be8a8", text: "Fold view now requires at least one note" },
     { date: "2026-07-16", hash: "f4e470b", text: "Rubber-band select now previews the notes together as a chord" },
     { date: "2026-07-16", hash: "1ab6b91", text: "Playing notes now highlight on every track, and stop lighting up wrongly" },
     { date: "2026-07-16", hash: "2e52697", text: "Space plays from the top, Shift plus Space resumes from the cursor" },
@@ -22,6 +23,5 @@ export const BUILD = {
     { date: "2026-07-14", hash: "716af27", text: "ROLL now saves all 4 tracks together as a .song project" },
     { date: "2026-07-14", hash: "51c6f96", text: "ROLL and SYNTH now have 4 tracks" },
     { date: "2026-07-14", hash: "2306bbf", text: "ROLL now plays in perfect time even under heavy desktop load" },
-    { date: "2026-07-14", hash: "d543f18", text: "ROLL: undo/redo, copy-paste, time scale" },
   ],
 };

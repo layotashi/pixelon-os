@@ -23,7 +23,9 @@
  *   配置/削除 = ダブルクリック。選択 = クリック、Shift+クリックで複数。
  *   移動 = ドラッグ、複製 = Ctrl+ドラッグ。音価 = ノート左右の辺をドラッグ。
  *   ズーム = Ctrl/Shift+Ctrl+ホイール (カーソル基準)。FOLD = F。再生 = Space。
- *   選択時はピッチ確認のため短く試聴する。重なりは配置側が勝ち (被りは削除/クリップ)。
+ *   選択時はピッチ確認のため短く試聴する (ラバー選択は和音をポリで試聴)。選択ノートは
+ *   「浮いた仮置き」として扱い、移動/複製/配置/ペースト中は既存ノートに一時的に重なっても
+ *   壊さない。重なりの解決 (選択が勝つ) と履歴化は「配置確定」= 選択解除の時にまとめて行う。
  *   コピー/ペースト = Ctrl+C / Ctrl+V (ペーストは直近クリックのグリッド線が起点)。
  *   Undo/Redo = Ctrl+Z / Ctrl+Y。時間スケール = `*`/`/` に続けて数字 (例 `*`2=2倍, `/`2=1/2倍)。
  *
@@ -194,6 +196,16 @@ let repeatNext = 0;
 let undoStack = [];
 /** undo で戻した状態のスタック。redo で pop する。新規編集が入ると破棄する */
 let redoStack = [];
+
+// ── 配置トランザクション (フローティング配置) ──
+//
+// 選択ノート群は「フローティング」= 浮いた仮置きとして扱い、移動/複製/配置/ペースト/音価/
+// スケールの最中は重なりを即解決しない (下のノートを削除/クリップしない)。和音を打ち込む際に
+// 貼り付け→上下移動で既存ノートに一時的に重なっても壊れないようにするため。重なりの解決
+// (選択が勝つ) と 1 件の履歴化は「配置確定」= 選択が解除/置換される直前にまとめて行う。
+// これで Undo/Redo も「配置確定まで」を 1 操作として直感的に戻せる。
+/** 配置トランザクションの起点スナップショット (null = トランザクション未開始)。 */
+let _placeBefore = null;
 
 // ── コピー / ペースト ──
 /** コピーしたノート群。位置は先頭 (srcCol) からの相対 dCol で保持し、ペースト時に再配置する。
@@ -627,12 +639,12 @@ function resolveOverlaps(active) {
   notes = out;
 }
 
-/** 選択長を d 変える (最小 1・上限なし)。変更後に重なりを解決 */
+/** 選択長を d 変える (最小 1・上限なし)。重なりは即解決せず配置確定 (選択解除) まで浮かせる。 */
 function changeLen(d) {
   const sel = selected();
   if (!sel.length) return;
+  beginPlacement();
   for (const n of sel) n.len = Math.max(1, n.len + d);
-  resolveOverlaps(sel);
   markDirty();
 }
 /** (dCol,dRow) を選択集合が枠内に収まる範囲へクランプ */
@@ -649,23 +661,24 @@ function clampDelta(sel, dCol, dRow) {
   }
   return [clampInt(dCol, -minC, COLS - 1 - maxC), clampInt(dRow, -minR, ROWS - 1 - maxR)];
 }
-/** 選択を (dCol,dRow) 移動 (相対位置を保つ all-or-nothing)。移動後に重なり解決 */
+/** 選択を (dCol,dRow) 移動 (相対位置を保つ all-or-nothing)。重なりは即解決せず浮かせる
+ *  (配置確定 = 選択解除でまとめて解決)。移動中に既存ノートへ一時的に重なっても壊さない。 */
 function moveSelected(dCol, dRow) {
   const sel = selected();
   if (!sel.length) return;
   const [cc, rr] = clampDelta(sel, dCol, dRow);
   if (cc !== dCol || rr !== dRow) return;
+  beginPlacement();
   for (const n of sel) {
     n.col += dCol;
     n.row += dRow;
   }
-  resolveOverlaps(sel);
   // ピッチ方向 (上下キー) の移動だけ、移動後の代表音 (最高音) を試聴する。
   // 時間方向 (左右キー = dRow 0) では鳴らさない。
   if (dRow !== 0) audition(rowToMidi(Math.min(...sel.map((n) => n.row))));
   markDirty();
 }
-/** sel を (dCol,dRow) へ複製し選択をコピーへ移す。コピーが既存に勝つ */
+/** sel を (dCol,dRow) へ複製し選択をコピーへ移す。コピーが浮いた選択 (配置確定で既存に勝つ)。 */
 function duplicateAt(sel, dCol, dRow) {
   if (!sel.length) return;
   const copies = sel.map((n) => ({
@@ -677,7 +690,6 @@ function duplicateAt(sel, dCol, dRow) {
   }));
   for (const n of sel) n.selected = false;
   notes.push(...copies);
-  resolveOverlaps(copies);
   markDirty();
 }
 /** Ctrl+D: 「ノート群の末尾の次のセル」から複製 (音高そのまま。相対位置を保つ) */
@@ -692,11 +704,19 @@ function duplicateAfter() {
   }
   duplicateAt(sel, maxEnd - minCol, 0);
 }
-function deleteSelected() {
+/**
+ * 選択ノートを削除して 1 件の履歴にする (Delete / Cut)。浮いていた配置は確定 (stamp) せずに
+ * 破棄するため、選択ノートが一時的に重ねていた「下のノート」は削除されず残る。起点は配置
+ * トランザクションが開いていればその起点 (フロート開始前)、無ければ現在のスナップショット。
+ */
+function deleteSelectedFloating() {
   if (!notes.some((n) => n.selected)) return;
+  const before = _placeBefore || snapshotNotes();
+  _placeBefore = null; // 浮いていた配置は確定せず破棄
   notes = notes.filter((n) => !n.selected);
   drag = null;
   markDirty();
+  commitHistory(before);
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -736,15 +756,33 @@ function commitHistory(before) {
   if (undoStack.length > HISTORY_LIMIT) undoStack.shift();
   redoStack.length = 0;
 }
-/** fn を実行し、ノートが変化していれば 1 件の履歴として記録する (配置/削除/スケール等の共通枠) */
-function withHistory(fn) {
-  const before = snapshotNotes();
-  fn();
+/**
+ * 配置トランザクションを開く。未開始なら起点スナップショットを記録する (移動/複製/配置/
+ * ペースト/音価/スケールの先頭で呼ぶ)。before を渡すとその状態を起点にする (ドラッグの
+ * 掴み時スナップショットや、ペースト前の状態を確定点にしたいとき)。
+ * @param {Array|undefined} before 起点スナップショット (省略時は現在の notes)
+ */
+function beginPlacement(before) {
+  if (!_placeBefore) _placeBefore = before || snapshotNotes();
+}
+
+/**
+ * 配置を確定する。浮いていた選択ノートの重なりを解決 (選択が既存に勝ち、被りを削除/クリップ) し、
+ * トランザクション全体を 1 件の履歴として記録する。選択を解除/置換する直前に、確定対象がまだ
+ * 選択されている状態で呼ぶこと (勝者 = 現在の選択)。トランザクション未開始なら何もしない。
+ */
+function finishPlacement() {
+  if (!_placeBefore) return;
+  const before = _placeBefore;
+  _placeBefore = null;
+  resolveOverlaps(selected()); // 浮いていた選択が既存を上書き (被りを削除/クリップ)
   commitHistory(before);
 }
-/** undo/redo でノートを差し替えた後の後始末 (ドラッグ/発音/dirty を整える) */
+
+/** undo/redo でノートを差し替えた後の後始末 (ドラッグ/配置/発音/dirty を整える) */
 function afterHistoryChange() {
   drag = null;
+  _placeBefore = null; // 配置トランザクションも破棄 (差し替え後は起点が無効)
   if (_activeInst) _activeInst.allNotesOff(); // 発音中があれば消す (残った参照は無効になるため)
   sounding.clear();
   markDirty();
@@ -813,19 +851,18 @@ export function scaleNotesInTime(sel, factor, maxCols) {
   return out;
 }
 
-/** 選択ノート群を factor 倍する。成立しなければ何もしない (1 件の履歴として記録) */
+/** 選択ノート群を factor 倍する。成立しなければ何もしない。重なりは即解決せず浮かせる
+ *  (配置確定 = 選択解除で、拡大により被った分を選択側を勝たせて解決)。 */
 function applyScale(factor) {
-  withHistory(() => {
-    const sel = selected();
-    const scaled = scaleNotesInTime(sel, factor, COLS);
-    if (!scaled) return; // 実行不可 (丸めず操作自体を行わない)
-    for (let i = 0; i < sel.length; i++) {
-      sel[i].col = scaled[i].col;
-      sel[i].len = scaled[i].len;
-    }
-    resolveOverlaps(sel); // 拡大で他ノートに被った分は選択側を勝たせて解決
-    markDirty();
-  });
+  const sel = selected();
+  const scaled = scaleNotesInTime(sel, factor, COLS);
+  if (!scaled) return; // 実行不可 (丸めず操作自体を行わない)
+  beginPlacement();
+  for (let i = 0; i < sel.length; i++) {
+    sel[i].col = scaled[i].col;
+    sel[i].len = scaled[i].len;
+  }
+  markDirty();
 }
 
 /** 現在の選択をクリップボードへコピーする (先頭 col からの相対位置で保持) */
@@ -840,12 +877,12 @@ function copySelection() {
   };
 }
 
-/** 選択をクリップボードへ退避してから削除する (Ctrl+X)。コピー & ペーストと対になる操作で、
- *  クリップボードの中身は copySelection と同一形式。削除は 1 件の履歴として記録し Undo で戻せる。 */
+/** 選択をクリップボードへ退避してから削除する (Ctrl+X)。浮いていた配置は確定せず破棄して
+ *  選択ノートを削除する (下のノートは残す)。削除は 1 件の履歴として記録し Undo で戻せる。 */
 function cutSelection() {
   if (!selected().length) return;
   copySelection();
-  withHistory(deleteSelected);
+  deleteSelectedFloating();
 }
 
 /**
@@ -868,20 +905,22 @@ export function pasteNotesAt(clipNotes, refCol, maxCols) {
   return out;
 }
 
-/** クリップボードを基準グリッド線へペーストする (1 件の履歴として記録) */
+/** クリップボードを基準グリッド線へペーストする。ペースト直後は「浮いた選択」として置き、
+ *  重なりは即解決しない (貼り付け→上下移動で既存に一時的に重なっても壊さない)。確定 (選択解除)
+ *  時にペースト側を勝たせて解決する。直前に浮いていた配置は先に確定してから貼り付ける。 */
 function pasteClipboard() {
   if (!clipboard || !clipboard.notes.length) return;
-  withHistory(() => {
-    // 基準列は直近クリックのグリッド線。未クリックならコピー元の位置に戻す。
-    const refCol = _pasteRefCol != null ? _pasteRefCol : clipboard.srcCol;
-    const placed = pasteNotesAt(clipboard.notes, refCol, COLS);
-    if (!placed.length) return;
-    deselectAll();
-    const copies = placed.map((p) => ({ ...p, selected: true }));
-    notes.push(...copies);
-    resolveOverlaps(copies); // ペースト側が既存に勝つ
-    markDirty();
-  });
+  finishPlacement(); // 直前の浮いた配置を確定 (この選択が勝つ) してから貼り付ける
+  const before = snapshotNotes();
+  // 基準列は直近クリックのグリッド線。未クリックならコピー元の位置に戻す。
+  const refCol = _pasteRefCol != null ? _pasteRefCol : clipboard.srcCol;
+  const placed = pasteNotesAt(clipboard.notes, refCol, COLS);
+  if (!placed.length) return;
+  deselectAll();
+  const copies = placed.map((p) => ({ ...p, selected: true }));
+  notes.push(...copies);
+  markDirty();
+  beginPlacement(before); // 貼り付けたコピーを浮かせる (確定は選択解除時)
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -930,6 +969,7 @@ function loadClip(clip) {
     selected: false,
   }));
   drag = null;
+  _placeBefore = null; // 別ドキュメント: 浮いた配置トランザクションも破棄
   sounding.clear();
   resetHistory(); // 別ドキュメントなので Undo/Redo をまっさらに
 }
@@ -955,6 +995,7 @@ let _loadingSong = false;
  *  .song 読み込み中は loadSong が全トラックと ROLL バッファを自前で管理するため何もしない。 */
 function onTrackSwitch(next, prev) {
   if (_loadingSong) return;
+  finishPlacement(); // 旧トラックの浮いた配置を確定してから保存 (重なりを解決した状態で残す)
   song.setClipNotes(prev, currentClip().notes);
   loadClip(song.getClip(next));
 }
@@ -1287,35 +1328,35 @@ function endDrag() {
 
   if (d.mode === "rubber") {
     // 動かして離した場合は held で選択反映済み。動かさず離した (単なる空クリック) は
-    // 非 Shift なら全解除、Shift なら選択維持。
+    // 非 Shift なら全解除、Shift なら選択維持 (浮いた配置は down 時に確定済み)。
     if (!d.moved && !d.additive) deselectAll();
     // 和音プレビューを鳴らし切ってから消す (キーを離した時のリリース感)。持続 → 自動消音へ移行。
     if (_previewNotes.size) _previewOffAt = performance.now() + AUDITION_SEC * 1000;
     return;
   }
   if (d.mode === "resize") {
-    resolveOverlaps([d.note]); // 端ドラッグはノートを実時間で伸縮済み。確定時に重なり解決
+    // 音価はドラッグ中に実時間で変更済み。重なりは即解決せず、配置確定 (選択解除) まで浮かせる。
     if (d.resized) {
+      beginPlacement(d.before);
       markDirty();
-      commitHistory(d.before); // 音価変更を 1 件の履歴に
     }
     return;
   }
   if (!d.moved) {
-    if (d.pending) d.pending();
+    if (d.pending) d.pending(); // 単一化 / トグル (単一化は内部で finishPlacement して確定)
     return;
   }
+  // 移動 / 複製: 重なりは即解決せず浮かせる (配置確定 = 選択解除でまとめて解決)。
+  beginPlacement(d.before);
   if (ctrlHeld()) {
-    duplicateAt(d.sel, d.dCol, d.dRow); // Ctrl 押下中 = 複製 (markDirty は duplicateAt 内)
+    duplicateAt(d.sel, d.dCol, d.dRow); // Ctrl 押下中 = 複製
   } else {
     for (const n of d.sel) {
       n.col += d.dCol;
       n.row += d.dRow;
     }
-    resolveOverlaps(d.sel);
     markDirty();
   }
-  commitHistory(d.before); // 移動 / 複製を 1 件の履歴に
 }
 
 function onInput(ev) {
@@ -1330,26 +1371,31 @@ function onInput(ev) {
     if (!cell) return;
     // 別セルへの連続シングルクリックが時間だけで dblclick 誤検出されるのを弾く
     if (`${cell.col},${cell.row}` !== prevDownKey) return;
-    const before = snapshotNotes();
     const n = noteAt(cell.col, cell.row);
     if (n) {
-      removeNote(n); // 既存 → 削除
+      // 既存 → 削除 (即時 1 件履歴)。浮いていた配置があれば先に確定する。
+      finishPlacement();
+      const before = snapshotNotes();
+      removeNote(n);
+      markDirty();
+      commitHistory(before);
     } else {
+      // 空セル → 配置。浮いていた配置を確定してから、置いたノートを浮かせる (確定は選択解除時)。
+      finishPlacement();
+      const before = snapshotNotes();
       const nn = { col: cell.col, row: cell.row, len: 1, vel: DEFAULT_VEL, selected: false };
       notes.push(nn);
-      selectOnly(nn); // 配置直後は選択
+      selectOnly(nn); // 配置直後は選択 (浮いた状態)
       audition(rowToMidi(nn.row));
-      resolveOverlaps([nn]);
+      markDirty();
+      beginPlacement(before); // 置いたノートを浮かせる (確定は選択解除時)
     }
-    markDirty();
-    commitHistory(before); // 配置 / 削除を 1 件の履歴に
     return;
   }
 
   if (ev.type === "down") {
     const cell = cellAt(ev.localX, ev.localY);
     _pasteRefCol = gridLineAtX(ev.localX); // ペースト基準グリッド線 (セル中央しきい値)
-    let before = snapshotNotes(); // ドラッグ確定時に使う履歴起点 (move/resize)
     prevDownKey = lastDownKey;
     lastDownKey = cell ? `${cell.col},${cell.row}` : null;
 
@@ -1358,20 +1404,20 @@ function onInput(ev) {
     // アクティブトラックにノートが無く、非アクティブトラックのゴーストノードを掴んだ (plain
     // クリック) 場合は、そのトラックへ切り替える。TRACK アプリを経由せず ROLL 上で素早く
     // トラックを移れる。切替後はそのノートを掴み直し、アクティブノートをクリックしたのと同じ
-    // 挙動 (選択 + ドラッグ) へ流す。before は旧トラックのスナップなので取り直す。
+    // 挙動 (選択 + ドラッグ) へ流す。onTrackSwitch が旧トラックの浮いた配置を確定 + 保存する。
     if (!n && cell && !ev.shift) {
       const ti = ghostTrackAt(cell.col, cell.row);
       if (ti >= 0) {
-        song.setSelectedIndex(ti); // onTrackSwitch が旧トラック保存 + 新トラック読込を行う
-        before = snapshotNotes();
+        song.setSelectedIndex(ti);
         n = noteAt(cell.col, cell.row);
       }
     }
 
     if (!n) {
-      // 空セル: ラバー選択を開始。ドラッグすれば矩形に触れたノートを一括選択し、
-      // 動かさず離せば単なる空クリック (plain=全解除 / Shift=維持) になる。選択の
-      // 変更は確定 (endDrag) まで遅延する。base = Shift 時の合成元 (既存選択)。
+      // 空セル: ラバー選択を開始。開始時に浮いた配置を確定する (別の場所で選択を始めるため)。
+      // ドラッグすれば矩形に触れたノートを一括選択し、動かさず離せば単なる空クリック
+      // (plain=全解除 / Shift=維持)。base = Shift 時の合成元 (既存選択)。
+      finishPlacement();
       drag = {
         mode: "rubber",
         x0: ev.localX,
@@ -1388,6 +1434,7 @@ function onInput(ev) {
     // 音価変更 (辺ドラッグ)。Shift 中は複数選択トグルを優先
     const side = ev.shift ? null : edgeSide(ev.localX, n);
     if (side) {
+      finishPlacement(); // 別ノートの音価変更へ移る → 浮いた配置を確定
       if (!n.selected) audition(rowToMidi(n.row));
       selectOnly(n); // 音価変更は単一対象
       drag = {
@@ -1396,7 +1443,7 @@ function onInput(ev) {
         side,
         fixedCol: side === "r" ? n.col : n.col + n.len - 1,
         resized: false,
-        before,
+        before: snapshotNotes(),
       };
       return;
     }
@@ -1407,15 +1454,17 @@ function onInput(ev) {
     if (ev.shift) {
       if (n.selected) pending = () => (n.selected = false); // Shift+クリック(選択中)=解除
       else {
-        n.selected = true; // Shift+down(非選択)=追加
+        n.selected = true; // Shift+down(非選択)=追加 (選択を広げる。確定はしない)
         audition(midi);
       }
     } else if (n.selected) {
       pending = () => {
-        selectOnly(n); // クリック=単一化
+        finishPlacement(); // クリック単一化 = 別の配置へ移る → 浮いた配置を確定
+        selectOnly(n);
         audition(midi);
       };
     } else {
+      finishPlacement(); // 別ノートへ選択が移る → 浮いた配置を確定
       selectOnly(n); // plain down(非選択)=単一選択
       audition(midi);
     }
@@ -1429,7 +1478,7 @@ function onInput(ev) {
       previewRow: 0, // 最後に試聴した dRow (ピッチが変わったフレームだけ鳴らすため)
       sel: selected(),
       pending,
-      before,
+      before: snapshotNotes(),
     };
     return;
   }
@@ -1505,11 +1554,10 @@ function arrowAction(code, shift) {
 function handleArrows(now, shift) {
   for (const code of ARROWS) {
     if (keyDown(code)) {
-      // 押下 1 回を 1 件の履歴に。以降の長押しリピートはこの起点へ集約する
-      // (リピート中は commit しないので、その連続移動を 1 回の Undo で戻せる)。
-      const before = snapshotNotes();
+      // 配置トランザクションを開く (未開始なら移動前を起点に記録)。移動 (と長押しリピート・
+      // 以降の連続移動) はすべて配置確定 (選択解除) まで 1 件の履歴に集約される。
+      beginPlacement();
       arrowAction(code, shift)?.();
-      commitHistory(before);
       repeatCode = code;
       repeatNext = now + REPEAT_DELAY;
       return;
@@ -1517,7 +1565,7 @@ function handleArrows(now, shift) {
   }
   if (repeatCode && keyHeld(repeatCode)) {
     if (now >= repeatNext) {
-      arrowAction(repeatCode, shift)?.(); // リピートは履歴を追加しない (押下単位で 1 件)
+      arrowAction(repeatCode, shift)?.();
       repeatNext = now + REPEAT_RATE;
     }
   } else {
@@ -1598,23 +1646,29 @@ function handleKeys() {
     return;
   }
   const shift = shiftHeld();
-  // ファイル (VFS): Ctrl+Shift+S を Ctrl+S より先に判定する。保存単位は 4 トラック丸ごと (.song)
-  if (ctrlShiftDown("KeyS")) saveSongAs();
-  else if (ctrlDown("KeyS")) saveSong();
-  if (ctrlDown("KeyO")) openSong();
-  // 履歴: Ctrl+Z = Undo / Ctrl+Y = Redo
-  if (ctrlDown("KeyZ")) undo();
-  if (ctrlDown("KeyY")) redo();
-  // 切り取り / コピー / ペースト
+  // ファイル (VFS): Ctrl+Shift+S を Ctrl+S より先に判定する。保存単位は 4 トラック丸ごと (.song)。
+  // 保存/開く前に浮いた配置を確定して、確定済みのノートが保存/破棄されるようにする。
+  if (ctrlShiftDown("KeyS")) { finishPlacement(); saveSongAs(); }
+  else if (ctrlDown("KeyS")) { finishPlacement(); saveSong(); }
+  if (ctrlDown("KeyO")) { finishPlacement(); openSong(); }
+  // 履歴: Ctrl+Z = Undo / Ctrl+Y = Redo。浮いた配置は先に確定してから戻す (直感的な 1 手戻し)。
+  if (ctrlDown("KeyZ")) { finishPlacement(); undo(); }
+  if (ctrlDown("KeyY")) { finishPlacement(); redo(); }
+  // 切り取り / コピー / ペースト。切り取りは浮いた配置を確定せず破棄して削除 (下のノートを残す)。
   if (ctrlDown("KeyX")) cutSelection();
   if (ctrlDown("KeyC")) copySelection();
   if (ctrlDown("KeyV")) pasteClipboard();
-  if (ctrlDown("KeyA")) selectAll();
-  if (ctrlDown("KeyD")) withHistory(duplicateAfter);
-  if (keyDown("Escape")) deselectAll();
-  if (keyDown("Delete")) withHistory(deleteSelected);
+  if (ctrlDown("KeyA")) { finishPlacement(); selectAll(); } // 全選択の前に浮いた配置を確定
+  if (ctrlDown("KeyD")) {
+    finishPlacement(); // 直前の浮いた配置を確定
+    const before = snapshotNotes();
+    duplicateAfter(); // 複製したコピーを浮かせる (選択が移る)
+    beginPlacement(before);
+  }
+  if (keyDown("Escape")) { finishPlacement(); deselectAll(); } // 配置確定 → 全解除
+  if (keyDown("Delete")) deleteSelectedFloating(); // 浮いた配置は破棄して削除 (下のノートを残す)
   if (keyDown("KeyF")) toggleFold();
-  if (keyDown("Space")) togglePlay(shift); // Shift = 停止位置から / 素 = 1.1.1 から
+  if (keyDown("Space")) { finishPlacement(); togglePlay(shift); } // 再生前に配置確定
   handleScaleInput(performance.now());
   handleArrows(performance.now(), shift);
 }
@@ -1728,12 +1782,18 @@ function onDraw(cr) {
     }
   }
 
-  // ノート + 移動プレビュー (発音中/選択は白抜き)。
+  // ノート + 移動プレビュー (発音中/選択は白抜き)。非選択を背面、選択 (= 浮いた配置) を前面に
+  // 描くことで、確定前に既存ノートへ一時的に重なっても選択が上に見える (フローティング表示)。
   const moving = !!(drag && drag.mode === "move" && drag.moved);
   const dup = moving && ctrlHeld();
   for (const n of notes) {
-    if (moving && !dup && drag.sel.includes(n)) continue; // 移動: 掴んだ実体は隠す
-    drawNoteAt(cr, n.col, n.row, n.len, n.selected || isNoteSounding(n, playStep), vl);
+    if (n.selected) continue; // 選択は後段で前面に描く
+    drawNoteAt(cr, n.col, n.row, n.len, isNoteSounding(n, playStep), vl);
+  }
+  for (const n of notes) {
+    if (!n.selected) continue;
+    if (moving && !dup && drag.sel.includes(n)) continue; // 移動: 掴んだ実体は隠す (preview で描く)
+    drawNoteAt(cr, n.col, n.row, n.len, true, vl); // 選択 = 白抜き (前面)
   }
   if (moving) {
     for (const n of drag.sel) drawNoteAt(cr, n.col + drag.dCol, n.row + drag.dRow, n.len, false, vl);
@@ -1855,6 +1915,8 @@ const ABOUT_TEXT = [
 
 /** 閉じる際の後始末: 再生を止め発音を消す (updatePlayback は閉じると呼ばれないため明示) */
 function cleanupOnClose() {
+  finishPlacement(); // 浮いた配置を確定してからクリップを最終化 (重なりを残さない)
+  commitSelectedClip();
   if (transport.isPlaying()) transport.stop();
   // [seq] ワークレットシーケンサは自走するので、停止後の時計 (playing:false) を明示的に送って止める。
   if (_seqMode) chipSetTransport(transport.getClock());
