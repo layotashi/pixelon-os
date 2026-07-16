@@ -8,9 +8,10 @@
 
 export const BUILD = {
   date: "2026.07.16",
-  hash: "da01448",
-  count: 330,
+  hash: "0f62a73",
+  count: 331,
   notes: [
+    { date: "2026-07-16", hash: "0f62a73", text: "TRACK now has per-track Solo and Mute" },
     { date: "2026-07-16", hash: "da01448", text: "SYNTH can now be monophonic, and new tracks default to MONO" },
     { date: "2026-07-16", hash: "4fbbcbf", text: "All waveforms now play at a matched level just below clipping at full volume" },
     { date: "2026-07-16", hash: "2ac5688", text: "Transport is now a single slim horizontal bar" },
@@ -22,6 +23,5 @@ export const BUILD = {
     { date: "2026-07-16", hash: "2e52697", text: "Space plays from the top, Shift plus Space resumes from the cursor" },
     { date: "2026-07-16", hash: "72c538e", text: "Shift plus wheel now fine-tunes music faders in the right direction" },
     { date: "2026-07-14", hash: "fd020ce", text: "Music apps now launch and close together as SYNESTA" },
-    { date: "2026-07-14", hash: "0d6840e", text: "Click a ghost note in ROLL to switch to its track" },
   ],
 };

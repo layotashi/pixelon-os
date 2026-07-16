@@ -171,6 +171,18 @@ let winId = -1;
 let cellW = CELL_W_DEFAULT;
 let cellH = CELL_H_DEFAULT;
 let fold = false; // FOLD: ノートのある行だけ表示
+
+// ── 再生位置線 (playhead) ──
+//
+// グリッド線上に立つ縦線。停止中はユーザーが動かす「再生開始カーソル」= 共有 transport の
+// 現在位置を代表し (クリックで最寄りグリッド線へスナップ / 選択で先頭ノート開始へ移動)、その
+// グリッド位置を transport にも書き戻すので Shift+Space はキリの良い位置から再開できる。再生中は
+// transport の位置から毎フレーム導出し、常にグリッド線へスナップした状態で右へ進む (中途半端な
+// 位置に出さない)。
+/** 停止中の playhead 位置 (グリッド線番号 0..COLS)。再生中は transport から導出する。 */
+let _playheadCol = 0;
+/** 直近に検知した選択先頭ノートの開始列 (選択が変わった瞬間だけ playhead を動かすための基準)。 */
+let _lastSelStart = -1;
 /** FOLD を ON にする直前 (通常表示) のスクロール位置。OFF 復帰時にここへ戻す (null = 未保存) */
 let _scrollBeforeFold = null;
 
@@ -973,6 +985,8 @@ function loadClip(clip) {
   }));
   drag = null;
   _placeBefore = null; // 別ドキュメント: 浮いた配置トランザクションも破棄
+  _playheadCol = 0; // 別ドキュメント: 再生位置線も先頭へ
+  _lastSelStart = -1;
   sounding.clear();
   resetHistory(); // 別ドキュメントなので Undo/Redo をまっさらに
 }
@@ -1208,6 +1222,10 @@ function updatePlayback() {
     _activeInst = null;
     _seqMode = false;
     sounding.clear();
+    // playhead を停止位置のグリッド線へスナップし、transport もその位置へ揃える (連続位置の
+    // まま残さない)。これで Shift+Space の再開がキリの良いグリッド位置から始まる。
+    _playheadCol = clampInt(Math.floor(transport.getPosition() * STEPS_PER_BEAT), 0, COLS);
+    transport.setPosition(_playheadCol / STEPS_PER_BEAT);
   } else if (p && _seqMode) {
     // ── 継続 [seq]: 各トラックの編集 / トランスポート / SOLO・MUTE 変更をワークレットへ同期 ──
     for (let i = 0; i < N; i++) {
@@ -1254,6 +1272,43 @@ function currentPlayStep() {
 /** ノート n が再生ヘッド playStep 上で発音中か (視覚ハイライト用)。 */
 function isNoteSounding(n, playStep) {
   return playStep >= n.col && playStep < n.col + n.len;
+}
+
+// ── 再生位置線 (playhead) の位置 ──
+
+/** 描画する playhead のグリッド線番号。再生中は transport 位置から導出し常にグリッドへスナップ、
+ *  停止中はユーザーが動かした _playheadCol。 */
+function playheadCol() {
+  if (transport.isPlaying()) {
+    return clampInt(Math.floor(transport.getPosition() * STEPS_PER_BEAT), 0, COLS);
+  }
+  return _playheadCol;
+}
+
+/** 停止中の playhead をグリッド線 col へ置く。位置が変わったら共有 transport の現在位置にも
+ *  書き戻し、Shift+Space (現在位置から再生) がグリッドぴったりの位置から始まるようにする。 */
+function setPlayhead(col) {
+  col = clampInt(col, 0, COLS);
+  if (col === _playheadCol) return;
+  _playheadCol = col;
+  if (!transport.isPlaying()) transport.setPosition(col / STEPS_PER_BEAT);
+}
+
+/** 選択が変わった瞬間だけ playhead を選択先頭ノートの開始列へ移す (再生中は追従しないが基準は
+ *  更新して、停止直後に誤って選択位置へ飛ばないようにする)。 */
+function syncPlayheadFromSelection() {
+  const sel = selected();
+  let m = -1;
+  if (sel.length) {
+    m = Infinity;
+    for (const n of sel) m = Math.min(m, n.col);
+  }
+  if (transport.isPlaying()) {
+    _lastSelStart = m; // 再生中は playhead を動かさないが基準だけ追従
+    return;
+  }
+  if (m >= 0 && m !== _lastSelStart) setPlayhead(m); // 選択先頭が変わった → そこへ移動
+  _lastSelStart = m;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1407,6 +1462,7 @@ function onInput(ev) {
   if (ev.type === "down") {
     const cell = cellAt(ev.localX, ev.localY);
     _pasteRefCol = gridLineAtX(ev.localX); // ペースト基準グリッド線 (セル中央しきい値)
+    setPlayhead(_pasteRefCol); // クリックで playhead を最寄りグリッド線へ (選択があれば後で先頭ノートへ)
     prevDownKey = lastDownKey;
     lastDownKey = cell ? `${cell.col},${cell.row}` : null;
 
@@ -1743,6 +1799,23 @@ export function drawNoteGlyph(ox, oy, ow, oh, style) {
   }
 }
 
+/**
+ * 再生位置線 (playhead) を絶対座標へ描く (レイアウト非依存の純関数)。グリッド線に「ピッタリ
+ * 重ねた」黒 (太さ = そのグリッド線の太さ gridThick) を、左右 1px の白で挟む。1px グリッド
+ * (拍/細分化線) なら黒 1px + 白 1px×2 = 合計 3px、2px グリッド (小節線) なら黒 2px + 白 1px×2
+ * = 合計 4px の縦線になる (ユーザー ASCII 仕様どおり)。白は背景との分離用。
+ * @param {number} ox グリッド線の左端 X (黒の開始位置)
+ * @param {number} oy 上端 Y
+ * @param {number} oh 高さ
+ * @param {number} gridThick グリッド線の太さ (1 or 2)
+ */
+export function drawPlayheadGlyph(ox, oy, oh, gridThick) {
+  if (oh <= 0) return;
+  fillRect(ox - 1, oy, 1, oh, 0); // 左の白 1px
+  fillRect(ox + gridThick, oy, 1, oh, 0); // 右の白 1px
+  fillRect(ox, oy, gridThick, oh, 1); // グリッド線上の黒 (太さ gridThick)
+}
+
 /** レイアウトからノートの描画矩形 (絶対座標) を求める。FOLD で非表示の行は null。 */
 function noteRect(cr, col, row, len, vl) {
   const di = vl.rowToDi.get(row);
@@ -1769,6 +1842,7 @@ function onDraw(cr) {
   if (!isCapturing()) handleKeys(); // CAPTURE の二度描きでキー二重発火を抑止
   updatePlayback(); // 発音・位置更新はフォーカスに依らず継続
   updatePreview(); // 単発プレビューの自動消音
+  syncPlayheadFromSelection(); // 選択が変われば playhead を先頭ノート開始へ (停止中のみ)
   // FOLD 中に全ノートを削除すると 0 行の空表示になる。混乱を避けるため通常表示へ自動復帰する。
   if (fold && !hasAnyNote()) exitFold();
   const vl = vLayout();
@@ -1826,6 +1900,11 @@ function onDraw(cr) {
   if (moving) {
     for (const n of drag.sel) drawNoteAt(cr, n.col + drag.dCol, n.row + drag.dRow, n.len, false, vl);
   }
+
+  // 再生位置線 (playhead) を最前面に描く (グリッド線に重ねた黒 + 左右の白)。
+  const pc = playheadCol();
+  const pt = vThick(pc);
+  drawPlayheadGlyph(cr.x + colInnerX(pc) - pt, cr.y, th, pt);
 
   // ラバー選択の矩形 (破線マーキー。コンテンツ空間 → 画面座標へ cr で変換)
   if (drag && drag.mode === "rubber" && drag.moved) {
