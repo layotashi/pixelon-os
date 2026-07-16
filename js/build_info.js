@@ -8,9 +8,10 @@
 
 export const BUILD = {
   date: "2026.07.16",
-  hash: "c931872",
-  count: 327,
+  hash: "2ac5688",
+  count: 328,
   notes: [
+    { date: "2026-07-16", hash: "2ac5688", text: "Transport is now a single slim horizontal bar" },
     { date: "2026-07-16", hash: "c931872", text: "Ghost note checkerboard now always keeps white corners" },
     { date: "2026-07-16", hash: "a15aabf", text: "Notes now float while selected and only settle overlaps when you deselect" },
     { date: "2026-07-16", hash: "b6be8a8", text: "Fold view now requires at least one note" },
@@ -22,6 +23,5 @@ export const BUILD = {
     { date: "2026-07-14", hash: "0d6840e", text: "Click a ghost note in ROLL to switch to its track" },
     { date: "2026-07-14", hash: "99d3305", text: "FOLD view now keeps rows used by any of the 4 tracks" },
     { date: "2026-07-14", hash: "f755743", text: "ROLL now supports Ctrl+X to cut selected notes" },
-    { date: "2026-07-14", hash: "716af27", text: "ROLL now saves all 4 tracks together as a .song project" },
   ],
 };

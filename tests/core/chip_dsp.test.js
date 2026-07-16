@@ -16,7 +16,7 @@ import {
   beatAtTime,
   notesOnsetsInWindow,
 } from "@/core/chip_dsp.js";
-import { sampleWaveformFn } from "@/core/audio.js";
+import { sampleWaveformFn, waveformGain } from "@/core/audio.js";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  波形メモリ
@@ -29,18 +29,28 @@ describe("buildWavetable", () => {
     expect(t).toHaveLength(TABLE_SIZE);
   });
 
-  it("各サンプルは sampleWaveformFn(i/size) に一致する (波形メモリの定義)", () => {
+  it("各サンプルは sampleWaveformFn(i/size) × 正規化ゲイン (波形メモリの定義)", () => {
     const size = 16;
     const t = buildWavetable("sq50", size);
+    const g = waveformGain("sq50");
     for (let i = 0; i < size; i++) {
-      expect(t[i]).toBeCloseTo(sampleWaveformFn("sq50", i / size), 6);
+      expect(t[i]).toBeCloseTo(sampleWaveformFn("sq50", i / size) * g, 6);
     }
   });
 
-  it("saw は先頭 +1 から下降する", () => {
+  it("saw は先頭 (正規化ゲイン) から下降し中央で 0 を通る", () => {
     const t = buildWavetable("saw", 4);
-    expect(t[0]).toBeCloseTo(1, 6); // 1 - 2*0
-    expect(t[2]).toBeCloseTo(0, 6); // 1 - 2*0.5
+    expect(t[0]).toBeCloseTo(waveformGain("saw"), 6); // (1 - 2*0) × gain
+    expect(t[2]).toBeCloseTo(0, 6); // (1 - 2*0.5) × gain = 0
+  });
+
+  it("パルス波は非対称な DC ブースト分だけ強く正規化される (sq12 < sq25 < sq50)", () => {
+    // DC 除去後ピーク sq50=1 / sq25=1.5 / sq12=1.75 に反比例してゲインが下がる。
+    expect(waveformGain("sq50")).toBeGreaterThan(waveformGain("sq25"));
+    expect(waveformGain("sq25")).toBeGreaterThan(waveformGain("sq12"));
+    // sq50 と saw/tri/sine/noise は同じ天井 (対称波・ノイズは DC≈0)。
+    expect(waveformGain("saw")).toBeCloseTo(waveformGain("sq50"), 6);
+    expect(waveformGain("noise")).toBeCloseTo(waveformGain("sq50"), 6);
   });
 });
 

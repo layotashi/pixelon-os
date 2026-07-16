@@ -19,7 +19,7 @@
  *     跨いだ発火 (末尾→先頭) もここで解決する。ワークレットが process() 量子ごとに使う。
  */
 
-import { sampleWaveformFn } from "./audio.js";
+import { sampleWaveformFn, waveformGain } from "./audio.js";
 
 /** 1 周期の波形テーブル長 (サンプル)。位相ポインタで読み出す。 */
 export const TABLE_SIZE = 256;
@@ -39,7 +39,11 @@ export const CHIP_WAVEFORMS = ["saw", "tri", "sq50", "sq25", "sq12", "sine"];
  */
 export function buildWavetable(waveform, size = TABLE_SIZE) {
   const table = new Float32Array(size);
-  for (let i = 0; i < size; i++) table[i] = sampleWaveformFn(waveform, i / size);
+  // 波形ごとの正規化ゲインを焼き込む (DC 除去後のピークを共通天井へ揃え、VOL 100% の単音が
+  // どの波形でもクリップしないギリギリで鳴るようにする)。noise はテーブル化せずワークレットで
+  // 実時間生成するため、そちらで同じゲインをミラー適用する。
+  const g = waveformGain(waveform);
+  for (let i = 0; i < size; i++) table[i] = sampleWaveformFn(waveform, i / size) * g;
   return table;
 }
 

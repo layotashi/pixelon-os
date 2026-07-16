@@ -131,6 +131,30 @@ export const WAVEFORM_LIST = [
   "noise",
 ];
 
+/** VOL 100% の単音のピーク天井 (フルスケール 1.0 の手前 = クリップしないギリギリ)。
+ *  master のリミッタ (-0.3dB ≒ 0.966) が単音では作動しない位置に置き、全波形をここへ揃える。 */
+const WAVEFORM_PEAK_CEILING = 0.95;
+
+/** 各波形の「DC 除去後」ピーク。パルス波は非対称で DC 成分を持ち、master の dcBlocker が
+ *  DC を抜くと細い山側が伸びてピークが 1.0 を超える (sq25=1-(-0.5)=1.5, sq12=1-(-0.75)=1.75)。
+ *  対称波 (saw/tri/sq50/sine) と noise は DC≈0 でピーク 1.0。 */
+const WAVEFORM_DC_PEAK = { saw: 1, tri: 1, sq50: 1, sq25: 1.5, sq12: 1.75, sine: 1, noise: 1 };
+
+/**
+ * 各波形の正規化ゲイン。DC 除去後のピークを共通の天井 (WAVEFORM_PEAK_CEILING) へ揃えることで、
+ * VOL 100% の単音がどの波形でもクリップしないギリギリで鳴る (LVL メータも波形間で揃う)。
+ * パルス波 (sq25/sq12) は DC ブースト分だけ強く下げ、ノイズ・対称波は天井ぶんだけ下げる。
+ * @type {Object<string, number>}
+ */
+export const WAVEFORM_GAIN = Object.fromEntries(
+  Object.entries(WAVEFORM_DC_PEAK).map(([wf, peak]) => [wf, WAVEFORM_PEAK_CEILING / peak]),
+);
+
+/** 波形の正規化ゲインを返す (未知波形は 1.0)。 */
+export function waveformGain(wf) {
+  return WAVEFORM_GAIN[wf] ?? 1;
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  波形生成 (唯一の波形定義)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -243,17 +267,18 @@ function _computePeriodicWave(waveform, startPhase) {
   const real = new Float32Array(N + 1);
   const imag = new Float32Array(N + 1);
   const usePhase = startPhase !== 0;
+  const g = waveformGain(waveform); // 波形ごとの正規化ゲイン (ピークを共通天井へ揃える)
   for (let n = 1; n <= N; n++) {
     const { a, b } = fourierCoeff(waveform, n);
     if (!usePhase) {
-      real[n] = a;
-      imag[n] = b;
+      real[n] = a * g;
+      imag[n] = b * g;
     } else {
       const phi = 2 * Math.PI * n * startPhase;
       const cosPhi = Math.cos(phi);
       const sinPhi = Math.sin(phi);
-      real[n] = a * cosPhi + b * sinPhi;
-      imag[n] = b * cosPhi - a * sinPhi;
+      real[n] = (a * cosPhi + b * sinPhi) * g;
+      imag[n] = (b * cosPhi - a * sinPhi) * g;
     }
   }
   // disableNormalization: true で解析的振幅を保つ (sq25/sq12 の音量感を揃える)
@@ -340,8 +365,9 @@ export function initAudio() {
   const len = sr * 4;
   noiseBuffer = ctx.createBuffer(1, len, sr);
   const data = noiseBuffer.getChannelData(0);
+  const noiseG = waveformGain("noise"); // 他波形とピークを揃える正規化ゲイン
   for (let i = 0; i < len; i++) {
-    data[i] = Math.random() * 2 - 1;
+    data[i] = (Math.random() * 2 - 1) * noiseG;
   }
   // ループ接合点のクロスフェード (10ms) でクリック除去
   const fadeLen = Math.floor(sr * 0.01);

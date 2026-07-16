@@ -51,6 +51,11 @@ const VOICE_POOL = 64;
 /** 音量の量子化段数 (chip_dsp.VOLUME_STEPS のミラー)。 */
 const VOLUME_STEPS = 16;
 
+/** ノイズの正規化ゲイン (audio.WAVEFORM_GAIN.noise のミラー。worklet は import 不可)。
+ *  調性波形はテーブルにゲインを焼き込み済み。ノイズは実時間生成なのでここで同じ天井
+ *  (0.95 = ピーク天井 / DC 除去後ピーク 1.0) へ揃え、VOL 100% でも他波形と同じ音量にする。 */
+const NOISE_GAIN = 0.95;
+
 /** MIDI ノート番号 → 周波数 (audio.midiToFreq のミラー。worklet は import 不可)。 */
 function midiToFreq(midi) {
   return 440 * Math.pow(2, (midi - 69) / 12);
@@ -350,7 +355,7 @@ class ChipProcessor extends AudioWorkletProcessor {
     v.inc = midiToFreq(midi) / sampleRate;
     v.phase = 0;
     v.noisePhase = 0;
-    v.noiseVal = Math.random() * 2 - 1;
+    v.noiseVal = (Math.random() * 2 - 1) * NOISE_GAIN;
     v.vel = vel;
     v.amp = quantizeVolume16(c.volume * vel);
     v.order = this._seq++;
@@ -466,7 +471,7 @@ class ChipProcessor extends AudioWorkletProcessor {
       v.noisePhase += v.inc;
       if (v.noisePhase >= 1) {
         v.noisePhase -= 1;
-        v.noiseVal = Math.random() * 2 - 1;
+        v.noiseVal = (Math.random() * 2 - 1) * NOISE_GAIN;
       }
       s = v.noiseVal;
     } else if (v.table) {
