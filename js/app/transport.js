@@ -8,15 +8,16 @@
  * ROLL などのシーケンサはその時計を「読んで」自分のノートを鳴らすので、この窓の
  * 再生 / 停止 / テンポ / ループはそのまま全アプリへ効く (相互連携の中枢)。
  *
- * ── レイアウト (2 段) ──
- *   上段: 再生系 + テンポ。 [▶][■][●]  ♩=[BPM]  [METRO]
- *   下段: ループ。          [LOOP] [開始小節]-[終了小節]
+ * ── レイアウト (1 段) ──
+ *   [▶][■][●] | ♩=[BPM] [METRO] | [LOOP] [開始小節]-[終了小節]
+ *   将来の DAW 化で画面上端に固定表示される横長トランスポートバーの姿に寄せた 1 段構成
+ *   (旧 SYNESTA と同じ薄い横並び)。区切りは VSep で「再生 | テンポ | ループ」に分ける。
  *   フッタ: 左に状態 + 位置 (STOP/PLAY/REC  bar.beat.sub)、右にループ範囲。
  *
  * ── UI 設計 (CRAP) ──
- *   Proximity : 上段=「今の再生」(トランスポート + テンポ)、下段=「ループ設定」で分離。
+ *   Proximity : VSep で「再生」「テンポ」「ループ」の 3 群に分離。
  *   Repetition: アイコンボタンは SYNTH/ROLL と同じ 1-bit トグル/プッシュの語彙。
- *   Alignment : 段ごとに左端を揃え、行内は縦中央揃え (HBox/VBox エンジン)。
+ *   Alignment : 1 行内で縦中央揃え (HBox エンジン)。
  *   Contrast  : 再生中/録音中/ループ ON はボタン反転で強調 (1-bit の on/off)。
  *
  * ── ボタン ──
@@ -37,7 +38,6 @@ import * as transport from "./music/transport.js";
 import {
   WidgetGroup,
   HBox,
-  VBox,
   ToggleButton,
   PushButton,
   NumberBox,
@@ -70,7 +70,7 @@ const LOOP_BAR_MAX = 64;
 
 let playBtn, stopBtn, recBtn, metroToggle, loopToggle;
 let bpmBox, startBarBox, endBarBox;
-let bpmSpacer, eqLabel, dashLabel, vsep1;
+let bpmSpacer, eqLabel, dashLabel, vsep1, vsep2;
 let group;
 let _ready = false;
 
@@ -193,14 +193,20 @@ function _initWidgets() {
   dashLabel = new Label(0, 0, "-");
 
   vsep1 = new VSep(0, 0, BTN_H);
+  vsep2 = new VSep(0, 0, BTN_H);
 
-  // ── レイアウト (VBox: 再生+テンポ 行 / ループ 行) ──
-  const row1 = HBox(
-    [playBtn, stopBtn, recBtn, vsep1, bpmSpacer, eqLabel, bpmBox, metroToggle],
+  // ── レイアウト (1 段: 再生 | テンポ | ループ を薄い横並びに)。将来の DAW 化で画面上端に
+  //    固定表示される横長トランスポートバーの姿へ寄せる (旧 SYNESTA と同じ 1 段構成)。 ──
+  const root = HBox(
+    [
+      playBtn, stopBtn, recBtn,
+      vsep1,
+      bpmSpacer, eqLabel, bpmBox, metroToggle,
+      vsep2,
+      loopToggle, startBarBox, dashLabel, endBarBox,
+    ],
     GAP,
   );
-  const row2 = HBox([loopToggle, startBarBox, dashLabel, endBarBox], GAP);
-  const root = VBox([row1, row2], GAP);
   group = new WidgetGroup(root, { x: FOCUS_MARGIN, y: FOCUS_MARGIN });
 }
 
